@@ -22,3 +22,28 @@ class MarketData:
             raise Exception("No market data downloaded.")
 
         return data
+
+
+import yfinance as yf
+from config.settings import SYMBOLS, LOOKBACK_DAYS
+
+
+class MarketData:
+
+    def download_all_data(self):
+        market_data = {}
+
+        for category, symbols in SYMBOLS.items():
+            for symbol in symbols:
+                print(f"Downloading {symbol}...")
+
+                data = yf.download(
+                    symbol,
+                    start=LOOKBACK_DAYS,
+                    progress=False
+                )
+
+                if not data.empty:
+                    market_data[symbol] = data
+
+        return market_data
