@@ -4,7 +4,6 @@ matplotlib
 scikit-learn
 tensorflow
 pandas-ta
-MetaTrader5
 yfinance
 plotly
 streamlit
