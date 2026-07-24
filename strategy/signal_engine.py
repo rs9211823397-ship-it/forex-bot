@@ -24,22 +24,26 @@ class SignalEngine:
         # ==========================
         # Trend Filter
         # ==========================
+
         if (
             latest["Close"] > latest["EMA_20"]
             and latest["EMA_20"] > latest["EMA_50"]
+            and latest["SUPERTREND"] == True
         ):
-            score += 2
-            reasons.append("Strong bullish trend")
+            score += 3
+            reasons.append("Strong bullish trend + Supertrend")
 
         elif (
             latest["Close"] < latest["EMA_20"]
             and latest["EMA_20"] < latest["EMA_50"]
+            and latest["SUPERTREND"] == False
         ):
-            score -= 2
-            reasons.append("Strong bearish trend")
+            score -= 3
+            reasons.append("Strong bearish trend + Supertrend")
 
         else:
             reasons.append("Weak trend")
+
 
         # ==========================
         # RSI Confirmation

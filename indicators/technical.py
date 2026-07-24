@@ -4,7 +4,7 @@ Calculates market indicators for trading decisions.
 """
 
 import pandas as pd
-
+from indicators.supertrend import add_supertrend
 
 class TechnicalIndicators:
 
@@ -71,5 +71,6 @@ class TechnicalIndicators:
 
         dx = ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100
         df["ADX"] = dx.rolling(14).mean()
+        df = add_supertrend(df)
 
         return df
