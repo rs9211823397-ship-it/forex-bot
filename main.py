@@ -25,7 +25,18 @@ for symbol, data in all_data.items():
         analyzed_data = indicator.add_indicators(data)
         signal = signal_engine.generate_signal(analyzed_data)
 
-        print(symbol, ":", signal)
+        print("\n" + "=" * 50)
+        print(f"Asset: {symbol}")
+        print(f"Signal: {signal['signal']}")
+        print(f"Confidence: {signal['confidence']}%")
+        print(f"Score: {signal['score']}")
+
+        latest_atr = analyzed_data["ATR"].iloc[-1]
+        print(f"ATR: {latest_atr:.4f}")
+
+        print("\nReasons:")
+        for reason in signal["reasons"]:
+            print(f"  ✓ {reason}")
 
     except Exception as e:
         print(symbol, "ERROR:", e)

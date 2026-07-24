@@ -39,5 +39,16 @@ class TechnicalIndicators:
         df["MACD"] = ema12 - ema26
         df["MACD_SIGNAL"] = df["MACD"].ewm(span=9).mean()
 
-        return df
+    
 
+        # ATR (Average True Range)
+        high_low = df["High"] - df["Low"]
+        high_close = (df["High"] - df["Close"].shift()).abs()
+        low_close = (df["Low"] - df["Close"].shift()).abs()
+
+        true_range = high_low.combine(high_close, max)
+        true_range = true_range.combine(low_close, max)
+
+        df["ATR"] = true_range.rolling(window=14).mean()
+
+        return df
