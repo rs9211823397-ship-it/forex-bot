@@ -30,6 +30,7 @@ for symbol, data in all_data.items():
         trade = trade_manager.calculate_trade(analyzed_data, signal)
 
         risk_plan = None
+        position = None
 
         if signal["signal"] != "HOLD":
 
@@ -38,6 +39,14 @@ for symbol, data in all_data.items():
                 trade["current_price"],
                 trade["atr"]
             )
+
+            if risk_plan:
+
+                position = risk_manager.position_size(
+                    1000,
+                    risk_plan["entry"],
+                    risk_plan["stop_loss"]
+                )
 
         print("\n" + "=" * 50)
         print(f"Asset: {symbol}")
@@ -55,6 +64,7 @@ for symbol, data in all_data.items():
             print(f"Stop Loss: {risk_plan['stop_loss']}")
             print(f"Take Profit: {risk_plan['take_profit']}")
             print(f"Risk Reward: 1:{risk_plan['risk_reward']}")
+            print(f"Position Size: {position}")
 
 
         print("\nReasons:")
