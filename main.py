@@ -4,7 +4,7 @@ from strategy.signal_engine import SignalEngine
 from execution.trade_manager import TradeManager
 from risk.risk_manager import RiskManager
 from bot_controller import BotController
-
+from logs.logger import TradeLogger
 
 market = MarketData()
 indicator = TechnicalIndicators()
@@ -12,7 +12,7 @@ signal_engine = SignalEngine()
 trade_manager = TradeManager()
 risk_manager = RiskManager()
 bot = BotController()
-
+logger = TradeLogger()
 
 def run_bot():
 
@@ -35,6 +35,11 @@ def run_bot():
             analyzed_data = indicator.add_indicators(data)
 
             signal = signal_engine.generate_signal(analyzed_data)
+            logger.log_signal(
+                symbol,
+                signal["signal"],
+                signal["confidence"]
+            )
 
             trade = trade_manager.calculate_trade(
                 analyzed_data,
