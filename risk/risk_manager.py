@@ -1,6 +1,9 @@
+from config.settings import RISK_PERCENT
+
+
 class RiskManager:
 
-    def __init__(self, risk_percent=1, reward_ratio=2):
+    def __init__(self, risk_percent=RISK_PERCENT, reward_ratio=2):
         self.risk_percent = risk_percent
         self.reward_ratio = reward_ratio
 

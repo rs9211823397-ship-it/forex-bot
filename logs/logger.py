@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 
 
 class TradeLogger:
@@ -24,15 +23,15 @@ class TradeLogger:
         logging.info(message)
 
 
-
-    def log_trade(self, symbol, trade):
+    def log_trade(self, symbol, trade, position):
 
         message = (
             f"{symbol} | "
             f"ENTRY: {trade['entry']} | "
             f"SL: {trade['stop_loss']} | "
             f"TP: {trade['take_profit']} | "
-            f"RR: {trade['risk_reward']}"
+            f"RR: {trade['risk_reward']} | "
+            f"POSITION: {position}"
         )
 
         logging.info(message)
