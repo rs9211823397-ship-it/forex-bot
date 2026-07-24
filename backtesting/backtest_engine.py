@@ -44,7 +44,11 @@ class BacktestEngine:
 
                 if price <= stop_loss or price >= take_profit or signal == "SELL":
 
-                    profit = price - entry_price
+                    if position == "LONG":
+                        profit = price - entry_price
+
+                    elif position == "SHORT":
+                        profit = entry_price - price
 
 
                     self.trades.append({
