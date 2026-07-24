@@ -3,7 +3,7 @@ from indicators.technical import TechnicalIndicators
 from strategy.signal_engine import SignalEngine
 from execution.trade_manager import TradeManager
 from risk.risk_manager import RiskManager
-
+from bot_controller import BotController
 
 print("=" * 50)
 print("AI MULTI-ASSET TRADING PLATFORM")
@@ -15,7 +15,9 @@ indicator = TechnicalIndicators()
 signal_engine = SignalEngine()
 trade_manager = TradeManager()
 risk_manager = RiskManager()
+bot = BotController()
 
+print("\nBot Status:", bot.start_bot())
 all_data = market.download_all_data()
 
 
@@ -23,6 +25,9 @@ print("\nMarket Signals:\n")
 
 
 for symbol, data in all_data.items():
+
+    if bot.status() != "RUNNING":
+        break
 
     try:
         analyzed_data = indicator.add_indicators(data)
@@ -41,7 +46,6 @@ for symbol, data in all_data.items():
             )
 
             if risk_plan:
-
                 position = risk_manager.position_size(
                     1000,
                     risk_plan["entry"],
@@ -58,7 +62,6 @@ for symbol, data in all_data.items():
         print(f"ATR: {trade['atr']:.4f}")
 
         if risk_plan:
-
             print("\nTrade Plan:")
             print(f"Entry: {risk_plan['entry']}")
             print(f"Stop Loss: {risk_plan['stop_loss']}")
@@ -66,10 +69,12 @@ for symbol, data in all_data.items():
             print(f"Risk Reward: 1:{risk_plan['risk_reward']}")
             print(f"Position Size: {position}")
 
-
         print("\nReasons:")
         for reason in signal["reasons"]:
             print(f"  ✓ {reason}")
+
+    except Exception as e:
+        print(symbol, "ERROR:", e)
 
     except Exception as e:
         print(symbol, "ERROR:", e)
