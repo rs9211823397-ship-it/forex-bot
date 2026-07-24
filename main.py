@@ -2,6 +2,8 @@ from data.market_data import MarketData
 from indicators.technical import TechnicalIndicators
 from strategy.signal_engine import SignalEngine
 from execution.trade_manager import TradeManager
+from risk.risk_manager import RiskManager
+
 
 print("=" * 50)
 print("AI MULTI-ASSET TRADING PLATFORM")
@@ -12,6 +14,7 @@ market = MarketData()
 indicator = TechnicalIndicators()
 signal_engine = SignalEngine()
 trade_manager = TradeManager()
+risk_manager = RiskManager()
 
 all_data = market.download_all_data()
 
@@ -26,6 +29,16 @@ for symbol, data in all_data.items():
         signal = signal_engine.generate_signal(analyzed_data)
         trade = trade_manager.calculate_trade(analyzed_data, signal)
 
+        risk_plan = None
+
+        if signal["signal"] != "HOLD":
+
+            risk_plan = risk_manager.calculate_trade_levels(
+                signal["signal"],
+                trade["current_price"],
+                trade["atr"]
+            )
+
         print("\n" + "=" * 50)
         print(f"Asset: {symbol}")
         print(f"Signal: {signal['signal']}")
@@ -34,6 +47,14 @@ for symbol, data in all_data.items():
 
         print(f"Current Price: {trade['current_price']:.4f}")
         print(f"ATR: {trade['atr']:.4f}")
+
+        if risk_plan:
+
+            print("\nTrade Plan:")
+            print(f"Entry: {risk_plan['entry']}")
+            print(f"Stop Loss: {risk_plan['stop_loss']}")
+            print(f"Take Profit: {risk_plan['take_profit']}")
+            print(f"Risk Reward: 1:{risk_plan['risk_reward']}")
 
 
         print("\nReasons:")
