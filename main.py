@@ -5,10 +5,6 @@ from execution.trade_manager import TradeManager
 from risk.risk_manager import RiskManager
 from bot_controller import BotController
 
-print("=" * 50)
-print("AI MULTI-ASSET TRADING PLATFORM")
-print("=" * 50)
-
 
 market = MarketData()
 indicator = TechnicalIndicators()
@@ -17,64 +13,62 @@ trade_manager = TradeManager()
 risk_manager = RiskManager()
 bot = BotController()
 
-print("\nBot Status:", bot.start_bot())
-all_data = market.download_all_data()
+
+def run_bot():
+
+    print("=" * 50)
+    print("AI MULTI-ASSET TRADING PLATFORM")
+    print("=" * 50)
+
+    all_data = market.download_all_data()
+
+    print("\nMarket Signals:\n")
 
 
-print("\nMarket Signals:\n")
+    for symbol, data in all_data.items():
 
+        if bot.status() != "RUNNING":
+            break
 
-for symbol, data in all_data.items():
+        try:
 
-    if bot.status() != "RUNNING":
-        break
+            analyzed_data = indicator.add_indicators(data)
 
-    try:
-        analyzed_data = indicator.add_indicators(data)
-        signal = signal_engine.generate_signal(analyzed_data)
-        trade = trade_manager.calculate_trade(analyzed_data, signal)
+            signal = signal_engine.generate_signal(analyzed_data)
 
-        risk_plan = None
-        position = None
-
-        if signal["signal"] != "HOLD":
-
-            risk_plan = risk_manager.calculate_trade_levels(
-                signal["signal"],
-                trade["current_price"],
-                trade["atr"]
+            trade = trade_manager.calculate_trade(
+                analyzed_data,
+                signal
             )
 
-            if risk_plan:
-                position = risk_manager.position_size(
-                    1000,
-                    risk_plan["entry"],
-                    risk_plan["stop_loss"]
-                )
 
-        print("\n" + "=" * 50)
-        print(f"Asset: {symbol}")
-        print(f"Signal: {signal['signal']}")
-        print(f"Confidence: {signal['confidence']}%")
-        print(f"Score: {signal['score']}")
+            print("\n" + "=" * 50)
+            print(f"Asset: {symbol}")
+            print(f"Signal: {signal['signal']}")
+            print(f"Confidence: {signal['confidence']}%")
+            print(f"Score: {signal['score']}")
 
-        print(f"Current Price: {trade['current_price']:.4f}")
-        print(f"ATR: {trade['atr']:.4f}")
+            print(f"Current Price: {trade['current_price']:.4f}")
+            print(f"ATR: {trade['atr']:.4f}")
 
-        if risk_plan:
-            print("\nTrade Plan:")
-            print(f"Entry: {risk_plan['entry']}")
-            print(f"Stop Loss: {risk_plan['stop_loss']}")
-            print(f"Take Profit: {risk_plan['take_profit']}")
-            print(f"Risk Reward: 1:{risk_plan['risk_reward']}")
-            print(f"Position Size: {position}")
 
-        print("\nReasons:")
-        for reason in signal["reasons"]:
-            print(f"  ✓ {reason}")
+            print("\nReasons:")
 
-    except Exception as e:
-        print(symbol, "ERROR:", e)
+            for reason in signal["reasons"]:
+                print(f"  ✓ {reason}")
 
-    except Exception as e:
-        print(symbol, "ERROR:", e)
+
+        except Exception as e:
+            print(symbol, "ERROR:", e)
+
+
+
+if __name__ == "__main__":
+
+    from bot_loop import BotLoop
+
+    print("\nBot Status:", bot.start_bot())
+
+    loop = BotLoop(interval=10)
+
+    loop.start(run_bot)
