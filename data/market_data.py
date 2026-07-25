@@ -11,40 +11,48 @@ from config.settings import SYMBOLS, LOOKBACK_DAYS
 class MarketData:
 
 
-    def download_data(self, symbol, start=LOOKBACK_DAYS):
+    def download_data(self, symbol, interval=None):
 
-        data = yf.download(
-            symbol,
-            start=start,
-            progress=False,
-            auto_adjust=False
-        )
+        if interval in ["1h", "30m", "15m"]:
+
+            data = yf.download(
+                symbol,
+                period="730d",
+                interval=interval,
+                progress=False,
+                auto_adjust=False
+            )
+
+        else:
+
+            data = yf.download(
+                symbol,
+                start=LOOKBACK_DAYS,
+                progress=False,
+                auto_adjust=False
+            )
 
 
         if data.empty:
             raise Exception(f"No data found for {symbol}")
 
 
-        # Fix Yahoo multi-level columns
         if isinstance(data.columns, pd.MultiIndex):
-
             data.columns = data.columns.get_level_values(0)
 
 
-        # Keep Yahoo style column names
         data.columns = [
-            str(col)
+            str(col).lower()
             for col in data.columns
         ]
 
 
-        # Keep required columns only
         required = [
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Volume"
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
         ]
 
 
@@ -62,13 +70,9 @@ class MarketData:
 
         data = data[required]
 
-
-        # Remove bad rows
         data.dropna(inplace=True)
 
-
         return data
-
 
 
     def download_all_data(self):

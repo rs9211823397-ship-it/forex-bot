@@ -1,14 +1,14 @@
 from structure.market_structure import MarketStructure
-
-
-
-
+from price_action.candles import CandlePatterns
 
 
 class SignalEngine:
 
+
     def __init__(self):
+
         self.market_structure = MarketStructure()
+        self.candles = CandlePatterns()
 
 
     def generate_signal(self, data, symbol):
@@ -94,6 +94,45 @@ class SignalEngine:
 
             reasons.append("Weak momentum")
         score += momentum
+        # ==========================
+        # LAYER 4 - PRICE ACTION
+        # ==========================
+
+        candle_score = 0
+
+        patterns = self.candles.analyze(data)
+
+
+        for pattern in patterns:
+
+            if pattern in [
+                "Bullish engulfing",
+                "BULLISH PIN BAR"
+            ]:
+
+                candle_score += 10
+                reasons.append(
+                    "Bullish price action: " + pattern
+                )
+
+
+            elif pattern in [
+                "Bearish engulfing",
+                "BEARISH PIN BAR"
+            ]:
+
+                candle_score -= 10
+                reasons.append(
+                    "Bearish price action: " + pattern
+                )
+
+
+            else:
+
+                reasons.append(pattern)
+
+
+        score += candle_score
                 # ==========================
 
 
@@ -106,7 +145,7 @@ class SignalEngine:
         if not symbol.endswith("=X"):
 
             volume_ok = (
-                latest["Volume"] > latest["VOL_SMA20"]
+                latest["volume"] > latest["VOL_SMA20"]
                 and latest["OBV"] > data.iloc[-2]["OBV"]
             )
 

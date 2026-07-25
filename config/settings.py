@@ -19,7 +19,13 @@ SYMBOLS = {
     ]
 }
 
-TIMEFRAME = "1d"
+# ==========================
+# MULTI TIMEFRAME SETTINGS
+# ==========================
+
+HIGHER_TIMEFRAME = "1d"
+
+TRADING_TIMEFRAME = "1h"
 
 LOOKBACK_DAYS = "2020-01-01"
 ACCOUNT_BALANCE = 1000

@@ -5,7 +5,7 @@ class TradeManager:
 
     def calculate_trade(self, data, signal):
 
-        current_price = data["Close"].iloc[-1]
+        current_price = data["close"].iloc[-1]
         atr = data["ATR"].iloc[-1]
 
         return {

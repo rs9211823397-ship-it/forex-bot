@@ -20,15 +20,15 @@ class TechnicalIndicators:
         # EMA
         # ==========================
 
-        df["EMA_20"] = df["Close"].ewm(span=20, adjust=False).mean()
-        df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
-        df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
+        df["EMA_20"] = df["close"].ewm(span=20, adjust=False).mean()
+        df["EMA_50"] = df["close"].ewm(span=50, adjust=False).mean()
+        df["EMA_200"] = df["close"].ewm(span=200, adjust=False).mean()
 
         # ==========================
         # RSI
         # ==========================
 
-        delta = df["Close"].diff()
+        delta = df["close"].diff()
 
         gain = delta.where(delta > 0, 0.0)
         loss = -delta.where(delta < 0, 0.0)
@@ -56,8 +56,8 @@ class TechnicalIndicators:
         # MACD
         # ==========================
 
-        ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-        ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+        ema12 = df["close"].ewm(span=12, adjust=False).mean()
+        ema26 = df["close"].ewm(span=26, adjust=False).mean()
 
         df["MACD"] = ema12 - ema26
         df["MACD_SIGNAL"] = df["MACD"].ewm(span=9, adjust=False).mean()
@@ -66,9 +66,9 @@ class TechnicalIndicators:
         # ATR
         # ==========================
 
-        high_low = df["High"] - df["Low"]
-        high_close = (df["High"] - df["Close"].shift()).abs()
-        low_close = (df["Low"] - df["Close"].shift()).abs()
+        high_low = df["high"] - df["low"]
+        high_close = (df["high"] - df["close"].shift()).abs()
+        low_close = (df["low"] - df["close"].shift()).abs()
 
         tr = pd.concat(
             [high_low, high_close, low_close],
@@ -81,8 +81,8 @@ class TechnicalIndicators:
         # ADX
         # ==========================
 
-        up_move = df["High"].diff()
-        down_move = -df["Low"].diff()
+        up_move = df["high"].diff()
+        down_move = -df["low"].diff()
 
         plus_dm = up_move.where(
             (up_move > down_move) & (up_move > 0),
@@ -115,9 +115,9 @@ class TechnicalIndicators:
         # Bollinger Bands
         # ==========================
 
-        sma20 = df["Close"].rolling(20).mean()
+        sma20 = df["close"].rolling(20).mean()
 
-        std20 = df["Close"].rolling(20).std()
+        std20 = df["close"].rolling(20).std()
 
         df["BB_MIDDLE"] = sma20
         df["BB_UPPER"] = sma20 + (2 * std20)
@@ -127,11 +127,11 @@ class TechnicalIndicators:
         # Volume SMA
         # ==========================
 
-        if "Volume" in df.columns:
+        if "volume" in df.columns:
 
-            df["VOL_SMA20"] = df["Volume"].rolling(20).mean()
+            df["VOL_SMA20"] = df["volume"].rolling(20).mean()
 
-            direction = df["Close"].diff().fillna(0)
+            direction = df["close"].diff().fillna(0)
 
             obv = [0]
 
@@ -139,12 +139,12 @@ class TechnicalIndicators:
 
                 if direction.iloc[i] > 0:
                     obv.append(
-                        obv[-1] + df["Volume"].iloc[i]
+                        obv[-1] + df["volume"].iloc[i]
                     )
 
                 elif direction.iloc[i] < 0:
                     obv.append(
-                        obv[-1] - df["Volume"].iloc[i]
+                        obv[-1] - df["volume"].iloc[i]
                     )
 
                 else:

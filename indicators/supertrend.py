@@ -3,7 +3,7 @@ import pandas as pd
 
 def add_supertrend(df, period=10, multiplier=3):
 
-    hl2 = (df["High"] + df["Low"]) / 2
+    hl2 = (df["high"] + df["low"]) / 2
 
     atr = df["ATR"]
 
@@ -17,10 +17,10 @@ def add_supertrend(df, period=10, multiplier=3):
 
     for i in range(1, len(df)):
 
-        if df["Close"].iloc[i] > final_upper.iloc[i - 1]:
+        if df["close"].iloc[i] > final_upper.iloc[i - 1]:
             supertrend[i] = True
 
-        elif df["Close"].iloc[i] < final_lower.iloc[i - 1]:
+        elif df["close"].iloc[i] < final_lower.iloc[i - 1]:
             supertrend[i] = False
 
         else:
