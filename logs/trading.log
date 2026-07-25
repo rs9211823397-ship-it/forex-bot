@@ -282,3 +282,726 @@
 2026-07-24 11:17:08,675 | ETH-USD | Signal: BUY | Confidence: 100.0%
 2026-07-24 11:17:08,675 | ETH-USD | ENTRY: 1881.62 | SL: 1790.13421 | TP: 2064.59156 | RR: 2.0 | POSITION: 0.1093
 2026-07-24 11:17:08,876 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:46:42,128 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:46:42,329 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:46:42,552 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:46:42,763 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:46:42,987 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:46:43,193 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:46:43,408 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:46:43,726 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:46:44,006 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:46:44,274 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:46:57,184 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:46:57,381 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:46:57,578 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:46:57,824 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:46:58,115 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:46:58,461 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:46:58,649 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:46:58,913 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:46:59,196 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:46:59,453 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:12,193 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:12,384 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:12,619 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:12,809 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:12,999 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:47:13,235 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:13,418 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:13,674 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:13,935 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:14,217 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:26,855 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:27,092 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:27,288 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:27,484 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:27,673 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:47:27,862 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:28,040 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:28,315 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:28,584 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:29,023 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:41,964 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:42,188 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:42,404 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:42,604 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:42,793 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:47:42,976 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:43,166 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:43,475 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:43,745 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:43,996 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:56,815 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:57,037 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:57,230 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:57,423 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:47:57,613 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:47:57,834 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:58,027 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:58,375 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:47:58,670 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:47:58,930 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:11,849 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:12,073 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:12,321 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:12,514 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:12,706 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:48:12,896 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:13,086 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:13,353 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:13,615 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:13,867 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:27,272 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:27,466 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:27,655 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:27,851 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:28,039 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:48:28,229 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:28,422 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:28,727 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:29,001 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:29,278 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:42,411 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:42,600 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:42,790 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:42,976 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:43,216 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:48:43,411 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:43,590 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:43,846 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:44,104 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:44,362 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:57,717 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:57,925 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:58,125 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:58,365 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 07:48:58,623 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 07:48:58,855 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:59,043 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 07:48:59,308 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 07:48:59,614 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:33,628 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:01:33,837 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:01:34,035 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:01:34,237 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:01:34,442 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:01:34,632 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:34,856 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:35,192 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:01:35,518 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:35,789 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:01:48,689 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:01:48,988 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:01:49,214 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:01:49,412 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:01:49,612 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:01:49,842 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:50,035 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:50,310 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:01:50,585 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:01:50,857 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:04,305 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:04,507 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:04,706 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:04,898 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:05,119 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:02:05,406 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:05,610 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:05,911 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:06,238 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:06,489 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:18,824 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:19,021 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:19,223 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:19,428 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:19,623 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:02:19,809 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:19,999 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:20,273 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:20,565 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:20,869 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:34,020 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:34,353 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:34,586 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:34,779 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:34,970 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:02:35,210 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:35,419 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:35,692 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:35,958 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:36,220 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:48,917 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:49,167 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:49,389 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:49,683 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:02:49,881 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:02:50,069 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:50,257 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:50,534 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:02:50,810 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:02:51,082 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:03:05,006 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:03:05,237 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:03:05,459 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:03:05,704 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:03:05,939 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:03:06,218 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:03:06,408 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:03:06,683 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:03:06,980 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:03:07,291 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:03:20,565 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:03:20,775 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:03:20,966 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 08:03:21,171 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 08:03:21,363 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 08:03:21,542 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:03:21,735 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:03:22,003 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 08:03:22,333 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 08:03:22,692 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:39:38,088 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:39:38,298 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:39:38,503 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:39:38,818 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:39:39,044 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 10:39:39,316 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:39:39,528 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:39:39,812 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 10:39:40,139 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:39:40,419 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:39:54,696 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:39:54,895 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:39:55,111 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:39:55,385 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:39:55,606 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 10:39:55,829 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:39:56,020 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:39:56,554 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 10:39:56,870 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:39:57,135 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:40:10,996 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:40:11,200 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:40:11,410 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:40:11,608 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:40:11,906 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 10:40:12,165 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:40:12,370 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:40:12,659 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 10:40:12,981 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:40:13,292 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:50:31,077 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:50:31,295 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:50:31,535 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:50:31,737 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:50:31,942 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 10:50:32,130 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:50:32,400 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:50:32,685 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 10:50:32,965 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:50:33,241 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:51:21,601 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:51:21,861 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:51:22,071 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 10:51:22,280 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 10:51:22,500 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 10:51:22,697 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:51:22,927 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:51:23,214 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 10:51:23,507 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 10:51:23,823 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 11:08:04,055 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:08:04,274 | GBPUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 11:08:04,514 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:08:04,716 | AUDUSD=X | Signal: HOLD | Confidence: 25.0%
+2026-07-25 11:08:04,917 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:08:05,119 | GC=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 11:08:05,340 | SI=F | Signal: HOLD | Confidence: 50.0%
+2026-07-25 11:08:05,866 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:08:06,142 | ETH-USD | Signal: HOLD | Confidence: 50.0%
+2026-07-25 11:08:06,406 | SOL-USD | Signal: HOLD | Confidence: 25.0%
+2026-07-25 11:16:14,448 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:16:14,660 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:16:15,167 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:16:15,514 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:16:15,727 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:16:15,987 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:16:15,988 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:16:16,276 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:16:16,277 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:16:16,585 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:16:16,862 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:16:16,863 | ETH-USD | ENTRY: 1857.38 | SL: 1767.22706 | TP: 2037.6859 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:16:17,128 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:17:32,547 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:17:32,805 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:17:33,064 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:17:33,275 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:17:33,473 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:17:33,672 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:17:33,672 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:17:33,890 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:17:33,890 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:17:34,158 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:17:34,491 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:17:34,492 | ETH-USD | ENTRY: 1857.37 | SL: 1767.21705 | TP: 2037.67589 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:17:34,749 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:17:48,720 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:17:48,934 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:17:49,166 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:17:49,391 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:17:49,626 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:17:49,814 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:17:49,814 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:17:50,004 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:17:50,004 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:17:50,285 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:17:50,619 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:17:50,619 | ETH-USD | ENTRY: 1857.43994 | SL: 1767.287 | TP: 2037.74583 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:17:50,970 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:04,553 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:04,758 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:04,963 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:05,206 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:05,410 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:18:05,738 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:05,739 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:18:05,961 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:05,961 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:18:06,397 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:06,661 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:18:06,661 | ETH-USD | ENTRY: 1857.40002 | SL: 1767.24708 | TP: 2037.70592 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:18:06,926 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:19,911 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:20,118 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:20,319 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:20,520 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:20,720 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:18:20,972 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:20,973 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:18:21,170 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:21,171 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:18:21,447 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:21,766 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:18:21,766 | ETH-USD | ENTRY: 1857.57996 | SL: 1767.42701 | TP: 2037.88585 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:18:22,086 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:34,811 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:35,010 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:35,262 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:35,467 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:35,669 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:18:35,861 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:35,861 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:18:36,168 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:36,169 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:18:36,466 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:36,735 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:18:36,735 | ETH-USD | ENTRY: 1857.56995 | SL: 1767.417 | TP: 2037.87584 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:18:37,146 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:50,643 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:50,850 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:51,053 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:51,263 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:18:51,526 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:18:51,718 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:51,718 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:18:51,910 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:18:51,911 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:18:52,186 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:18:52,468 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:18:52,468 | ETH-USD | ENTRY: 1857.71997 | SL: 1767.56703 | TP: 2038.02586 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:18:52,778 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:05,923 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:06,170 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:06,430 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:06,694 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:06,900 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:19:07,144 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:07,145 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:19:07,338 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:07,338 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:19:07,751 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:08,025 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:19:08,025 | ETH-USD | ENTRY: 1857.68005 | SL: 1767.52711 | TP: 2037.98594 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:19:08,300 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:21,615 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:21,832 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:22,082 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:22,320 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:22,538 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:19:22,764 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:22,764 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:19:22,979 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:22,979 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:19:23,265 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:23,588 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:19:23,588 | ETH-USD | ENTRY: 1857.70996 | SL: 1767.55702 | TP: 2038.01585 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:19:23,906 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:37,111 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:37,339 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:37,532 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:37,725 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:37,937 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:19:38,326 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:38,326 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:19:38,519 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:38,520 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:19:38,855 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:39,189 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:19:39,190 | ETH-USD | ENTRY: 1857.65002 | SL: 1767.49708 | TP: 2037.95592 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:19:39,494 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:52,995 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:53,198 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:53,418 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:53,623 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:19:53,829 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:19:54,025 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:54,025 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:19:54,218 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:19:54,218 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:19:54,588 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:19:54,887 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:19:54,887 | ETH-USD | ENTRY: 1857.70996 | SL: 1767.55702 | TP: 2038.01585 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:19:55,151 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:08,119 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:08,332 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:08,540 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:08,847 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:09,134 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:20:09,339 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:20:09,340 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:20:09,574 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:20:09,575 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:20:09,851 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:10,125 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:20:10,126 | ETH-USD | ENTRY: 1857.73999 | SL: 1767.58704 | TP: 2038.04588 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:20:10,394 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:23,462 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:23,663 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:23,872 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:24,071 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:24,276 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:20:24,472 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:20:24,473 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:20:24,723 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:20:24,723 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:20:25,003 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:25,273 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:20:25,273 | ETH-USD | ENTRY: 1857.76001 | SL: 1767.60706 | TP: 2038.0659 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:20:25,578 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:38,537 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:38,756 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:38,964 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:39,202 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:20:39,575 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:20:39,872 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:20:39,872 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:20:40,076 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:20:40,076 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:20:40,352 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:20:40,629 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:20:40,629 | ETH-USD | ENTRY: 1857.76001 | SL: 1767.60706 | TP: 2038.0659 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:20:40,887 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:09,672 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:09,951 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:10,170 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:10,398 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:10,621 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:28:10,832 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:10,832 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:28:11,061 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:11,061 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:28:11,366 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:11,671 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:28:11,671 | ETH-USD | ENTRY: 1857.13 | SL: 1766.97706 | TP: 2037.4359 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:28:12,055 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:25,380 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:25,610 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:25,830 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:26,050 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:26,271 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:28:26,544 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:26,545 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:28:26,782 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:26,782 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:28:27,077 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:27,373 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:28:27,373 | ETH-USD | ENTRY: 1857.16003 | SL: 1767.00709 | TP: 2037.46592 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:28:27,670 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:41,070 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:41,308 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:41,573 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:41,804 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:42,026 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:28:42,267 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:42,267 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:28:42,477 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:42,478 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:28:42,789 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:43,146 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:28:43,146 | ETH-USD | ENTRY: 1856.81995 | SL: 1766.667 | TP: 2037.12584 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:28:43,437 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:56,635 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:56,878 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:57,103 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:57,362 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:28:57,637 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:28:57,882 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:57,882 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:28:58,107 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:28:58,108 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:28:58,403 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:28:58,855 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:28:58,855 | ETH-USD | ENTRY: 1857.09998 | SL: 1766.94703 | TP: 2037.40587 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:28:59,174 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:29:12,248 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:29:12,465 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:29:12,720 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:29:12,949 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:29:13,180 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:29:13,392 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:29:13,392 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:29:13,607 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:29:13,608 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:29:14,001 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:29:14,366 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:29:14,367 | ETH-USD | ENTRY: 1856.60999 | SL: 1766.45704 | TP: 2036.91588 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:29:14,688 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:30:55,737 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:30:55,955 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:30:56,219 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:30:56,461 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:30:56,719 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:30:57,000 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:30:57,000 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:30:57,244 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:30:57,245 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:30:57,551 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:30:57,845 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:30:57,846 | ETH-USD | ENTRY: 1857.58997 | SL: 1767.43702 | TP: 2037.89586 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:30:58,211 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:31:11,470 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:31:11,705 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:31:11,921 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:31:12,150 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:31:12,366 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:31:12,574 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:31:12,575 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:31:12,805 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:31:12,805 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:31:13,108 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:31:13,474 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:31:13,474 | ETH-USD | ENTRY: 1857.79004 | SL: 1767.63709 | TP: 2038.09593 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:31:13,769 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:36:23,297 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:36:23,522 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:36:23,737 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:36:24,048 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:36:24,271 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:36:24,478 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:36:24,479 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:36:24,715 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:36:24,716 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:36:25,036 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:36:25,337 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:36:25,338 | ETH-USD | ENTRY: 1856.25 | SL: 1766.09705 | TP: 2036.55589 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:36:25,625 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:38:34,877 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:38:35,103 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:38:35,318 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:38:35,530 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:38:35,736 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:38:35,980 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:38:35,981 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:38:36,211 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:38:36,211 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:38:36,499 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:38:36,823 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:38:36,823 | ETH-USD | ENTRY: 1856.18994 | SL: 1766.037 | TP: 2036.49583 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:38:37,089 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:40:46,689 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:40:46,916 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:40:47,136 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:40:47,391 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:40:47,658 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:40:47,881 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:40:47,882 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:40:48,111 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:40:48,112 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:40:48,459 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:40:48,770 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:40:48,770 | ETH-USD | ENTRY: 1856.10999 | SL: 1765.95704 | TP: 2036.41588 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:40:49,065 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:50:05,785 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:50:06,005 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:50:06,227 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 11:50:06,511 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 11:50:06,731 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 11:50:06,936 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:50:06,937 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 11:50:07,175 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 11:50:07,176 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 11:50:07,480 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 11:50:07,907 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 11:50:07,907 | ETH-USD | ENTRY: 1856.56006 | SL: 1766.40711 | TP: 2036.86595 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 11:50:08,195 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:00:01,311 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:00:01,547 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:00:01,818 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:00:02,101 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:00:02,335 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 12:00:02,537 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:00:02,538 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 12:00:02,763 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:00:02,763 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 12:00:03,064 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 12:00:03,366 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 12:00:03,366 | ETH-USD | ENTRY: 1856.06006 | SL: 1765.90711 | TP: 2036.36595 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 12:00:03,640 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:01:11,441 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:01:11,661 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:01:11,986 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:01:12,264 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:01:12,610 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 12:01:12,833 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:01:12,833 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 12:01:13,066 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:01:13,066 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 12:01:13,364 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 12:01:13,656 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 12:01:13,656 | ETH-USD | ENTRY: 1856.02002 | SL: 1765.86707 | TP: 2036.32591 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 12:01:13,956 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:10:35,935 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:10:36,359 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:10:36,585 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:10:36,901 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:10:37,184 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 12:10:37,445 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:10:37,445 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 12:10:37,701 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:10:37,701 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 12:10:38,006 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 12:10:38,335 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 12:10:38,336 | ETH-USD | ENTRY: 1855.91003 | SL: 1765.75709 | TP: 2036.21592 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 12:10:38,699 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:11:51,857 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:11:52,063 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:11:52,389 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:11:52,610 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:11:52,936 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 12:11:53,138 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:11:53,138 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 12:11:53,369 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:11:53,369 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 12:11:53,684 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 12:11:54,048 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 12:11:54,048 | ETH-USD | ENTRY: 1855.91003 | SL: 1765.75709 | TP: 2036.21592 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 12:11:54,369 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:17:43,888 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:17:44,151 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:17:44,542 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:17:44,768 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:17:45,048 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 12:17:45,296 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:17:45,296 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 12:17:45,557 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:17:45,558 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 12:17:45,904 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 12:17:46,239 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 12:17:46,239 | ETH-USD | ENTRY: 1856.39001 | SL: 1766.23707 | TP: 2036.69591 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 12:17:46,528 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:26:55,386 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:26:55,605 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:26:55,877 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 12:26:56,095 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 12:26:56,358 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 12:26:56,565 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:26:56,565 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 12:26:56,816 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 12:26:56,817 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 12:26:57,166 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 12:26:57,467 | ETH-USD | Signal: BUY | Confidence: 40.0%
+2026-07-25 12:26:57,467 | ETH-USD | ENTRY: 1856.76001 | SL: 1766.60706 | TP: 2037.0659 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 12:26:57,757 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 13:09:59,093 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:09:59,389 | GBPUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 13:09:59,747 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:10:00,057 | AUDUSD=X | Signal: HOLD | Confidence: 20.0%
+2026-07-25 13:10:00,435 | CAD=X | Signal: HOLD | Confidence: 0.0%
+2026-07-25 13:10:00,741 | GC=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 13:10:00,742 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 13:10:01,152 | SI=F | Signal: SELL | Confidence: 40.0%
+2026-07-25 13:10:01,160 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 13:10:01,573 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:10:02,014 | ETH-USD | Signal: BUY | Confidence: 80.0%
+2026-07-25 13:10:02,014 | ETH-USD | ENTRY: 1861.18994 | SL: 1771.037 | TP: 2041.49583 | RR: 2.0 | POSITION: 0.1109
+2026-07-25 13:10:02,406 | SOL-USD | Signal: HOLD | Confidence: 20.0%
+2026-07-25 13:16:33,607 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:16:33,896 | GBPUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:16:34,181 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:16:34,524 | AUDUSD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:16:34,859 | CAD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:16:35,161 | GC=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:16:35,516 | SI=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:16:35,940 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:16:36,325 | ETH-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 13:16:36,716 | SOL-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 13:25:26,641 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:25:26,956 | GBPUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:25:27,283 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:25:27,610 | AUDUSD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:25:27,971 | CAD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:25:28,260 | GC=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:25:28,535 | SI=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:25:28,933 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:25:29,321 | ETH-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:25:29,708 | SOL-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 13:34:44,155 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:34:44,630 | GBPUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:34:45,159 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:34:45,464 | AUDUSD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:34:45,875 | CAD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:34:46,190 | GC=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:34:46,463 | SI=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:34:46,845 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:34:47,242 | ETH-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:34:47,614 | SOL-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 13:35:01,186 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:35:01,447 | GBPUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:35:01,924 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:35:02,316 | AUDUSD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:35:02,646 | CAD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:35:02,995 | GC=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:35:03,319 | SI=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:35:03,699 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:35:04,127 | ETH-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:35:04,563 | SOL-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 13:39:15,435 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:39:15,725 | GBPUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:39:16,011 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 13:39:16,486 | AUDUSD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:39:16,897 | CAD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 13:39:17,240 | GC=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:39:17,525 | SI=F | Signal: HOLD | Confidence: 30%
+2026-07-25 13:39:17,928 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:39:18,464 | ETH-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 13:39:18,855 | SOL-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 14:08:53,708 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:08:54,226 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:08:56,127 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 14:32:54,590 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:32:57,233 | GBPUSD=X | Signal: HOLD | Confidence: 10%
+2026-07-25 14:32:57,492 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:35:32,300 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:37:41,433 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:37:42,031 | GBPUSD=X | Signal: HOLD | Confidence: 30%
+2026-07-25 14:37:42,326 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 14:37:42,926 | AUDUSD=X | Signal: HOLD | Confidence: 40%
+2026-07-25 14:37:43,467 | CAD=X | Signal: HOLD | Confidence: 10%
+2026-07-25 14:37:43,984 | GC=F | Signal: HOLD | Confidence: 10%
+2026-07-25 14:37:44,536 | SI=F | Signal: HOLD | Confidence: 10%
+2026-07-25 14:37:44,947 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 14:37:45,572 | ETH-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 14:37:46,256 | SOL-USD | Signal: SELL | Confidence: 50%
+2026-07-25 14:37:46,256 | SOL-USD | ENTRY: 73.84 | SL: 77.00707 | TP: 67.50585 | RR: 2.0 | POSITION: 3.1575
