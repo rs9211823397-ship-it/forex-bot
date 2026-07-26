@@ -86,7 +86,7 @@ class MarketData:
         return data
 
 
-    def download_all_data(self):
+    def download_all_data(self, interval=None):
 
         market_data = {}
 
@@ -100,7 +100,7 @@ class MarketData:
 
                 try:
 
-                    data = self.download_data(symbol)
+                    data = self.download_data(symbol, interval)
 
                     market_data[symbol] = data
 

@@ -27,6 +27,10 @@ def run_bot():
 
     all_data = market.download_all_data()
 
+    higher_tf_data = market.download_all_data(
+        interval="1h"
+    )
+
     # Current prices for equity calculation
     current_prices = {}
 
@@ -43,7 +47,8 @@ def run_bot():
 
             signal = signal_engine.generate_signal(
                 analyzed_data,
-                symbol
+                symbol,
+                higher_tf_data.get(symbol)
             )
 
             logger.log_signal(

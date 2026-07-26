@@ -15,7 +15,7 @@ class SignalEngine:
         self.trade_quality = TradeQuality()
 
 
-    def generate_signal(self, data, symbol):
+    def generate_signal(self, data, symbol, higher_tf=None):
 
         latest = data.iloc[-1]
 
@@ -240,6 +240,42 @@ class SignalEngine:
 
         score += structure_score
 
+
+        # ==========================
+        # LAYER 8 - MULTI TIMEFRAME
+        # ==========================
+
+        mtf_confirmed = True
+        mtf_result = None
+
+        if higher_tf is not None:
+
+            mtf_result = self.mtf.analyze(
+                higher_tf,
+                data
+            )
+
+            if mtf_result["confirmation"] == "BUY":
+
+                mtf_confirmed = True
+                reasons.append(
+                    "Multi timeframe BUY confirmation"
+                )
+
+            elif mtf_result["confirmation"] == "SELL":
+
+                mtf_confirmed = True
+                reasons.append(
+                    "Multi timeframe SELL confirmation"
+                )
+
+            else:
+
+                mtf_confirmed = False
+                reasons.append(
+                    "Multi timeframe rejected"
+                )
+
         # ==========================
         # CONFIDENCE
         # ==========================
@@ -279,7 +315,7 @@ class SignalEngine:
             candle_score=candle_score,
             volume_score=volume_score,
             adx=latest["ADX"],
-            mtf_confirmed=True
+            mtf_confirmed=mtf_confirmed
         )
 
         reasons.append(
