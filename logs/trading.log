@@ -1050,3 +1050,15 @@
 2026-07-25 15:53:55,946 | BTC-USD | Signal: HOLD | Confidence: 0%
 2026-07-25 15:53:56,734 | ETH-USD | Signal: HOLD | Confidence: 20%
 2026-07-25 15:53:57,446 | SOL-USD | Signal: HOLD | Confidence: 40%
+2026-07-25 16:48:56,612 | EURUSD=X | Signal: HOLD | Confidence: 0%
+2026-07-25 16:48:57,162 | GBPUSD=X | Signal: HOLD | Confidence: 10%
+2026-07-25 16:48:57,455 | JPY=X | Signal: HOLD | Confidence: 0%
+2026-07-25 16:48:58,066 | AUDUSD=X | Signal: HOLD | Confidence: 20%
+2026-07-25 16:48:58,642 | CAD=X | Signal: HOLD | Confidence: 30%
+2026-07-25 16:48:59,263 | GC=F | Signal: SELL | Confidence: 50%
+2026-07-25 16:48:59,264 | GC=F | ENTRY: 4067.6001 | SL: 4169.06438 | TP: 3864.67153 | RR: 2.0 | POSITION: 0.0986
+2026-07-25 16:48:59,963 | SI=F | Signal: SELL | Confidence: 50%
+2026-07-25 16:48:59,963 | SI=F | ENTRY: 58.656 | SL: 61.31089 | TP: 53.34621 | RR: 2.0 | POSITION: 3.7666
+2026-07-25 16:49:00,320 | BTC-USD | Signal: HOLD | Confidence: 0%
+2026-07-25 16:49:00,960 | ETH-USD | Signal: HOLD | Confidence: 20%
+2026-07-25 16:49:01,578 | SOL-USD | Signal: HOLD | Confidence: 40%

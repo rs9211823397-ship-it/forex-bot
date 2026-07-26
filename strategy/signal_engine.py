@@ -1,5 +1,7 @@
 from structure.market_structure import MarketStructure
 from price_action.candles import CandlePatterns
+from strategy.multi_timeframe import MultiTimeframeAnalyzer
+from ai.trade_quality import TradeQuality
 
 
 class SignalEngine:
@@ -9,6 +11,8 @@ class SignalEngine:
 
         self.market_structure = MarketStructure()
         self.candles = CandlePatterns()
+        self.mtf = MultiTimeframeAnalyzer()
+        self.trade_quality = TradeQuality()
 
 
     def generate_signal(self, data, symbol):
@@ -127,6 +131,22 @@ class SignalEngine:
                 )
 
 
+            elif pattern == "STRONG BULLISH CANDLE":
+
+                candle_score += 5
+                reasons.append(
+                    "Bullish momentum candle"
+                )
+
+
+            elif pattern == "STRONG BEARISH CANDLE":
+
+                candle_score -= 5
+                reasons.append(
+                    "Bearish momentum candle"
+                )
+
+
             else:
 
                 reasons.append(pattern)
@@ -225,14 +245,70 @@ class SignalEngine:
         # ==========================
         confidence = abs(score)
 
-        if score >= 65:
+        bullish_checks = [
+            trend_score > 0,
+            momentum > 0,
+            candle_score > 0,
+            structure_score > 0
+        ]
+
+        bearish_checks = [
+            trend_score < 0,
+            momentum < 0,
+            candle_score < 0,
+            structure_score < 0
+        ]
+
+        bullish_confirmations = sum(bullish_checks)
+        bearish_confirmations = sum(bearish_checks)
+
+        if score >= 70 and bullish_confirmations >= 3:
             signal = "BUY"
 
-        elif score <= -50:
+        elif score <= -70 and bearish_confirmations >= 3:
             signal = "SELL"
 
         else:
             signal = "HOLD"
+
+        
+        quality = self.trade_quality.evaluate(
+            trend_score=trend_score,
+            momentum_score=momentum,
+            structure_score=structure_score,
+            candle_score=candle_score,
+            volume_score=volume_score,
+            adx=latest["ADX"],
+            mtf_confirmed=True
+        )
+
+        reasons.append(
+            f"Trade Quality: {quality['quality']}/100"
+        )
+
+        if not quality["approved"]:
+            signal = "HOLD"
+
+
+        # ==========================
+        # DECISION SUMMARY
+        # ==========================
+
+        positive_reasons = [
+            r for r in reasons
+            if "Bullish" in r
+            or "confirmed" in r
+            or "bullish" in r
+        ]
+
+
+        negative_reasons = [
+            r for r in reasons
+            if "Bearish" in r
+            or "Weak" in r
+            or "bearish" in r
+        ]
+
 
         return {
 
@@ -242,6 +318,14 @@ class SignalEngine:
 
             "score": score,
 
-            "reasons": reasons
+            "reasons": reasons,
+
+            "decision_summary": {
+
+                "positive": positive_reasons,
+
+                "warnings": negative_reasons
+
+            }
 
         }

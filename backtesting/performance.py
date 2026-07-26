@@ -3,35 +3,26 @@ class PerformanceReport:
     def __init__(self, trades):
         self.trades = trades
 
-
     def completed_trades(self):
-
         return [
             t for t in self.trades
-            if t["type"] == "SELL"
+            if t["type"] == "EXIT"
         ]
-
 
     def total_trades(self):
-
         return len(self.completed_trades())
 
-
     def winning_trades(self):
-
         return [
             t for t in self.completed_trades()
-            if t.get("profit", 0) > 0
+            if t["profit"] > 0
         ]
-
 
     def losing_trades(self):
-
         return [
             t for t in self.completed_trades()
-            if t.get("profit", 0) <= 0
+            if t["profit"] <= 0
         ]
-
 
     def win_rate(self):
 
@@ -41,21 +32,16 @@ class PerformanceReport:
             return 0
 
         return round(
-            (len(self.winning_trades()) / total) * 100,
+            len(self.winning_trades()) / total * 100,
             2
         )
-
 
     def total_profit(self):
 
         return round(
-            float(sum(
-                t.get("profit", 0)
-                for t in self.completed_trades()
-            )),
+            sum(t["profit"] for t in self.completed_trades()),
             2
         )
-
 
     def average_win(self):
 
@@ -65,10 +51,9 @@ class PerformanceReport:
             return 0
 
         return round(
-            float(sum(t["profit"] for t in wins) / len(wins)),
+            sum(t["profit"] for t in wins) / len(wins),
             2
         )
-
 
     def average_loss(self):
 
@@ -78,31 +63,27 @@ class PerformanceReport:
             return 0
 
         return round(
-            float(sum(t["profit"] for t in losses) / len(losses)),
+            sum(t["profit"] for t in losses) / len(losses),
             2
         )
-
 
     def profit_factor(self):
 
-        total_win = sum(
-            t["profit"]
-            for t in self.winning_trades()
+        wins = sum(
+            t["profit"] for t in self.winning_trades()
         )
 
-        total_loss = abs(sum(
-            t["profit"]
-            for t in self.losing_trades()
+        losses = abs(sum(
+            t["profit"] for t in self.losing_trades()
         ))
 
-        if total_loss == 0:
+        if losses == 0:
             return 0
 
         return round(
-            float(total_win / total_loss),
+            wins / losses,
             2
         )
-
 
     def equity_curve(self):
 
@@ -110,12 +91,10 @@ class PerformanceReport:
         curve = []
 
         for trade in self.completed_trades():
-
-            balance += float(trade.get("profit", 0))
+            balance += trade["profit"]
             curve.append(balance)
 
         return curve
-
 
     def max_drawdown(self):
 
@@ -129,16 +108,10 @@ class PerformanceReport:
 
         for value in curve:
 
-            if value > peak:
-                peak = value
-
-            drawdown = peak - value
-
-            if drawdown > max_dd:
-                max_dd = drawdown
+            peak = max(peak, value)
+            max_dd = max(max_dd, peak - value)
 
         return round(max_dd, 2)
-
 
     def strategy_rating(self):
 
@@ -153,9 +126,7 @@ class PerformanceReport:
         elif pf >= 1:
             return "C"
 
-        else:
-            return "FAIL"
-
+        return "FAIL"
 
     def summary(self):
 

@@ -37,30 +37,33 @@ class MarketStructure:
         swing_lows = []
 
 
+        highs = df["high"].tolist()
+        lows = df["low"].tolist()
+
+
         for i in range(
             self.lookback,
             len(df)-self.lookback
         ):
 
+            high = highs[i]
+            low = lows[i]
 
-            high = df["high"].iloc[i]
-            low = df["low"].iloc[i]
 
-
-            left_highs = df["high"].iloc[
+            left_highs = highs[
                 i-self.lookback:i
             ]
 
-            right_highs = df["high"].iloc[
+            right_highs = highs[
                 i+1:i+self.lookback+1
             ]
 
 
-            left_lows = df["low"].iloc[
+            left_lows = lows[
                 i-self.lookback:i
             ]
 
-            right_lows = df["low"].iloc[
+            right_lows = lows[
                 i+1:i+self.lookback+1
             ]
 
@@ -75,7 +78,6 @@ class MarketStructure:
                 )
 
 
-
             if low < min(left_lows) and low < min(right_lows):
 
                 swing_lows.append(
@@ -87,7 +89,6 @@ class MarketStructure:
 
 
         return swing_highs, swing_lows
-
 
 
 
@@ -161,6 +162,35 @@ class MarketStructure:
         return "SIDEWAYS"
 
 
+    def get_structure_summary(self, df):
+
+        df = self.normalize_columns(df)
+
+        trend = self.detect_trend(df)
+
+        bos = self.detect_bos(df)
+
+        choch = self.detect_choch(df)
+
+        levels = self.support_resistance(df)
+
+
+        return {
+
+            "trend": trend,
+
+            "bos": bos,
+
+            "choch": choch,
+
+            "support": levels["support"],
+
+            "resistance": levels["resistance"]
+
+        }
+
+
+
 
     # compatibility with old code
     def trend(self, df):
@@ -202,50 +232,76 @@ class MarketStructure:
 
         df = self.normalize_columns(df)
 
-
         highs, lows = self.find_swings(df)
 
-
         if len(highs) < 2 or len(lows) < 2:
-
             return "NO BOS"
 
 
-
-        last_high = highs[-2]["price"]
-
-        last_low = lows[-2]["price"]
+        previous_high = highs[-2]["price"]
+        previous_low = lows[-2]["price"]
 
 
-        current_price = df["close"].iloc[-1]
+        current_close = df["close"].iloc[-1]
+        current_high = df["high"].iloc[-1]
+        current_low = df["low"].iloc[-1]
 
 
-
-        if current_price > last_high:
-
+        # confirmed bullish break
+        if (
+            current_close > previous_high
+            and current_high > previous_high
+        ):
             return "BULLISH BOS"
 
 
-
-        if current_price < last_low:
-
+        # confirmed bearish break
+        if (
+            current_close < previous_low
+            and current_low < previous_low
+        ):
             return "BEARISH BOS"
-
 
 
         return "NO BOS"
 
 
 
-
     def detect_choch(self, df):
+
+        df = self.normalize_columns(df)
 
         structure = self.detect_structure(df)
 
-
         if len(structure) < 4:
-
             return "NO CHoCH"
+
+
+        recent = structure[-4:]
+
+        bos = self.detect_bos(df)
+
+
+        # bearish reversal confirmation
+        if (
+            "HH" in recent
+            and "HL" in recent
+            and bos == "BEARISH BOS"
+        ):
+            return "BEARISH CHoCH"
+
+
+        # bullish reversal confirmation
+        if (
+            "LH" in recent
+            and "LL" in recent
+            and bos == "BULLISH BOS"
+        ):
+            return "BULLISH CHoCH"
+
+
+        return "NO CHoCH"
+
 
 
 

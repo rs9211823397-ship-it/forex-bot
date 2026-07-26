@@ -13,7 +13,18 @@ class MarketData:
 
     def download_data(self, symbol, interval=None):
 
-        if interval in ["1h", "30m", "15m"]:
+        if interval == "15m":
+
+            data = yf.download(
+                symbol,
+                period="60d",
+                interval=interval,
+                progress=False,
+                auto_adjust=False
+            )
+
+
+        elif interval in ["1h", "30m"]:
 
             data = yf.download(
                 symbol,
