@@ -176,7 +176,7 @@ class PaperTrader:
                 trade["status"]
             ])
 
-        def save_trades(self):
+    def save_trades(self):
 
         data = {
             "open_trades": self.open_trades,
@@ -185,7 +185,6 @@ class PaperTrader:
 
         with open(self.trade_file, "w") as file:
             json.dump(data, file, indent=4)
-
 
 
     def load_trades(self):

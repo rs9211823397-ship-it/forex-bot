@@ -2,8 +2,10 @@ numpy
 pandas
 matplotlib
 scikit-learn
-tensorflow
 pandas-ta
 yfinance
 plotly
 streamlit
+
+# Optional runtime dependencies
+# tensorflow

@@ -1,0 +1,38 @@
+Calculating signals...
+Processed 0/5707 candles
+Processed 500/5707 candles
+Processed 1000/5707 candles
+Processed 1500/5707 candles
+Processed 2000/5707 candles
+Processed 2500/5707 candles
+Processed 3000/5707 candles
+Processed 3500/5707 candles
+Processed 4000/5707 candles
+Processed 4500/5707 candles
+Processed 5000/5707 candles
+Processed 5500/5707 candles
+Signals calculated: 5707
+==============================
+BACKTEST REPORT
+==============================
+{'Completed Trades': 12, 'Winning Trades': 5, 'Losing Trades': 7, 'Win Rate %': 41.67, 'Net Profit': 56.8, 'Average Win': 40.46, 'Average Loss': -20.79, 'Profit Factor': 1.39, 'Max Drawdown': 68.15, 'Strategy Rating': 'C'}
+
+TRADE DETAILS
+================
+SHORT | TAKE PROFIT | P/L: 17.05
+SHORT | TAKE PROFIT | P/L: 56.07
+SHORT | STOP LOSS | P/L: -35.0
+SHORT | STOP LOSS | P/L: -24.37
+SHORT | TAKE PROFIT | P/L: 86.45
+SHORT | STOP LOSS | P/L: -14.41
+SHORT | STOP LOSS | P/L: -19.05
+LONG | STOP LOSS | P/L: -19.36
+LONG | STOP LOSS | P/L: -15.33
+SHORT | TAKE PROFIT | P/L: 23.74
+SHORT | STOP LOSS | P/L: -17.98
+LONG | TAKE PROFIT | P/L: 18.99
+
+WIN/LOSS SUMMARY
+================
+Take Profits: 5
+Stop Losses: 7

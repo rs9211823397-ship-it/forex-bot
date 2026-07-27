@@ -1,0 +1,4 @@
+Backtest validation completed successfully.
+
+See outputs/backtest_run.log for the full run output.
+Baseline output generated on 2026-07-27T17:05:15Z
