@@ -38,7 +38,7 @@ for i in range(len(data)):
     result = engine.generate_signal(
         df,
         symbol,
-        None
+        higher_tf
     )
 
     signals.append(result["signal"])
