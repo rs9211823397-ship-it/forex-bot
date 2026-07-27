@@ -13,6 +13,11 @@ symbol = "ETH-USD"
 
 data = market.download_data(
     symbol,
+    interval="15m"
+)
+
+higher_tf = market.download_data(
+    symbol,
     interval="1h"
 )
 
@@ -32,7 +37,8 @@ for i in range(len(data)):
 
     result = engine.generate_signal(
         df,
-        symbol
+        symbol,
+        higher_tf
     )
 
     signals.append(result["signal"])

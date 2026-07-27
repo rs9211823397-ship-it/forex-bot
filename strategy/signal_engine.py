@@ -165,7 +165,8 @@ class SignalEngine:
         if not symbol.endswith("=X"):
 
             volume_ok = (
-                latest["volume"] > latest["VOL_SMA20"]
+                len(data) > 1
+                and latest["volume"] > latest["VOL_SMA20"]
                 and latest["OBV"] > data.iloc[-2]["OBV"]
             )
 
