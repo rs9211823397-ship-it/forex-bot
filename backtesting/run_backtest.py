@@ -57,7 +57,11 @@ backtest = BacktestEngine(
 
 trades = backtest.run()
 
-report = PerformanceReport(trades)
+report = PerformanceReport(
+    trades,
+    initial_equity=backtest.initial_equity,
+    equity_curve=backtest.equity_history
+)
 
 print("==============================")
 print("BACKTEST REPORT")

@@ -1,4 +1,6 @@
 from config.settings import RISK_PERCENT
+from math import isfinite
+from risk.instrument import InstrumentSpec
 
 
 class RiskManager:
@@ -38,15 +40,57 @@ class RiskManager:
         }
 
 
-    def position_size(self, account_balance, entry_price, stop_loss):
+    def position_size(
+        self,
+        account_balance,
+        entry_price,
+        stop_loss,
+        instrument=None,
+        side=None
+    ):
 
         risk_amount = account_balance * (self.risk_percent / 100)
 
         price_risk = abs(entry_price - stop_loss)
 
-        if price_risk == 0:
+        if (
+            not isfinite(float(risk_amount))
+            or risk_amount <= 0
+            or not isfinite(float(price_risk))
+            or price_risk == 0
+        ):
             return 0
 
-        size = risk_amount / price_risk
+        if instrument is None:
+            size = risk_amount / price_risk
 
-        return round(size, 4)
+            return round(size, 4)
+
+        if not isinstance(instrument, InstrumentSpec):
+            raise TypeError(
+                "instrument must be an InstrumentSpec instance"
+            )
+
+        resolved_side = side
+
+        if resolved_side is None:
+            resolved_side = (
+                "BUY"
+                if float(stop_loss) < float(entry_price)
+                else "SELL"
+            )
+
+        cash_risk_per_quantity = (
+            instrument.planned_loss_per_quantity(
+                entry_reference=entry_price,
+                stop_reference=stop_loss,
+                side=resolved_side
+            )
+        )
+
+        if cash_risk_per_quantity <= 0:
+            return 0
+
+        size = risk_amount / cash_risk_per_quantity
+
+        return instrument.normalize_quantity(size)
