@@ -5,15 +5,26 @@ from execution.trade_manager import TradeManager
 from risk.risk_manager import RiskManager
 from bot_controller import BotController
 from logs.logger import TradeLogger
-from config.settings import ACCOUNT_BALANCE
+from config.instruments import get_instrument_spec
+from config.settings import HIGHER_TIMEFRAME, TRADING_TIMEFRAME
+from data.timeframes import frame_decision_time
 from paper.paper_trader import PaperTrader
+from risk.protection import (
+    PortfolioRiskManager,
+    RiskContext,
+    TradeRiskRequest,
+)
 
 
 market = MarketData()
 indicator = TechnicalIndicators()
-signal_engine = SignalEngine()
+signal_engine = SignalEngine.production(
+    higher_timeframe=HIGHER_TIMEFRAME,
+    lower_timeframe=TRADING_TIMEFRAME,
+)
 trade_manager = TradeManager()
 risk_manager = RiskManager()
+portfolio_risk_manager = PortfolioRiskManager()
 bot = BotController()
 logger = TradeLogger()
 paper_trader = PaperTrader()
@@ -25,10 +36,12 @@ def run_bot():
     print("AI MULTI-ASSET TRADING PLATFORM")
     print("=" * 60)
 
-    all_data = market.download_all_data()
+    all_data = market.download_all_data(
+        interval=TRADING_TIMEFRAME
+    )
 
     higher_tf_data = market.download_all_data(
-        interval="1h"
+        interval=HIGHER_TIMEFRAME
     )
 
     # Current prices for equity calculation
@@ -66,6 +79,7 @@ def run_bot():
 
             risk_plan = None
             position = None
+            portfolio_assessment = None
 
             if signal["signal"] != "HOLD":
 
@@ -76,31 +90,73 @@ def run_bot():
                 )
 
                 if risk_plan:
+                    instrument = get_instrument_spec(symbol)
+                    current_equity = float(paper_trader.equity)
 
                     position = risk_manager.position_size(
-                        ACCOUNT_BALANCE,
-                        risk_plan["entry"],
-                        risk_plan["stop_loss"]
-                    )
-
-                    logger.log_trade(
-                        symbol,
-                        risk_plan,
-                        position
-                    )
-
-                    paper_trade = paper_trader.open_trade(
-                        symbol,
-                        signal["signal"],
+                        current_equity,
                         risk_plan["entry"],
                         risk_plan["stop_loss"],
-                        risk_plan["take_profit"],
-                        position
+                        instrument=instrument,
+                        side=signal["signal"],
                     )
 
-                    if paper_trade:
-                        print("\nPaper Trade Opened:")
-                        print(paper_trade)
+                    decision_time = frame_decision_time(
+                        analyzed_data,
+                        TRADING_TIMEFRAME,
+                    ).to_pydatetime()
+                    requested_risk = (
+                        current_equity
+                        * (risk_manager.risk_percent / 100.0)
+                    )
+                    portfolio_assessment = (
+                        portfolio_risk_manager.assess(
+                            TradeRiskRequest(
+                                decision_time=decision_time,
+                                symbol=symbol,
+                                direction=signal["signal"],
+                                requested_quantity=position,
+                                risk_amount=requested_risk,
+                                equity=current_equity,
+                            ),
+                            RiskContext(),
+                        )
+                        if position > 0
+                        else None
+                    )
+
+                    if (
+                        portfolio_assessment is not None
+                        and portfolio_assessment.allowed
+                    ):
+                        position = (
+                            portfolio_assessment.approved_quantity
+                        )
+                        logger.log_trade(
+                            symbol,
+                            risk_plan,
+                            position
+                        )
+
+                        paper_trade = paper_trader.open_trade(
+                            symbol,
+                            signal["signal"],
+                            risk_plan["entry"],
+                            risk_plan["stop_loss"],
+                            risk_plan["take_profit"],
+                            position
+                        )
+
+                        if paper_trade:
+                            print("\nPaper Trade Opened:")
+                            print(paper_trade)
+                    elif portfolio_assessment is not None:
+                        print(
+                            "\nPortfolio Risk Block:",
+                            ", ".join(
+                                portfolio_assessment.reason_codes
+                            ),
+                        )
 
             print("\n" + "=" * 60)
             print(f"Asset      : {symbol}")
@@ -123,6 +179,11 @@ def run_bot():
                 print(f"Take Profit   : {risk_plan['take_profit']}")
                 print(f"Risk Reward   : 1:{risk_plan['risk_reward']}")
                 print(f"Position Size : {position}")
+                if portfolio_assessment is not None:
+                    print(
+                        "Portfolio Risk : "
+                        f"{portfolio_assessment.action.value}"
+                    )
 
             print("\nReasons:")
 

@@ -3,6 +3,7 @@ from strategy.signal_engine import SignalEngine
 from backtesting.backtest_engine import BacktestEngine
 from backtesting.performance import PerformanceReport
 from indicators.technical import TechnicalIndicators
+from config.instruments import get_instrument_spec
 
 
 market = MarketData()
@@ -52,7 +53,8 @@ def run_strategy(index):
 
 backtest = BacktestEngine(
     data,
-    run_strategy
+    run_strategy,
+    instrument=get_instrument_spec(symbol),
 )
 
 trades = backtest.run()

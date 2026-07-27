@@ -2,9 +2,11 @@ SYMBOLS = {
     "forex": [
         "EURUSD=X",
         "GBPUSD=X",
-        "JPY=X",
+        "USDJPY=X",
         "AUDUSD=X",
-        "CAD=X"
+        "USDCAD=X",
+        "USDCHF=X",
+        "NZDUSD=X"
     ],
 
     "metals": [

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+import os
+import subprocess
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import pandas as pd
 
@@ -36,13 +39,26 @@ class ExperimentRecord:
     expectancy: float
     average_r: float
     ending_equity: float
+    source_revision: str = "unversioned"
+    random_seed: int = 0
+    dataset_source: str = "unknown"
+    instrument_config: dict = field(default_factory=dict)
+    execution_config: dict = field(default_factory=dict)
+    identity_sha256: str = ""
 
     def to_dict(self):
         return asdict(self)
 
     @classmethod
     def from_dict(cls, values):
-        return cls(**values)
+        payload = dict(values)
+        payload.setdefault("source_revision", "unversioned")
+        payload.setdefault("random_seed", 0)
+        payload.setdefault("dataset_source", "unknown")
+        payload.setdefault("instrument_config", {})
+        payload.setdefault("execution_config", {})
+        payload.setdefault("identity_sha256", "")
+        return cls(**payload)
 
 
 def _canonical_json(values):
@@ -57,6 +73,82 @@ def _canonical_json(values):
         raise ExperimentError(
             "Experiment values must be finite JSON data"
         ) from exc
+
+
+def _json_value(value):
+    """Convert experiment configuration into stable JSON-compatible data."""
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_value(asdict(value))
+
+    if isinstance(value, dict):
+        return {
+            str(key): _json_value(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+
+    if isinstance(value, Path):
+        return str(value)
+
+    return value
+
+
+def _source_revision():
+    """
+    Resolve the source revision without making experiment creation depend on Git.
+
+    CI and release jobs can pin ``FOREX_BOT_SOURCE_REVISION``. Local runs use
+    the checked-out commit when available and otherwise remain explicit about
+    being unversioned.
+    """
+
+    configured = os.environ.get("FOREX_BOT_SOURCE_REVISION")
+
+    if configured:
+        return configured.strip()
+
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError
+    ):
+        return "unversioned"
+
+    revision = completed.stdout.strip()
+    return revision or "unversioned"
+
+
+def _atomic_write(path, content):
+    """Atomically replace one deterministic research artifact."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+
+    try:
+        with NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            delete=False
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+
+        temporary.replace(path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
 class ExperimentTracker:
@@ -77,7 +169,12 @@ class ExperimentTracker:
         strategy,
         dataset,
         parameters,
-        report
+        report,
+        *,
+        source_revision=None,
+        random_seed=0,
+        instrument_config=None,
+        execution_config=None
     ):
         if not isinstance(dataset, DatasetMetadata):
             raise ExperimentError(
@@ -89,15 +186,47 @@ class ExperimentTracker:
                 "report must be PerformanceReport"
             )
 
+        if isinstance(random_seed, bool) or not isinstance(
+            random_seed,
+            int
+        ):
+            raise ExperimentError("random_seed must be an integer")
+
         canonical_parameters = json.loads(
-            _canonical_json(parameters)
+            _canonical_json(_json_value(parameters))
         )
+        canonical_instrument = json.loads(
+            _canonical_json(
+                _json_value(instrument_config or {})
+            )
+        )
+        canonical_execution = json.loads(
+            _canonical_json(
+                _json_value(execution_config or {})
+            )
+        )
+        revision = str(
+            source_revision
+            if source_revision is not None
+            else _source_revision()
+        ).strip()
+
+        if not revision:
+            raise ExperimentError(
+                "source_revision cannot be empty"
+            )
+
         identity = {
             "strategy": str(strategy),
             "dataset_version": dataset.dataset_version,
+            "dataset_sha256": dataset.content_sha256,
             "symbol": dataset.symbol,
             "timeframe": dataset.timeframe,
-            "parameters": canonical_parameters
+            "parameters": canonical_parameters,
+            "source_revision": revision,
+            "random_seed": random_seed,
+            "instrument_config": canonical_instrument,
+            "execution_config": canonical_execution
         }
         digest = hashlib.sha256(
             _canonical_json(identity).encode("utf-8")
@@ -123,7 +252,13 @@ class ExperimentTracker:
             ),
             expectancy=report.expectancy(),
             average_r=report.average_r(),
-            ending_equity=report.ending_equity()
+            ending_equity=report.ending_equity(),
+            source_revision=revision,
+            random_seed=random_seed,
+            dataset_source=dataset.source,
+            instrument_config=canonical_instrument,
+            execution_config=canonical_execution,
+            identity_sha256=digest
         )
 
     def save(self, record):
@@ -149,7 +284,7 @@ class ExperimentTracker:
                     "Experiment ID collision with different results"
                 )
         else:
-            path.write_text(content, encoding="utf-8")
+            _atomic_write(path, content.encode("utf-8"))
 
         return path
 
@@ -160,7 +295,12 @@ class ExperimentTracker:
         parameters,
         trades,
         initial_equity,
-        equity_curve=None
+        equity_curve=None,
+        *,
+        source_revision=None,
+        random_seed=0,
+        instrument_config=None,
+        execution_config=None
     ):
         report = PerformanceReport(
             trades,
@@ -171,7 +311,11 @@ class ExperimentTracker:
             strategy,
             dataset,
             parameters,
-            report
+            report,
+            source_revision=source_revision,
+            random_seed=random_seed,
+            instrument_config=instrument_config,
+            execution_config=execution_config
         )
         self.save(record)
         return record
@@ -183,6 +327,9 @@ class ExperimentTracker:
         parameters,
         data,
         strategy,
+        *,
+        source_revision=None,
+        random_seed=0,
         **engine_options
     ):
         """Run the existing engine and persist its experiment metrics."""
@@ -199,7 +346,16 @@ class ExperimentTracker:
             parameters,
             trades,
             engine.initial_equity,
-            equity_curve=engine.equity_history
+            equity_curve=engine.equity_history,
+            source_revision=source_revision,
+            random_seed=random_seed,
+            instrument_config=engine.instrument,
+            execution_config={
+                "initial_equity": engine.initial_equity,
+                "risk_percent": engine.risk_percent,
+                "same_bar_policy": engine.same_bar_policy,
+                "force_close": engine.force_close
+            }
         )
         return record, engine
 
@@ -252,7 +408,13 @@ class ExperimentTracker:
                 "max_drawdown_percent",
                 "expectancy",
                 "average_r",
-                "ending_equity"
+                "ending_equity",
+                "source_revision",
+                "random_seed",
+                "dataset_source",
+                "instrument_config",
+                "execution_config",
+                "identity_sha256"
             ])
 
         return (
@@ -270,14 +432,20 @@ class ExperimentTracker:
         path = self.output_dir / filename
         table = self.compare(records).copy()
 
-        if "parameters" in table.columns:
-            table["parameters"] = table["parameters"].map(
-                _canonical_json
-            )
+        for column in (
+            "parameters",
+            "instrument_config",
+            "execution_config"
+        ):
+            if column in table.columns:
+                table[column] = table[column].map(
+                    _canonical_json
+                )
 
-        table.to_csv(
-            path,
+        content = table.to_csv(
+            None,
             index=False,
             lineterminator="\n"
-        )
+        ).encode("utf-8")
+        _atomic_write(path, content)
         return path

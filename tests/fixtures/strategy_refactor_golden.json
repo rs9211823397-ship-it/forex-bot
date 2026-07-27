@@ -1,0 +1,65 @@
+[
+  {
+    "name": "crypto_with_htf",
+    "seed": 33,
+    "drift": 0.05,
+    "symbol": "ETH-USD",
+    "higher_timeframe": true,
+    "result": {
+      "signal": "HOLD",
+      "confidence": 75,
+      "score": 60,
+      "reasons": [
+        "Bullish EMA alignment",
+        "Weak momentum",
+        "Bullish price action: BULLISH PIN BAR",
+        "Weak volume",
+        "Market structure bullish",
+        "Bullish break of structure",
+        "Multi timeframe BUY confirmation",
+        "Trade Quality: 70/100"
+      ],
+      "decision_summary": {
+        "positive": [
+          "Bullish EMA alignment",
+          "Bullish price action: BULLISH PIN BAR",
+          "Market structure bullish",
+          "Bullish break of structure"
+        ],
+        "warnings": [
+          "Weak momentum",
+          "Weak volume"
+        ]
+      }
+    }
+  },
+  {
+    "name": "forex_with_htf",
+    "seed": 44,
+    "drift": -0.05,
+    "symbol": "GBPUSD=X",
+    "higher_timeframe": true,
+    "result": {
+      "signal": "HOLD",
+      "confidence": 50,
+      "score": -40,
+      "reasons": [
+        "Bearish EMA alignment",
+        "Weak momentum",
+        "No candle confirmation",
+        "Volume skipped (Forex)",
+        "Market structure bearish",
+        "Multi timeframe rejected",
+        "Trade Quality: 40/100"
+      ],
+      "decision_summary": {
+        "positive": [],
+        "warnings": [
+          "Bearish EMA alignment",
+          "Weak momentum",
+          "Market structure bearish"
+        ]
+      }
+    }
+  }
+]

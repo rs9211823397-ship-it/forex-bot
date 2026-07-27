@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from math import isfinite
@@ -256,16 +258,45 @@ class HistoricalDataStore:
     @staticmethod
     def _atomic_write(path, content):
         path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
 
-        with NamedTemporaryFile(
-            mode="wb",
-            dir=path.parent,
-            delete=False
-        ) as handle:
-            handle.write(content)
-            temporary = Path(handle.name)
+        try:
+            with NamedTemporaryFile(
+                mode="wb",
+                dir=path.parent,
+                delete=False
+            ) as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary = Path(handle.name)
 
-        temporary.replace(path)
+            temporary.replace(path)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+
+    def prefix_cache(
+        self,
+        data,
+        timeframe,
+        max_entries=32,
+        max_cached_rows=250000
+    ):
+        """
+        Build a bounded point-in-time cache from an immutable data snapshot.
+
+        Cached selections are keyed by the number of candles closed at the
+        requested decision time. Future rows are never part of a returned
+        prefix.
+        """
+
+        return CausalAsOfCache(
+            data,
+            timeframe,
+            max_entries=max_entries,
+            max_cached_rows=max_cached_rows
+        )
 
     def save(
         self,
@@ -483,3 +514,124 @@ class HistoricalDataStore:
             normalize_timeframe(timeframe),
             expected_version=expected_version
         )
+
+
+class CausalAsOfCache:
+    """
+    Bounded LRU cache for repeated closed-candle prefix selection.
+
+    The constructor takes a deep, validated snapshot. This makes selections
+    reproducible even if the caller later mutates its source DataFrame. Every
+    returned frame is also copied so downstream research cannot corrupt the
+    cached snapshot.
+    """
+
+    def __init__(
+        self,
+        data,
+        timeframe,
+        *,
+        max_entries=32,
+        max_cached_rows=250000
+    ):
+        if isinstance(max_entries, bool) or not isinstance(
+            max_entries,
+            int
+        ):
+            raise HistoricalDataError(
+                "max_entries must be an integer"
+            )
+
+        if max_entries <= 0:
+            raise HistoricalDataError(
+                "max_entries must be greater than zero"
+            )
+
+        if isinstance(max_cached_rows, bool) or not isinstance(
+            max_cached_rows,
+            int
+        ):
+            raise HistoricalDataError(
+                "max_cached_rows must be an integer"
+            )
+
+        if max_cached_rows <= 0:
+            raise HistoricalDataError(
+                "max_cached_rows must be greater than zero"
+            )
+
+        self.timeframe = normalize_timeframe(timeframe)
+        self.max_entries = max_entries
+        self.max_cached_rows = max_cached_rows
+        self._frame = HistoricalDataStore().prepare(
+            data,
+            self.timeframe
+        ).copy(deep=True)
+        self._close_times = pd.DatetimeIndex(
+            self._frame["close_time"]
+        )
+        self._cache = OrderedDict()
+        self._cached_rows = 0
+        self._hits = 0
+        self._misses = 0
+
+    def select(self, decision_time):
+        """Return candles whose close time is at or before decision_time."""
+
+        cutoff = normalize_timestamp(
+            decision_time,
+            "decision_time"
+        )
+        end = int(
+            self._close_times.searchsorted(
+                cutoff,
+                side="right"
+            )
+        )
+
+        if end in self._cache:
+            self._hits += 1
+            selected = self._cache.pop(end)
+            self._cache[end] = selected
+        else:
+            self._misses += 1
+            selected = self._frame.iloc[:end].copy(deep=True)
+            selected.attrs["timeframe"] = self.timeframe
+
+            if len(selected) <= self.max_cached_rows:
+                self._cache[end] = selected
+                self._cached_rows += len(selected)
+
+                while (
+                    len(self._cache) > self.max_entries
+                    or self._cached_rows > self.max_cached_rows
+                ):
+                    _, evicted = self._cache.popitem(
+                        last=False
+                    )
+                    self._cached_rows -= len(evicted)
+
+        return selected.copy(deep=True)
+
+    as_of = select
+
+    def clear(self):
+        """Release cached prefixes while retaining the immutable source."""
+
+        self._cache.clear()
+        self._cached_rows = 0
+        self._hits = 0
+        self._misses = 0
+
+    def cache_info(self):
+        """Return stable diagnostics without exposing cached market data."""
+
+        return {
+            "entries": len(self._cache),
+            "max_entries": self.max_entries,
+            "cached_rows": self._cached_rows,
+            "max_cached_rows": self.max_cached_rows,
+            "source_rows": len(self._frame),
+            "hits": self._hits,
+            "misses": self._misses
+        }

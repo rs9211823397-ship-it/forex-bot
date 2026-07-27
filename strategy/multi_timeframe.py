@@ -1,4 +1,11 @@
-"""Causal multi-timeframe alignment with legacy signal compatibility."""
+"""Causal multi-timeframe regime alignment.
+
+The higher timeframe has one responsibility: classify directional regime.
+It deliberately does not inspect lower-timeframe candle patterns or entry
+triggers.  ``analyze`` retains the historical dictionary response for older
+callers, but its ``confirmation`` value is now only a compatibility alias for
+the regime direction.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +21,11 @@ from data.timeframes import (
     timeframe_delta
 )
 from indicators.technical import TechnicalIndicators
-from price_action.candles import CandlePatterns
+
+
+BULLISH = "BULLISH"
+BEARISH = "BEARISH"
+NEUTRAL = "NEUTRAL"
 
 
 @dataclass(frozen=True)
@@ -79,6 +90,22 @@ class TimeframeHierarchy:
             for level in self.levels
         }
 
+    def validate_pair(self, higher_timeframe, lower_timeframe):
+        """Validate that two roles occur in the configured hierarchy."""
+
+        higher = normalize_timeframe(higher_timeframe)
+        lower = normalize_timeframe(lower_timeframe)
+
+        if higher not in self.levels or lower not in self.levels:
+            raise TimeframeError(
+                "Both timeframe roles must exist in the hierarchy"
+            )
+
+        if self.levels.index(higher) >= self.levels.index(lower):
+            raise TimeframeError(
+                "Higher timeframe must precede lower timeframe"
+            )
+
 
 class MultiTimeframeAnalyzer:
     """
@@ -89,10 +116,15 @@ class MultiTimeframeAnalyzer:
     def __init__(
         self,
         higher_timeframe=None,
-        lower_timeframe=None
+        lower_timeframe=None,
+        allow_untimed_legacy=True
     ):
         self.indicators = TechnicalIndicators()
-        self.candles = CandlePatterns()
+        # The default preserves the original two-argument API for old
+        # third-party callers. Production and research code must construct
+        # this class through ``production``/``research`` (or explicitly set
+        # this flag to False), which fail closed on untimed frames.
+        self.allow_untimed_legacy = bool(allow_untimed_legacy)
         self.higher_timeframe = (
             normalize_timeframe(higher_timeframe)
             if higher_timeframe is not None
@@ -112,6 +144,33 @@ class MultiTimeframeAnalyzer:
                 self.higher_timeframe,
                 self.lower_timeframe
             ))
+
+    @classmethod
+    def production(
+        cls,
+        higher_timeframe=None,
+        lower_timeframe=None
+    ):
+        """Return a fail-closed analyzer for production decisions."""
+
+        return cls(
+            higher_timeframe=higher_timeframe,
+            lower_timeframe=lower_timeframe,
+            allow_untimed_legacy=False
+        )
+
+    @classmethod
+    def research(
+        cls,
+        higher_timeframe=None,
+        lower_timeframe=None
+    ):
+        """Return a fail-closed analyzer for historical research."""
+
+        return cls.production(
+            higher_timeframe=higher_timeframe,
+            lower_timeframe=lower_timeframe
+        )
 
     def select_as_of(
         self,
@@ -175,6 +234,28 @@ class MultiTimeframeAnalyzer:
 
         return "SIDEWAYS"
 
+    def get_regime(
+        self,
+        df,
+        decision_time=None,
+        timeframe=None
+    ):
+        """Return the canonical HTF regime without evaluating LTF evidence."""
+
+        trend = self.get_trend(
+            df,
+            decision_time=decision_time,
+            timeframe=timeframe
+        )
+
+        if trend == BULLISH:
+            return BULLISH
+
+        if trend == BEARISH:
+            return BEARISH
+
+        return NEUTRAL
+
     def _resolve_decision_time(
         self,
         lower_tf,
@@ -201,19 +282,15 @@ class MultiTimeframeAnalyzer:
         """
         Preserve callers that provide non-temporal synthetic frames.
 
-        Production and research data are timestamped and therefore use the
-        causal path below.
+        This deprecated branch intentionally retains the original LTF candle
+        confirmation contract. Strict production and research analyzers
+        disable the branch and never inspect LTF price action here.
         """
 
+        from price_action.candles import CandlePatterns
+
         higher_trend = self.get_trend(higher_tf)
-        return self._confirmation(
-            higher_trend,
-            lower_tf
-        )
-
-    def _confirmation(self, higher_trend, lower_tf):
-        patterns = self.candles.analyze(lower_tf)
-
+        patterns = CandlePatterns().analyze(lower_tf)
         bullish = (
             "Bullish engulfing" in patterns
             or "BULLISH PIN BAR" in patterns
@@ -225,9 +302,9 @@ class MultiTimeframeAnalyzer:
             or "STRONG BEARISH CANDLE" in patterns
         )
 
-        if higher_trend == "BULLISH" and bullish:
+        if higher_trend == BULLISH and bullish:
             confirmation = "BUY"
-        elif higher_trend == "BEARISH" and bearish:
+        elif higher_trend == BEARISH and bearish:
             confirmation = "SELL"
         else:
             confirmation = "HOLD"
@@ -235,6 +312,25 @@ class MultiTimeframeAnalyzer:
         return {
             "higher_trend": higher_trend,
             "confirmation": confirmation
+        }
+
+    @staticmethod
+    def _compatibility_result(regime):
+        """
+        Preserve the original response keys without mixing timeframe roles.
+
+        ``confirmation`` is a deprecated directional alias. It contains no
+        lower-timeframe candle or trigger evidence.
+        """
+
+        directional_alias = {
+            BULLISH: "BUY",
+            BEARISH: "SELL",
+            NEUTRAL: "HOLD"
+        }[regime]
+        return {
+            "higher_trend": regime,
+            "confirmation": directional_alias
         }
 
     def analyze(
@@ -291,13 +387,20 @@ class MultiTimeframeAnalyzer:
             ):
                 raise
 
+            if not self.allow_untimed_legacy:
+                raise TimeframeError(
+                    "Untimed candle frames are disabled; provide open_time "
+                    "or close_time timestamps"
+                )
+
             return self._legacy_analyze(
                 higher_tf,
                 lower_tf
             )
 
-        higher_trend = self.get_trend(causal_higher)
-        return self._confirmation(
-            higher_trend,
-            causal_lower
+        # Validate and causally truncate the lower frame, but do not inspect
+        # its price action. Its only role here is to establish decision time.
+        del causal_lower
+        return self._compatibility_result(
+            self.get_regime(causal_higher)
         )
