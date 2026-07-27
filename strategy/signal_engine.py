@@ -25,7 +25,7 @@ class SignalEngine:
         # ==========================
         # LAYER 1 - MARKET REGIME
         # ==========================
-        if latest["ADX"] < 25:
+        if latest["ADX"] < 35:
             return {
                 "signal": "HOLD",
                 "confidence": 0,
@@ -66,8 +66,6 @@ class SignalEngine:
         # ==========================
         # LAYER 3 - MOMENTUM
         # ==========================
-        momentum = 0
-
         momentum = 0
 
         bullish_momentum = (
@@ -205,13 +203,13 @@ class SignalEngine:
 
         if market_trend == "BULLISH":
 
-            structure_score += 20
+            structure_score += 10
             reasons.append("Market structure bullish")
 
 
         elif market_trend == "BEARISH":
 
-            structure_score -= 20
+            structure_score -= 10
             reasons.append("Market structure bearish")
 
 
@@ -280,32 +278,60 @@ class SignalEngine:
         # ==========================
         # CONFIDENCE
         # ==========================
-        confidence = abs(score)
+        # ==========================
+        # FINAL TRADE FILTER
+        # ==========================
 
         bullish_checks = [
             trend_score > 0,
             momentum > 0,
-            candle_score > 0,
-            structure_score > 0
+            structure_score > 0,
+            candle_score > 0
         ]
+
 
         bearish_checks = [
             trend_score < 0,
             momentum < 0,
-            candle_score < 0,
-            structure_score < 0
+            structure_score < 0,
+            candle_score < 0
         ]
+
 
         bullish_confirmations = sum(bullish_checks)
         bearish_confirmations = sum(bearish_checks)
 
-        if score >= 70 and bullish_confirmations >= 3:
+
+        # Stronger confidence calculation
+        confidence = (
+            abs(score)
+            + (bullish_confirmations * 5)
+            + (bearish_confirmations * 5)
+        )
+
+
+        if (
+            score >= 90
+            and bullish_confirmations >= 4
+            and trend_score > 0
+            and structure_score > 0
+        ):
+
             signal = "BUY"
 
-        elif score <= -70 and bearish_confirmations >= 3:
+
+        elif (
+            score <= -70
+            and bearish_confirmations >= 4
+            and trend_score < 0
+            and structure_score < 0
+        ):
+
             signal = "SELL"
 
+
         else:
+
             signal = "HOLD"
 
         
