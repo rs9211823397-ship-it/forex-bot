@@ -167,6 +167,34 @@ class MarketRegimeClassification:
 
         return (self.trend_state, self.volatility_state)
 
+
+    @property
+    def confidence(self):
+        """
+        Explainable confidence score for the regime classification.
+        """
+
+        score = 0
+
+        reasons = self.reason_codes
+
+        if "ADX_TREND_STRENGTH" in reasons:
+            score += 25
+
+        if "EMA_BULLISH_ALIGNMENT" in reasons or "EMA_BEARISH_ALIGNMENT" in reasons:
+            score += 25
+
+        if "EMA_SEPARATION_CONFIRMED" in reasons:
+            score += 20
+
+        if "VOLATILITY_EXPANSION" in reasons:
+            score += 15
+
+        if "VOLATILITY_NORMAL" in reasons:
+            score += 10
+
+        return min(score, 100)
+
     def to_dict(self):
         """Return a serialization-friendly explanation dictionary."""
 
@@ -177,6 +205,7 @@ class MarketRegimeClassification:
         )
         result["active_regimes"] = list(self.active_regimes)
         result["reason_codes"] = list(self.reason_codes)
+        result["confidence"] = self.confidence
         return result
 
 
