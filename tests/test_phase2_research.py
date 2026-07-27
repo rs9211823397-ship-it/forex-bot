@@ -135,6 +135,22 @@ def test_incomplete_higher_timeframe_candle_is_excluded():
     )
 
 
+def test_regular_hourly_candles_are_accepted_by_shared_timeframe_contract():
+    frame = raw_market(periods=3, frequency="h")
+    frame.attrs["timeframe"] = "1h"
+
+    selected = MultiTimeframeAnalyzer().select_as_of(
+        frame,
+        "2024-01-01T01:00:00Z",
+        "1h"
+    )
+
+    assert len(selected) == 1
+    assert selected["close_time"].tolist() == [
+        pd.Timestamp("2024-01-01T01:00:00Z"),
+    ]
+
+
 def test_future_higher_timeframe_mutation_cannot_change_decision():
     higher = analyzed_higher_frame()
     decision_time = higher["close_time"].iloc[239]

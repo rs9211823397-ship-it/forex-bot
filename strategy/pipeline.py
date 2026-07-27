@@ -32,6 +32,11 @@ from structure.market_structure import MarketStructure
 class SignalPipeline:
     """Run the legacy strategy through explicit, ordered stages."""
 
+    BUY_THRESHOLD = 55
+    SELL_THRESHOLD = -55
+    MIN_CONFIRMATIONS = 3
+
+
     STAGE_ORDER = (
         "data_validation",
         "market_regime",
@@ -437,16 +442,16 @@ class SignalPipeline:
         )
 
         if (
-            score >= 90
-            and bullish_confirmations >= 4
+            score >= self.BUY_THRESHOLD
+            and bullish_confirmations >= self.MIN_CONFIRMATIONS
             and setup.trend_score > 0
             and structure.score > 0
         ):
             signal = "BUY"
 
         elif (
-            score <= -70
-            and bearish_confirmations >= 4
+            score <= self.SELL_THRESHOLD
+            and bearish_confirmations >= self.MIN_CONFIRMATIONS
             and setup.trend_score < 0
             and structure.score < 0
         ):
