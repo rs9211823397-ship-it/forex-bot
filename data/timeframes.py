@@ -110,15 +110,15 @@ def _infer_delta(index):
             "Timeframe is required when fewer than two candles exist"
         )
 
-    differences = index[1:].asi8 - index[:-1].asi8
+    differences = index[1:] - index[:-1]
 
-    if (differences <= 0).any():
+    if (differences <= pd.Timedelta(0)).any():
         raise TimeframeError(
             "Candle timestamps must be strictly increasing"
         )
 
     counts = pd.Series(differences).value_counts()
-    inferred_ns = int(counts.index[0])
+    inferred_ns = int(counts.index[0].value)
     return pd.Timedelta(inferred_ns, unit="ns")
 
 
@@ -140,13 +140,11 @@ def _validate_spacing(timestamps, delta, name):
     if len(timestamps) < 2:
         return
 
-    differences = timestamps[1:].asi8 - timestamps[:-1].asi8
-    duration_ns = int(delta.value)
-
-    if duration_ns <= 0:
+    if delta <= pd.Timedelta(0):
         raise TimeframeError("Timeframe duration must be positive")
 
-    if (differences % duration_ns != 0).any():
+    differences = timestamps[1:] - timestamps[:-1]
+    if (differences % delta != pd.Timedelta(0)).any():
         raise TimeframeError(
             f"{name} timestamps are not aligned to the timeframe"
         )
