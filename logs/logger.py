@@ -1,37 +1,55 @@
+import json
 import logging
+import os
+from datetime import datetime, timezone
 
 
 class TradeLogger:
+    def __init__(self, log_file="logs/trading.log"):
+        os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)
+        self.logger = logging.getLogger("forex_bot")
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
 
-    def __init__(self):
+        if not self.logger.handlers:
+            handler = logging.FileHandler(log_file)
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            self.logger.addHandler(handler)
 
-        logging.basicConfig(
-            filename="logs/trading.log",
-            level=logging.INFO,
-            format="%(asctime)s | %(message)s"
-        )
-
+    def log_event(self, event, level="INFO", **fields):
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": level.upper(),
+            "event": event,
+            **fields,
+        }
+        log_method = getattr(self.logger, level.lower(), self.logger.info)
+        log_method(json.dumps(payload, default=str, sort_keys=True))
 
     def log_signal(self, symbol, signal, confidence):
-
-        message = (
-            f"{symbol} | "
-            f"Signal: {signal} | "
-            f"Confidence: {confidence}%"
+        self.log_event(
+            "signal_generated",
+            symbol=symbol,
+            signal=signal,
+            confidence=confidence,
         )
-
-        logging.info(message)
-
 
     def log_trade(self, symbol, trade, position):
-
-        message = (
-            f"{symbol} | "
-            f"ENTRY: {trade['entry']} | "
-            f"SL: {trade['stop_loss']} | "
-            f"TP: {trade['take_profit']} | "
-            f"RR: {trade['risk_reward']} | "
-            f"POSITION: {position}"
+        self.log_event(
+            "trade_plan_created",
+            symbol=symbol,
+            entry=trade["entry"],
+            stop_loss=trade["stop_loss"],
+            take_profit=trade["take_profit"],
+            risk_reward=trade["risk_reward"],
+            position=position,
         )
 
-        logging.info(message)
+    def log_exception(self, event, exception, **fields):
+        self.log_event(
+            event,
+            level="ERROR",
+            error_type=type(exception).__name__,
+            error=str(exception),
+            **fields,
+        )
