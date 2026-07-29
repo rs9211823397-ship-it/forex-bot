@@ -95,11 +95,14 @@ class PaperAdapter:
         return self._order_snapshot(account, snapshot)
 
     def cancel_order(self, account_id: str, order_id: str):
-        self._bind_account(account_id)
-        del order_id
-        raise ExecutionUnavailableError(
-            "PAPER: order cancellation is not implemented"
+        from datetime import datetime, timezone
+
+        account = self._bind_account(account_id)
+        snapshot = self._simulator.cancel(
+            order_id,
+            datetime.now(timezone.utc),
         )
+        return self._order_snapshot(account, snapshot)
 
     def orders(self, account_id: str):
         account = self._bind_account(account_id)
