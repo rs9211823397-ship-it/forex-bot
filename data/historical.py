@@ -122,9 +122,17 @@ class HistoricalDataStore:
         )
 
         if invalid.any():
-            raise HistoricalDataError(
-                "Historical data contains invalid OHLC geometry"
+            frame.drop(
+                index=frame.index[invalid],
+                inplace=True
             )
+
+            frame.sort_index(inplace=True)
+
+            if frame.empty:
+                raise HistoricalDataError(
+                    "All candles removed due to invalid OHLC geometry"
+                )
 
     def prepare(
         self,

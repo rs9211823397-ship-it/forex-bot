@@ -112,7 +112,7 @@ def _infer_delta(index):
 
     differences = index[1:] - index[:-1]
 
-    if (differences <= pd.Timedelta(0)).any():
+    if not (differences == delta).all():
         raise TimeframeError(
             "Candle timestamps must be strictly increasing"
         )
@@ -135,18 +135,20 @@ def _resolve_delta(frame, timeframe, index=None):
 
     return _infer_delta(index)
 
-
 def _validate_spacing(timestamps, delta, name):
     if len(timestamps) < 2:
         return
 
     if delta <= pd.Timedelta(0):
-        raise TimeframeError("Timeframe duration must be positive")
+        raise TimeframeError(
+            "Timeframe duration must be positive"
+        )
 
     differences = timestamps[1:] - timestamps[:-1]
-    if (differences % delta != pd.Timedelta(0)).any():
+
+    if (differences <= pd.Timedelta(0)).any():
         raise TimeframeError(
-            f"{name} timestamps are not aligned to the timeframe"
+            f"{name} timestamps must be strictly increasing"
         )
 
 
