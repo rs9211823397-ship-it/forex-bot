@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "c334b54975e3eca1940eaa491c4c28209b3038c882120e08c9e68024da2d74d0",
+  "dataset_version": "ohlcv-v1-c334b54975e3eca1",
+  "end_time": "2026-07-28T22:00:00+00:00",
+  "rows": 17338,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2023-10-11T00:00:00+00:00",
+  "symbol": "USDCAD=X",
+  "timeframe": "1h"
+}

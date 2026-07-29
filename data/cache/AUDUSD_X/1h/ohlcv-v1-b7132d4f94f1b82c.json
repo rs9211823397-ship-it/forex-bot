@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "b7132d4f94f1b82cb70b2d8486f0a4880192d17592e5816bd0d1d2778163a52b",
+  "dataset_version": "ohlcv-v1-b7132d4f94f1b82c",
+  "end_time": "2026-07-29T04:00:00+00:00",
+  "rows": 17319,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2023-10-12T00:00:00+00:00",
+  "symbol": "AUDUSD=X",
+  "timeframe": "1h"
+}

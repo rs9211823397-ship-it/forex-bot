@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "95cf79528efbddb45fa6e09bfeca9f88a43b77b5ab1e4076a98fc8841d2b4c32",
+  "dataset_version": "ohlcv-v1-95cf79528efbddb4",
+  "end_time": "2026-07-28T22:00:00+00:00",
+  "rows": 17329,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2023-10-11T00:00:00+00:00",
+  "symbol": "NZDUSD=X",
+  "timeframe": "1h"
+}

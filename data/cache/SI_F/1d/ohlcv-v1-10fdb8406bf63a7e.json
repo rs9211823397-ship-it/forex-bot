@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "10fdb8406bf63a7e98226b4c6a2875ade8e704f31314a8431e31f66a1a6f83bd",
+  "dataset_version": "ohlcv-v1-10fdb8406bf63a7e",
+  "end_time": "2026-07-29T00:00:00+00:00",
+  "rows": 1652,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2020-01-03T00:00:00+00:00",
+  "symbol": "SI=F",
+  "timeframe": "1d"
+}

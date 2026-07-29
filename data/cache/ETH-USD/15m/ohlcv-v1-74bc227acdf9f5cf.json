@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "74bc227acdf9f5cf80ec899d90745c40bf6a510bec8cf04ec71e80736466e555",
+  "dataset_version": "ohlcv-v1-74bc227acdf9f5cf",
+  "end_time": "2026-07-27T22:00:00+00:00",
+  "rows": 5752,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2026-05-29T00:15:00+00:00",
+  "symbol": "ETH-USD",
+  "timeframe": "15m"
+}

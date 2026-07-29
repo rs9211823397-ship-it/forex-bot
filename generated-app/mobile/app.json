@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "AI Trading Manager",
+    "slug": "ai-trading-manager",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0e1a",
+    "scheme": "aitradingmanager",
+    "ios": {
+      "bundleIdentifier": "com.aaqts.tradingmanager",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
+    },
+    "android": {
+      "package": "com.aaqts.tradingmanager",
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0e1a"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "extra": {
+      "apiBaseUrl": "https://3000-i8kzc7cc2luvby6qi4bf6.e2b.app",
+      "eas": {
+        "projectId": "07a26e94-6854-42d1-88dc-2836f4ec8981"
+      }
+    },
+    "owner": "rs9211823397s-team"
+  }
+}

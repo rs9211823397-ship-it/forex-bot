@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "23c5df03ec42828d20b366bb0eca21d1809f4f13543ca42d3e211f3973434b48",
+  "dataset_version": "ohlcv-v1-23c5df03ec42828d",
+  "end_time": "2026-07-28T00:00:00+00:00",
+  "rows": 2300,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2020-04-11T00:00:00+00:00",
+  "symbol": "SOL-USD",
+  "timeframe": "1d"
+}

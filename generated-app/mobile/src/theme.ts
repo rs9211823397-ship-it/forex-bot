@@ -1,0 +1,17 @@
+export const colors = {
+  bg0: "#0a0e1a",
+  bg1: "#0f1424",
+  bg2: "#161c30",
+  bg3: "#1e2540",
+  border: "#2a3454",
+  text0: "#e6ebff",
+  text1: "#aab3d4",
+  text2: "#6b759a",
+  accent: "#6366f1",
+  accent2: "#8b5cf6",
+  green: "#10b981",
+  red: "#ef4444",
+  amber: "#f59e0b",
+  cyan: "#06b6d4",
+  pink: "#ec4899",
+};

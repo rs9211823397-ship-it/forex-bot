@@ -16,18 +16,17 @@ from risk.protection import (
 )
 
 
-market = MarketData()
-indicator = TechnicalIndicators()
-signal_engine = SignalEngine.production(
-    higher_timeframe=HIGHER_TIMEFRAME,
-    lower_timeframe=TRADING_TIMEFRAME,
-)
-trade_manager = TradeManager()
-risk_manager = RiskManager()
-portfolio_risk_manager = PortfolioRiskManager()
-bot = BotController()
-logger = TradeLogger()
-paper_trader = PaperTrader()
+from runtime.bot_runtime import runtime
+
+market = runtime.market
+indicator = runtime.indicator
+signal_engine = runtime.signal_engine
+trade_manager = runtime.trade_manager
+risk_manager = runtime.risk_manager
+portfolio_risk_manager = runtime.portfolio_risk_manager
+bot = runtime.bot
+logger = runtime.logger
+paper_trader = runtime.paper_trader
 
 
 def run_bot():

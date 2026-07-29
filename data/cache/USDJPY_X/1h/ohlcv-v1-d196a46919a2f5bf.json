@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "d196a46919a2f5bfa730292abf6488fdc3fa2d277093066dbbc47f483a4c0390",
+  "dataset_version": "ohlcv-v1-d196a46919a2f5bf",
+  "end_time": "2026-07-28T23:00:00+00:00",
+  "rows": 17116,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2023-10-12T00:00:00+00:00",
+  "symbol": "USDJPY=X",
+  "timeframe": "1h"
+}

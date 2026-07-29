@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "9415d734dcb378d29d6b6a98f20bc7fdb876ef7b5a726c82d065724779f439e3",
+  "dataset_version": "ohlcv-v1-9415d734dcb378d2",
+  "end_time": "2026-07-28T23:00:00+00:00",
+  "rows": 17160,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2023-10-12T00:00:00+00:00",
+  "symbol": "USDCHF=X",
+  "timeframe": "1h"
+}

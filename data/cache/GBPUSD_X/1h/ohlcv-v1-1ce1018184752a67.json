@@ -1,0 +1,19 @@
+{
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time"
+  ],
+  "content_sha256": "1ce1018184752a6734a10abf8f27517218d7225d0c1cd6ae8d80c3f4e970ac9b",
+  "dataset_version": "ohlcv-v1-1ce1018184752a67",
+  "end_time": "2026-07-29T04:00:00+00:00",
+  "rows": 17222,
+  "schema_version": "ohlcv-v1",
+  "source": "yahoo",
+  "start_time": "2023-10-12T00:00:00+00:00",
+  "symbol": "GBPUSD=X",
+  "timeframe": "1h"
+}
