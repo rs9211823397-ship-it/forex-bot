@@ -4,7 +4,7 @@ The package deliberately contains no live connectivity.  Concrete live
 adapters must be explicitly installed and enabled by a deployment.
 """
 
-from broker.adapters import ExchangeAdapter, MT5Adapter
+from broker.adapters import ExchangeAdapter, MT5Adapter, PaperAdapter
 from broker.contracts import (
     AccountSnapshot,
     BrokerAdapter,
@@ -29,6 +29,7 @@ __all__ = [
     "ExchangeAdapter",
     "ExecutionUnavailableError",
     "MT5Adapter",
+    "PaperAdapter",
     "PositionSnapshot",
     "ReconciliationIssue",
     "ReconciliationReport",
