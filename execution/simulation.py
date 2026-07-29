@@ -282,6 +282,11 @@ class BrokerSimulator:
 
         return tuple(changed)
 
+    def cancel(self, order_id: str, event_time):
+        snapshot = self.order_manager.cancel(order_id, event_time)
+        self._pending.pop(order_id, None)
+        return snapshot
+
     @property
     def orders(self) -> tuple[OrderSnapshot, ...]:
         """Return immutable snapshots of all simulator orders."""
