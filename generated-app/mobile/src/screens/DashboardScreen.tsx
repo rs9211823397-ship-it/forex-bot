@@ -26,8 +26,15 @@ export default function DashboardScreen() {
 
   useFocusEffect(React.useCallback(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, []));
 
-  const cmd = async (command: "start" | "pause" | "resume" | "stop" | "reset") => {
-    try { await api.botControl(command); } catch (e) { Alert.alert("Command rejected", e instanceof Error ? e.message : ""); }
+  const cmd = async (
+    command: "start" | "pause" | "resume" | "stop" | "reset",
+    mode?: "paper" | "live",
+  ) => {
+    try {
+      await api.botControl(command, mode);
+    } catch (e) {
+      Alert.alert("Command rejected", e instanceof Error ? e.message : "Unknown error");
+    }
     await load();
   };
 

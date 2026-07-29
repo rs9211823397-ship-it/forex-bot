@@ -29,8 +29,18 @@ export default function AccountsScreen() {
   useFocusEffect(React.useCallback(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, []));
 
   const connect = async (a: Accounts[number]) => {
-    const r = a.connectionStatus === "connected" ? await api.disconnectAccount(a.id) : await api.connectAccount(a.id);
-    if (!("ok" in r) && !r.connected) Alert.alert("Connection failed", r.message || r.error);
+    try {
+      if (a.connectionStatus === "connected") {
+        await api.disconnectAccount(a.id);
+      } else {
+        const r = await api.connectAccount(a.id);
+        if (!r.connected) {
+          Alert.alert("Connection failed", r.message ?? "Unable to connect");
+        }
+      }
+    } catch (e) {
+      Alert.alert("Connection failed", e instanceof Error ? e.message : "Unknown error");
+    }
     await load();
   };
 
