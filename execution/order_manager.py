@@ -61,6 +61,12 @@ class OrderManager:
     def fills(self) -> tuple[FillRecord, ...]:
         return tuple(self._fills)
 
+    @property
+    def orders(self) -> tuple[OrderSnapshot, ...]:
+        """Return all orders as immutable snapshots in creation order."""
+
+        return tuple(self._orders.values())
+
     def create(self, request: OrderRequest) -> OrderSnapshot:
         """Create once; duplicate client IDs return the original order."""
 
