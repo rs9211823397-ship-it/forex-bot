@@ -282,6 +282,16 @@ class BrokerSimulator:
 
         return tuple(changed)
 
+    @property
+    def orders(self) -> tuple[OrderSnapshot, ...]:
+        """Return immutable snapshots of all simulator orders."""
+        return self.order_manager.orders
+
+    @property
+    def fills(self):
+        """Return immutable fill records produced by the simulator."""
+        return self.order_manager.fills
+
     def _fill_price(self, reference: float, side: OrderSide) -> float:
         half_spread = self.instrument.spread / 2.0
         random_slippage = (
