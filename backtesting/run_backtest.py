@@ -6,93 +6,95 @@ from indicators.technical import TechnicalIndicators
 from config.instruments import get_instrument_spec
 
 
-market = MarketData()
-engine = SignalEngine()
-indicators = TechnicalIndicators()
+def main():
+    market = MarketData()
+    engine = SignalEngine()
+    indicators = TechnicalIndicators()
 
-symbol = "ETH-USD"
+    symbol = "ETH-USD"
 
-data = market.download_data(
-    symbol,
-    interval="15m"
-)
-
-higher_tf = market.download_data(
-    symbol,
-    interval="1h"
-)
-
-data = indicators.add_indicators(data)
-data = data.dropna()
-
-print("Calculating signals...")
-
-signals = []
-
-for i in range(len(data)):
-
-    if i % 500 == 0:
-        print(f"Processed {i}/{len(data)} candles")
-
-    df = data.iloc[max(0, i-250):i+1]
-
-    result = engine.generate_signal(
-        df,
+    data = market.download_data(
         symbol,
-        higher_tf
+        interval="15m"
     )
 
-    signals.append(result["signal"])
+    higher_tf = market.download_data(
+        symbol,
+        interval="1h"
+    )
 
-print("Signals calculated:", len(signals))
+    data = indicators.add_indicators(data)
+    data = data.dropna()
 
+    print("Calculating signals...")
 
-def run_strategy(index):
-    return signals[index]
+    signals = []
 
+    for i in range(len(data)):
+        if i % 500 == 0:
+            print(f"Processed {i}/{len(data)} candles")
 
-backtest = BacktestEngine(
-    data,
-    run_strategy,
-    instrument=get_instrument_spec(symbol),
-)
+        df = data.iloc[max(0, i-250):i+1]
 
-trades = backtest.run()
-
-report = PerformanceReport(
-    trades,
-    initial_equity=backtest.initial_equity,
-    equity_curve=backtest.equity_history
-)
-
-print("==============================")
-print("BACKTEST REPORT")
-print("==============================")
-print(report.summary())
-print("\nTRADE DETAILS")
-print("================")
-
-for trade in trades:
-    if trade["type"] == "EXIT":
-        print(
-            trade["side"],
-            "|",
-            trade["result"],
-            "| P/L:",
-            round(trade["profit"], 2)
+        result = engine.generate_signal(
+            df,
+            symbol,
+            higher_tf
         )
-print("\nWIN/LOSS SUMMARY")
-print("================")
 
-wins = 0
-losses = 0
+        signals.append(result["signal"])
 
-for trade in trades:
-    if trade["type"] == "EXIT":
-        if trade["result"] == "TAKE PROFIT":
-            wins += 1
-        else:
-            losses += 1
+    print("Signals calculated:", len(signals))
 
-print("Take Profits:", wins)
-print("Stop Losses:", losses)
+    def run_strategy(index):
+        return signals[index]
+
+    backtest = BacktestEngine(
+        data,
+        run_strategy,
+        instrument=get_instrument_spec(symbol),
+    )
+
+    trades = backtest.run()
+
+    report = PerformanceReport(
+        trades,
+        initial_equity=backtest.initial_equity,
+        equity_curve=backtest.equity_history
+    )
+
+    print("==============================")
+    print("BACKTEST REPORT")
+    print("==============================")
+    print(report.summary())
+    print("\nTRADE DETAILS")
+    print("================")
+
+    for trade in trades:
+        if trade["type"] == "EXIT":
+            print(
+                trade["side"],
+                "|",
+                trade["result"],
+                "| P/L:",
+                round(trade["profit"], 2)
+            )
+    print("\nWIN/LOSS SUMMARY")
+    print("================")
+
+    wins = 0
+    losses = 0
+
+    for trade in trades:
+        if trade["type"] == "EXIT":
+            if trade["result"] == "TAKE PROFIT":
+                wins += 1
+            else:
+                losses += 1
+
+    print("Take Profits:", wins)
+    print("Stop Losses:", losses)
+
+
+if __name__ == "__main__":
+    main()

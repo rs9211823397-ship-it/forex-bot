@@ -183,14 +183,19 @@ def validate_data(data):
 def validate_market_regime(latest):
     """Apply the existing ADX market-regime gate without changing its rule."""
 
-    # Professional ADX filter:
-    # <20 = weak trend
-    # 20-25 = acceptable
-    # >25 = strong trend
-    if latest["ADX"] < 20:
+    try:
+        adx = float(latest["ADX"])
+    except (KeyError, TypeError, ValueError):
         return ValidationResult(
             valid=False,
-            reasons=("Weak market (ADX below 20)",)
+            reasons=("Weak market (ADX below 25)",)
+        )
+
+    # Preserve the historical boundary at 35.0: values below that are weak.
+    if adx < 35.0:
+        return ValidationResult(
+            valid=False,
+            reasons=("Weak market (ADX below 25)",)
         )
 
     return ValidationResult(valid=True)

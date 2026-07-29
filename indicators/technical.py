@@ -146,7 +146,7 @@ class TechnicalIndicators:
                     obv.append(
                         obv[-1] - df["volume"].iloc[i]
                     )
-
+                    
                 else:
                     obv.append(obv[-1])
 
