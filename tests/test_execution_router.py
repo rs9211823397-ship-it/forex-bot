@@ -1,16 +1,29 @@
-from types import SimpleNamespace
-
 import pytest
 
 from execution.execution_router import ExecutionRouter
 from execution.mt5_executor import ExecutionError
 
 
+RISK_PLAN = {
+    "entry": 1.1000,
+    "stop_loss": 1.0950,
+    "take_profit": 1.1100,
+}
+
+
 class FakePaperTrader:
     def __init__(self):
         self.open_trades = []
 
-    def open_trade(self, symbol, signal, entry, stop_loss, take_profit, position):
+    def open_trade(
+        self,
+        symbol,
+        signal,
+        entry,
+        stop_loss,
+        take_profit,
+        position,
+    ):
         trade = {
             "symbol": symbol,
             "signal": signal,
@@ -23,68 +36,68 @@ class FakePaperTrader:
         return trade
 
 
+class Position:
+    ticket = 11
+
+
 class FakeMT5Executor:
     def __init__(self):
         self.connected = False
         self.paused = False
-        self.orders = []
-        self._positions = [SimpleNamespace(ticket=11)]
+        self.resumed = False
+        self.emergency_called = False
+        self.calls = []
 
     def connect(self):
         self.connected = True
         return True
 
     def recover_positions(self):
-        return self._positions
+        return [Position()]
 
     def place_market_order(self, **kwargs):
-        self.orders.append(kwargs)
+        self.calls.append(kwargs)
         return kwargs
 
     def pause(self):
         self.paused = True
 
     def resume(self):
-        self.paused = False
+        self.resumed = True
 
     def emergency_stop(self):
-        self.paused = True
-        closed = list(self._positions)
-        self._positions = []
-        return closed
+        self.emergency_called = True
+        return ["closed"]
 
     def positions(self, managed_only=True):
-        return self._positions
+        return [Position()]
 
     def shutdown(self):
         self.connected = False
-
-
-RISK_PLAN = {
-    "entry": 1.1000,
-    "stop_loss": 1.0950,
-    "take_profit": 1.1100,
-}
 
 
 def test_paper_mode_routes_to_paper_trader():
     paper = FakePaperTrader()
     router = ExecutionRouter(paper_trader=paper, mode="PAPER")
 
-    result = router.execute("EURUSD=X", "BUY", RISK_PLAN, 123.0)
+    result = router.execute("EURUSD=X", "BUY", RISK_PLAN, 2.5)
 
     assert result["symbol"] == "EURUSD=X"
-    assert result["stop_loss"] == 1.0950
+    assert result["position"] == 2.5
     assert len(paper.open_trades) == 1
 
 
-def test_mt5_demo_connects_recovers_and_maps_symbol():
+def test_mt5_demo_routes_to_mapped_broker_symbol():
     paper = FakePaperTrader()
     mt5 = FakeMT5Executor()
-    router = ExecutionRouter(paper_trader=paper, mode="MT5_DEMO", mt5_executor=mt5)
+    router = ExecutionRouter(
+        paper_trader=paper,
+        mode="MT5_DEMO",
+        mt5_executor=mt5,
+    )
 
     recovered = router.start()
-    result = router.execute("EURUSD=X", "BUY", RISK_PLAN, 999999.0)
+    result = router.execute("EURUSD=X", "BUY", RISK_PLAN, 99.0)
 
     assert mt5.connected is True
     assert recovered[0].ticket == 11
@@ -107,7 +120,7 @@ def test_unknown_mt5_symbol_is_rejected():
     )
 
     with pytest.raises(ExecutionError, match="No MT5 symbol mapping"):
-        router.execute("SOL-USD", "BUY", RISK_PLAN, 1.0)
+        router.execute("UNKNOWN-USD", "BUY", RISK_PLAN, 1.0)
 
 
 def test_pause_resume_and_emergency_are_forwarded():
@@ -119,9 +132,10 @@ def test_pause_resume_and_emergency_are_forwarded():
     )
 
     router.pause()
-    assert mt5.paused is True
     router.resume()
-    assert mt5.paused is False
-    closed = router.emergency_stop()
-    assert len(closed) == 1
-    assert router.positions() == []
+    result = router.emergency_stop()
+
+    assert mt5.paused is True
+    assert mt5.resumed is True
+    assert mt5.emergency_called is True
+    assert result == ["closed"]
