@@ -13,24 +13,25 @@ from strategy.regime_detector import (
 
 def make_frame(direction="up", rows=140, adx=32.0, volatility=1.0):
     index = pd.RangeIndex(rows)
+    phase = np.linspace(0, 8 * np.pi, rows)
     if direction == "up":
         close = np.linspace(100, 130, rows)
     elif direction == "down":
         close = np.linspace(130, 100, rows)
     else:
-        close = 115 + np.sin(np.linspace(0, 8 * np.pi, rows)) * volatility
+        close = 115 + np.sin(phase) * volatility
 
     frame = pd.DataFrame(index=index)
     frame["close"] = close
     frame["high"] = close + volatility
     frame["low"] = close - volatility
-    frame["ATR"] = volatility
+    frame["ATR"] = volatility * (1.0 + 0.1 * np.sin(phase))
     frame["ADX"] = adx
     frame["EMA_20"] = frame["close"].ewm(span=20, adjust=False).mean()
     frame["EMA_50"] = frame["close"].ewm(span=50, adjust=False).mean()
     frame["EMA_200"] = frame["close"].ewm(span=200, adjust=False).mean()
     middle = frame["close"].rolling(20, min_periods=1).mean()
-    width = max(volatility * 2, 0.01)
+    width = volatility * (1.5 + 0.2 * np.sin(phase))
     frame["BB_MIDDLE"] = middle
     frame["BB_UPPER"] = middle + width
     frame["BB_LOWER"] = middle - width
@@ -69,11 +70,15 @@ def test_detects_breakout_without_lookahead():
     assert result["direction"] == "BULLISH"
 
 
-def test_regime_filter_blocks_countertrend_and_unstructured_volatility():
+def test_regime_filter_blocks_countertrend_and_allows_aligned_trade():
     detector = MarketRegimeDetector()
-    allowed, _ = detector.allows_signal({"regime": REGIME_TREND_UP, "direction": "BULLISH"}, "SELL")
+    allowed, _ = detector.allows_signal(
+        {"regime": REGIME_TREND_UP, "direction": "BULLISH"}, "SELL"
+    )
     assert not allowed
-    allowed, _ = detector.allows_signal({"regime": REGIME_TREND_UP, "direction": "BULLISH"}, "BUY")
+    allowed, _ = detector.allows_signal(
+        {"regime": REGIME_TREND_UP, "direction": "BULLISH"}, "BUY"
+    )
     assert allowed
 
 
