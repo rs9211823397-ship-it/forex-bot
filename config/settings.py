@@ -25,11 +25,18 @@ SYMBOLS = {
 # MULTI TIMEFRAME SETTINGS
 # ==========================
 
-HIGHER_TIMEFRAME = "1d"
-TRADING_TIMEFRAME = "1h"
+HIGHER_TIMEFRAME = "1h"
+TRADING_TIMEFRAME = "15m"
 LOOKBACK_DAYS = "2020-01-01"
 ACCOUNT_BALANCE = 1000
 RISK_PERCENT = 1
+
+# Frequency tuning keeps the existing strategy architecture intact while
+# allowing more valid intraday setups through.
+MIN_ADX = float(os.getenv("AAQTS_MIN_ADX", "20"))
+SIGNAL_SCORE_THRESHOLD = int(os.getenv("AAQTS_SIGNAL_SCORE_THRESHOLD", "55"))
+MIN_SIGNAL_CONFIRMATIONS = int(os.getenv("AAQTS_MIN_SIGNAL_CONFIRMATIONS", "2"))
+MIN_TRADE_QUALITY = int(os.getenv("AAQTS_MIN_TRADE_QUALITY", "55"))
 
 # ==========================
 # EXECUTION SETTINGS
@@ -43,7 +50,7 @@ MT5_TERMINAL_PATH = os.getenv(
     r"C:\Program Files\MetaTrader 5\terminal64.exe",
 )
 MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
-MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "3"))
+MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "5"))
 
 # Market-data provider symbol -> broker/MT5 symbol. Broker suffixes can be
 # overridden later without touching strategy code.
@@ -57,4 +64,5 @@ MT5_SYMBOL_MAP = {
     "SI=F": "XAGUSD",
     "BTC-USD": "BTCUSD",
     "ETH-USD": "ETHUSD",
+    "SOL-USD": "SOLUSD",
 }
