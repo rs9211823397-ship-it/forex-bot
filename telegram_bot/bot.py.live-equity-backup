@@ -1,0 +1,320 @@
+import asyncio
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
+
+# Ensure project root is importable when this file is run directly.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from bot_controller import BotController
+from paper.paper_trader import PaperTrader
+
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    level=logging.INFO,
+)
+
+logger = logging.getLogger("aaqts.telegram")
+
+bot_controller = BotController()
+paper_trader = PaperTrader()
+
+
+def money(value: Any) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def refresh_paper_trader() -> None:
+    """Reload the latest paper-trading state from trades.json."""
+    paper_trader.load_trades()
+
+
+async def start_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    text = (
+        "🤖 AAQTS TRADING MANAGER\n\n"
+        "Advanced AI Quant Trading System\n\n"
+        "Available commands:\n"
+        "/status - Bot status\n"
+        "/balance - Paper account balance\n"
+        "/equity - Current account equity\n"
+        "/positions - Open paper trades\n"
+        "/profit - Trading performance\n"
+        "/analysis - Run market analysis\n"
+        "/help - Show commands"
+    )
+
+    if update.message:
+        await update.message.reply_text(text)
+
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    text = (
+        "📘 AAQTS COMMANDS\n\n"
+        "/start - Open the trading manager\n"
+        "/status - Check bot status\n"
+        "/balance - Check paper balance\n"
+        "/equity - Check paper equity\n"
+        "/positions - View open positions\n"
+        "/profit - View profit statistics\n"
+        "/analysis - Analyze configured markets\n"
+        "/help - Show this help message"
+    )
+
+    if update.message:
+        await update.message.reply_text(text)
+
+
+async def status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    status = bot_controller.status()
+
+    if update.message:
+        await update.message.reply_text(
+            f"⚙️ AAQTS STATUS\n\nBot status: {status}"
+        )
+
+
+async def balance_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    refresh_paper_trader()
+    stats = paper_trader.get_stats()
+
+    if update.message:
+        await update.message.reply_text(
+            "💰 PAPER ACCOUNT\n\n"
+            f"Starting balance: {money(stats['starting_balance'])}\n"
+            f"Current balance: {money(stats['balance'])}"
+        )
+
+
+async def equity_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    refresh_paper_trader()
+    stats = paper_trader.get_stats()
+
+    if update.message:
+        await update.message.reply_text(
+            "📊 ACCOUNT EQUITY\n\n"
+            f"Balance: {money(stats['balance'])}\n"
+            f"Floating P/L: {money(stats['floating_pnl'])}\n"
+            f"Equity: {money(stats['equity'])}"
+        )
+
+
+async def positions_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    refresh_paper_trader()
+    trades = paper_trader.open_trades
+
+    if not update.message:
+        return
+
+    if not trades:
+        await update.message.reply_text(
+            "📭 OPEN POSITIONS\n\nNo open paper trades."
+        )
+        return
+
+    lines = ["📈 OPEN POSITIONS", ""]
+
+    for index, trade in enumerate(trades, start=1):
+        lines.extend(
+            [
+                f"{index}. {trade.get('symbol', 'Unknown')}",
+                f"Side: {trade.get('signal', 'Unknown')}",
+                f"Entry: {trade.get('entry', 'N/A')}",
+                f"Stop loss: {trade.get('stop_loss', 'N/A')}",
+                f"Take profit: {trade.get('take_profit', 'N/A')}",
+                f"Position: {trade.get('position', 'N/A')}",
+                "",
+            ]
+        )
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def profit_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    refresh_paper_trader()
+    stats = paper_trader.get_stats()
+
+    if update.message:
+        await update.message.reply_text(
+            "📈 TRADING PERFORMANCE\n\n"
+            f"Closed trades: {stats['total_trades']}\n"
+            f"Wins: {stats['wins']}\n"
+            f"Win rate: {stats['win_rate']}%\n"
+            f"Net P/L: {money(stats['total_pnl'])}"
+        )
+
+
+def run_analysis_sync() -> str:
+    from data.market_data import MarketData
+    from indicators.technical import TechnicalIndicators
+    from strategy.signal_engine import SignalEngine
+
+    market = MarketData()
+    indicator = TechnicalIndicators()
+    signal_engine = SignalEngine()
+
+    all_data = market.download_all_data()
+    higher_tf_data = market.download_all_data(interval="1h")
+
+    results = []
+
+    for symbol, data in all_data.items():
+        try:
+            analyzed_data = indicator.add_indicators(data)
+
+            signal = signal_engine.generate_signal(
+                analyzed_data,
+                symbol,
+                higher_tf_data.get(symbol),
+            )
+
+            results.append(
+                {
+                    "symbol": symbol,
+                    "signal": signal.get("signal", "HOLD"),
+                    "confidence": signal.get("confidence", 0),
+                    "score": signal.get("score", 0),
+                    "reasons": signal.get("reasons", []),
+                }
+            )
+
+        except Exception as exc:
+            logger.exception("Analysis failed for %s", symbol)
+            results.append(
+                {
+                    "symbol": symbol,
+                    "signal": "ERROR",
+                    "confidence": 0,
+                    "score": 0,
+                    "reasons": [str(exc)],
+                }
+            )
+
+    if not results:
+        return "No market data was returned."
+
+    lines = ["🧠 AAQTS MARKET ANALYSIS", ""]
+
+    for result in results:
+        lines.append(
+            f"{result['symbol']} | "
+            f"{result['signal']} | "
+            f"{result['confidence']}%"
+        )
+
+        reasons = result["reasons"][:2]
+        for reason in reasons:
+            lines.append(f"• {reason}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+async def analysis_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not update.message:
+        return
+
+    await update.message.reply_text(
+        "🔍 Running AAQTS market analysis. Please wait..."
+    )
+
+    try:
+        result = await asyncio.to_thread(run_analysis_sync)
+
+        # Telegram messages have a size limit.
+        chunks = [
+            result[i : i + 3900]
+            for i in range(0, len(result), 3900)
+        ]
+
+        for chunk in chunks:
+            await update.message.reply_text(chunk)
+
+    except Exception as exc:
+        logger.exception("Market analysis command failed")
+
+        await update.message.reply_text(
+            "❌ Analysis failed.\n\n"
+            f"Error: {exc}"
+        )
+
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    logger.exception(
+        "Unhandled Telegram bot error",
+        exc_info=context.error,
+    )
+
+
+def main() -> None:
+    if not TOKEN:
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is missing from the .env file."
+        )
+
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("balance", balance_command))
+    application.add_handler(CommandHandler("equity", equity_command))
+    application.add_handler(CommandHandler("positions", positions_command))
+    application.add_handler(CommandHandler("profit", profit_command))
+    application.add_handler(CommandHandler("analysis", analysis_command))
+
+    application.add_error_handler(error_handler)
+
+    logger.info("AAQTS Telegram Manager is starting...")
+    application.run_polling(drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    main()
