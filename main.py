@@ -6,7 +6,12 @@ from execution.execution_router import ExecutionRouter
 from risk.risk_manager import RiskManager
 from bot_controller import BotController
 from logs.logger import TradeLogger
-from config.settings import ACCOUNT_BALANCE, EXECUTION_MODE
+from config.settings import (
+    ACCOUNT_BALANCE,
+    EXECUTION_MODE,
+    HIGHER_TIMEFRAME,
+    TRADING_TIMEFRAME,
+)
 from paper.paper_trader import PaperTrader
 
 
@@ -26,12 +31,16 @@ def run_bot():
     print("=" * 60)
     print("AI MULTI-ASSET TRADING PLATFORM")
     print(f"EXECUTION MODE: {EXECUTION_MODE}")
+    print(f"TRADING TIMEFRAME: {TRADING_TIMEFRAME}")
+    print(f"HIGHER TIMEFRAME: {HIGHER_TIMEFRAME}")
     print("=" * 60)
 
-    all_data = market.download_all_data()
+    all_data = market.download_all_data(
+        interval=TRADING_TIMEFRAME
+    )
 
     higher_tf_data = market.download_all_data(
-        interval="1h"
+        interval=HIGHER_TIMEFRAME
     )
 
     # Current prices for paper-equity calculation
