@@ -18,6 +18,12 @@ from config.settings import EXECUTION_MODE, MT5_TERMINAL_PATH
 from execution.mt5_executor import AAQTS_MAGIC
 from paper.paper_trader import PaperTrader
 from runtime_state import heartbeat_is_fresh, read_runtime_state
+from telegram_bot.alert_monitor import (
+    TradeAlertMonitor,
+    is_subscribed,
+    subscribe,
+    unsubscribe,
+)
 from telegram_bot.dashboard import format_dashboard, mt5_dashboard_snapshot
 
 
@@ -101,9 +107,12 @@ def account_snapshot() -> dict[str, Any]:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat:
+        subscribe(update.effective_chat.id)
     text = (
         "🤖 AAQTS TRADING MANAGER\n\n"
         "Advanced AI Quant Trading System\n\n"
+        "✅ Automatic trade alerts are enabled for this chat.\n\n"
         "Available commands:\n"
         "/status - Live engine status\n"
         "/dashboard - Complete live performance dashboard\n"
@@ -112,6 +121,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "/positions - AAQTS open positions\n"
         "/profit - Current trading performance\n"
         "/analysis - Run market analysis\n"
+        "/alerts - Alert subscription status\n"
+        "/alerts_on - Enable automatic alerts\n"
+        "/alerts_off - Disable automatic alerts\n"
         "/help - Show commands"
     )
     if update.message:
@@ -120,6 +132,35 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await start_command(update, context)
+
+
+async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_chat:
+        return
+    enabled = is_subscribed(update.effective_chat.id)
+    state = "ENABLED ✅" if enabled else "DISABLED ❌"
+    await update.message.reply_text(
+        "🔔 AAQTS AUTOMATIC ALERTS\n\n"
+        f"Status: {state}\n"
+        "Includes: trade opened, trade closed, SL/TP reason and daily UTC summary."
+    )
+
+
+async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_chat:
+        return
+    subscribe(update.effective_chat.id)
+    await update.message.reply_text(
+        "🔔 Automatic AAQTS alerts enabled.\n\n"
+        "You will receive trade-open, trade-close and daily-summary notifications."
+    )
+
+
+async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_chat:
+        return
+    unsubscribe(update.effective_chat.id)
+    await update.message.reply_text("🔕 Automatic AAQTS alerts disabled for this chat.")
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -325,6 +366,27 @@ async def analysis_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"❌ Analysis failed.\n\nError: {exc}")
 
 
+async def post_init(application: Application) -> None:
+    monitor = TradeAlertMonitor(application.bot)
+    application.bot_data["trade_alert_monitor"] = monitor
+    application.bot_data["trade_alert_task"] = asyncio.create_task(
+        monitor.run(), name="aaqts-trade-alert-monitor"
+    )
+
+
+async def post_shutdown(application: Application) -> None:
+    monitor = application.bot_data.get("trade_alert_monitor")
+    if monitor:
+        await monitor.stop()
+    task = application.bot_data.get("trade_alert_task")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled Telegram bot error", exc_info=context.error)
 
@@ -333,7 +395,13 @@ def main() -> None:
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is missing from the .env file.")
 
-    application = Application.builder().token(TOKEN).build()
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
@@ -343,6 +411,9 @@ def main() -> None:
     application.add_handler(CommandHandler("positions", positions_command))
     application.add_handler(CommandHandler("profit", profit_command))
     application.add_handler(CommandHandler("analysis", analysis_command))
+    application.add_handler(CommandHandler("alerts", alerts_command))
+    application.add_handler(CommandHandler("alerts_on", alerts_on_command))
+    application.add_handler(CommandHandler("alerts_off", alerts_off_command))
     application.add_error_handler(error_handler)
 
     logger.info("AAQTS Telegram Manager is starting...")
