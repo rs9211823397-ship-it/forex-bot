@@ -16,6 +16,14 @@ class TechnicalIndicators:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
+        # Prevent ambiguous lookups when a data provider returns duplicate columns.
+        df = df.loc[:, ~df.columns.duplicated()].copy()
+
+        # Normalize provider-specific volume naming once. Missing volume is valid
+        # for some Forex feeds, so volume-based indicators fall back safely.
+        if "volume" not in df.columns and "Volume" in df.columns:
+            df["volume"] = df["Volume"]
+
         # ==========================
         # EMA
         # ==========================
@@ -124,38 +132,20 @@ class TechnicalIndicators:
         df["BB_LOWER"] = sma20 - (2 * std20)
 
         # ==========================
-        # Volume SMA
+        # Volume indicators
         # ==========================
 
         if "volume" in df.columns:
+            volume = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+            df["volume"] = volume
+            df["VOL_SMA20"] = volume.rolling(20).mean()
 
-            df["VOL_SMA20"] = df["volume"].rolling(20).mean()
-
-            direction = df["close"].diff().fillna(0)
-
-            obv = [0]
-
-            for i in range(1, len(df)):
-
-                if direction.iloc[i] > 0:
-                    obv.append(
-                        obv[-1] + df["volume"].iloc[i]
-                    )
-
-                elif direction.iloc[i] < 0:
-                    obv.append(
-                        obv[-1] - df["volume"].iloc[i]
-                    )
-
-                else:
-                    obv.append(obv[-1])
-
-            df["OBV"] = obv
-
+            direction = df["close"].diff()
+            signed_volume = volume.where(direction > 0, -volume.where(direction < 0, 0.0))
+            df["OBV"] = signed_volume.cumsum()
         else:
-
-            df["VOL_SMA20"] = 0
-            df["OBV"] = 0
+            df["VOL_SMA20"] = 0.0
+            df["OBV"] = 0.0
 
         # ==========================
         # Supertrend
