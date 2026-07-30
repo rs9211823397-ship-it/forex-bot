@@ -7,3 +7,5 @@ pandas-ta
 yfinance
 plotly
 streamlit
+MetaTrader5; platform_system == "Windows"
+pytest
