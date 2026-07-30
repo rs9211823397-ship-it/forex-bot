@@ -18,6 +18,7 @@ from config.settings import EXECUTION_MODE, MT5_TERMINAL_PATH
 from execution.mt5_executor import AAQTS_MAGIC
 from paper.paper_trader import PaperTrader
 from runtime_state import heartbeat_is_fresh, read_runtime_state
+from telegram_bot.dashboard import format_dashboard, mt5_dashboard_snapshot
 
 
 load_dotenv(PROJECT_ROOT / ".env")
@@ -105,6 +106,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Advanced AI Quant Trading System\n\n"
         "Available commands:\n"
         "/status - Live engine status\n"
+        "/dashboard - Complete live performance dashboard\n"
         "/balance - Live account balance\n"
         "/equity - Live equity and floating P/L\n"
         "/positions - AAQTS open positions\n"
@@ -142,6 +144,17 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"Heartbeat (UTC): {heartbeat}"
     )
     await update.message.reply_text(text)
+
+
+async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    try:
+        snapshot = await asyncio.to_thread(mt5_dashboard_snapshot)
+        await update.message.reply_text(format_dashboard(snapshot))
+    except Exception as exc:
+        logger.exception("Dashboard command failed")
+        await update.message.reply_text(f"❌ Could not build live dashboard.\n\n{exc}")
 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -324,6 +337,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("dashboard", dashboard_command))
     application.add_handler(CommandHandler("balance", balance_command))
     application.add_handler(CommandHandler("equity", equity_command))
     application.add_handler(CommandHandler("positions", positions_command))
