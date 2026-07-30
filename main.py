@@ -2,10 +2,11 @@ from data.market_data import MarketData
 from indicators.technical import TechnicalIndicators
 from strategy.signal_engine import SignalEngine
 from execution.trade_manager import TradeManager
+from execution.execution_router import ExecutionRouter
 from risk.risk_manager import RiskManager
 from bot_controller import BotController
 from logs.logger import TradeLogger
-from config.settings import ACCOUNT_BALANCE
+from config.settings import ACCOUNT_BALANCE, EXECUTION_MODE
 from paper.paper_trader import PaperTrader
 
 
@@ -17,12 +18,14 @@ risk_manager = RiskManager()
 bot = BotController()
 logger = TradeLogger()
 paper_trader = PaperTrader()
+execution = ExecutionRouter(paper_trader=paper_trader)
 
 
 def run_bot():
 
     print("=" * 60)
     print("AI MULTI-ASSET TRADING PLATFORM")
+    print(f"EXECUTION MODE: {EXECUTION_MODE}")
     print("=" * 60)
 
     all_data = market.download_all_data()
@@ -31,7 +34,7 @@ def run_bot():
         interval="1h"
     )
 
-    # Current prices for equity calculation
+    # Current prices for paper-equity calculation
     current_prices = {}
 
     print("\nMarket Signals:\n")
@@ -89,18 +92,16 @@ def run_bot():
                         position
                     )
 
-                    paper_trade = paper_trader.open_trade(
-                        symbol,
-                        signal["signal"],
-                        risk_plan["entry"],
-                        risk_plan["stop_loss"],
-                        risk_plan["take_profit"],
-                        position
+                    execution_result = execution.execute(
+                        source_symbol=symbol,
+                        signal=signal["signal"],
+                        risk_plan=risk_plan,
+                        paper_position_size=position,
                     )
 
-                    if paper_trade:
-                        print("\nPaper Trade Opened:")
-                        print(paper_trade)
+                    if execution_result:
+                        print(f"\n{EXECUTION_MODE} Trade Result:")
+                        print(execution_result)
 
             print("\n" + "=" * 60)
             print(f"Asset      : {symbol}")
@@ -110,10 +111,13 @@ def run_bot():
             print(f"Price      : {trade['current_price']:.4f}")
             print(f"ATR        : {trade['atr']:.4f}")
 
-            paper_trader.check_trade(
-                symbol,
-                trade["current_price"]
-            )
+            # Paper positions need local price checks. MT5 positions use
+            # broker-side SL/TP and are recovered/managed through MT5.
+            if EXECUTION_MODE == "PAPER":
+                paper_trader.check_trade(
+                    symbol,
+                    trade["current_price"]
+                )
 
             if risk_plan:
 
@@ -132,73 +136,72 @@ def run_bot():
         except Exception as e:
             print(symbol, "ERROR:", e)
 
-    # -------- ACCOUNT SUMMARY --------
+    if EXECUTION_MODE == "PAPER":
+        # -------- PAPER ACCOUNT SUMMARY --------
+        paper_trader.update_equity(current_prices)
+        stats = paper_trader.get_stats()
 
-    paper_trader.update_equity(current_prices)
+        print("\n" + "=" * 60)
+        print("PAPER ACCOUNT")
+        print("=" * 60)
 
-    stats = paper_trader.get_stats()
+        print(f"Starting Balance : ${stats['starting_balance']:.2f}")
+        print(f"Balance          : ${stats['balance']:.2f}")
+        print(f"Floating P/L     : ${stats['floating_pnl']:.2f}")
+        print(f"Equity           : ${stats['equity']:.2f}")
 
-    print("\n" + "=" * 60)
-    print("PAPER ACCOUNT")
-    print("=" * 60)
+        print("\nTrading Statistics")
+        print(f"Open Trades      : {len(paper_trader.open_trades)}")
+        print(f"Closed Trades    : {stats['total_trades']}")
+        print(f"Wins             : {stats['wins']}")
+        print(f"Win Rate         : {stats['win_rate']}%")
+        print(f"Net P/L          : {stats['total_pnl']:.2f}")
 
-    print(f"Starting Balance : ${stats['starting_balance']:.2f}")
-    print(f"Balance          : ${stats['balance']:.2f}")
-    print(f"Floating P/L     : ${stats['floating_pnl']:.2f}")
-    print(f"Equity           : ${stats['equity']:.2f}")
+        if paper_trader.open_trades:
 
-    print("\nTrading Statistics")
+            print("\nOpen Positions")
 
-    print(f"Open Trades      : {len(paper_trader.open_trades)}")
-    print(f"Closed Trades    : {stats['total_trades']}")
-    print(f"Wins             : {stats['wins']}")
-    print(f"Win Rate         : {stats['win_rate']}%")
-    print(f"Net P/L          : {stats['total_pnl']:.2f}")
+            for open_trade in paper_trader.open_trades:
 
-    if paper_trader.open_trades:
+                current = current_prices.get(
+                    open_trade["symbol"],
+                    open_trade["entry"]
+                )
 
-        print("\nOpen Positions")
+                if open_trade["signal"] == "BUY":
+                    floating = (
+                        current - open_trade["entry"]
+                    ) * open_trade["position"]
+                else:
+                    floating = (
+                        open_trade["entry"] - current
+                    ) * open_trade["position"]
 
-        for trade in paper_trader.open_trades:
-
-            current = current_prices.get(
-                trade["symbol"],
-                trade["entry"]
-            )
-
-            if trade["signal"] == "BUY":
-
-                floating = (
-                    current - trade["entry"]
-                ) * trade["position"]
-
-            else:
-
-                floating = (
-                    trade["entry"] - current
-                ) * trade["position"]
-
-
-            print(
-                f"{trade['symbol']} | "
-                f"{trade['signal']} | "
-                f"Entry: {trade['entry']} | "
-                f"Current: {current:.4f} | "
-                f"Position: {trade['position']} | "
-                f"Floating P/L: {floating:.4f} | "
-                f"SL: {trade['stop_loss']} | "
-                f"TP: {trade['take_profit']}"
-            )
+                print(
+                    f"{open_trade['symbol']} | "
+                    f"{open_trade['signal']} | "
+                    f"Entry: {open_trade['entry']} | "
+                    f"Current: {current:.4f} | "
+                    f"Position: {open_trade['position']} | "
+                    f"Floating P/L: {floating:.4f} | "
+                    f"SL: {open_trade['stop_loss']} | "
+                    f"TP: {open_trade['take_profit']}"
+                )
+    else:
+        print("\n" + "=" * 60)
+        print(f"AAQTS MT5 Positions: {len(execution.positions())}")
 
     print("=" * 60)
 
 
 if __name__ == "__main__":
-
     from bot_loop import BotLoop
 
-    print("\nBot Status:", bot.start_bot())
+    recovered = execution.start()
+    print(f"\nExecution Mode: {EXECUTION_MODE}")
+    if recovered:
+        print(f"Recovered AAQTS MT5 positions: {len(recovered)}")
 
+    print("Bot Status:", bot.start_bot())
     loop = BotLoop(interval=10)
-
     loop.start(run_bot)
