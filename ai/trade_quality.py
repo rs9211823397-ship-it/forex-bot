@@ -1,3 +1,6 @@
+from config.settings import MIN_TRADE_QUALITY
+
+
 class TradeQuality:
 
     def evaluate(
@@ -10,7 +13,6 @@ class TradeQuality:
         adx,
         mtf_confirmed
     ):
-
         score = 0
         reasons = []
 
@@ -18,7 +20,6 @@ class TradeQuality:
         if abs(trend_score) >= 30:
             score += 20
             reasons.append("Strong trend")
-
         elif abs(trend_score) >= 20:
             score += 15
 
@@ -26,7 +27,6 @@ class TradeQuality:
         if abs(momentum_score) >= 20:
             score += 20
             reasons.append("Momentum confirmed")
-
         elif abs(momentum_score) >= 10:
             score += 10
 
@@ -34,7 +34,6 @@ class TradeQuality:
         if abs(structure_score) >= 20:
             score += 20
             reasons.append("Market structure aligned")
-
         elif abs(structure_score) >= 10:
             score += 10
 
@@ -42,7 +41,6 @@ class TradeQuality:
         if abs(candle_score) >= 10:
             score += 15
             reasons.append("Strong price action")
-
         elif abs(candle_score) >= 5:
             score += 8
 
@@ -54,9 +52,10 @@ class TradeQuality:
         # ADX
         if adx >= 35:
             score += 10
-
         elif adx >= 25:
             score += 6
+        elif adx >= 20:
+            score += 4
 
         # Multi Timeframe
         if mtf_confirmed:
@@ -64,6 +63,6 @@ class TradeQuality:
 
         return {
             "quality": score,
-            "approved": score >= 70,
+            "approved": score >= MIN_TRADE_QUALITY,
             "reasons": reasons
         }
