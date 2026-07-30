@@ -2,6 +2,7 @@ from structure.market_structure import MarketStructure
 from price_action.candles import CandlePatterns
 from strategy.multi_timeframe import MultiTimeframeAnalyzer
 from strategy.regime_detector import MarketRegimeDetector
+from ai.decision_analyzer import AIDecisionAnalyzer
 from ai.trade_quality import TradeQuality
 from config.settings import (
     MIN_ADX,
@@ -18,6 +19,7 @@ class SignalEngine:
         self.mtf = MultiTimeframeAnalyzer()
         self.trade_quality = TradeQuality()
         self.regime_detector = MarketRegimeDetector()
+        self.decision_analyzer = AIDecisionAnalyzer()
 
     def generate_signal(self, data, symbol, higher_tf=None):
 
@@ -236,6 +238,18 @@ class SignalEngine:
             if "Bearish" in r or "Weak" in r or "bearish" in r or "blocks" in r or "conflicts" in r
         ]
 
+        decision_report = self.decision_analyzer.analyze(
+            signal=signal,
+            confidence=min(confidence, 100),
+            score=score,
+            reasons=reasons,
+            decision_summary={
+                "positive": positive_reasons,
+                "warnings": negative_reasons,
+            },
+        )
+        decision_report["report_text"] = self.decision_analyzer.format_report(decision_report)
+
         return {
             "signal": signal,
             "confidence": min(confidence, 100),
@@ -246,4 +260,6 @@ class SignalEngine:
                 "positive": positive_reasons,
                 "warnings": negative_reasons,
             },
+            "decision_report": decision_report,
+            "rejection_reasons": decision_report.get("rejection_reasons", []),
         }

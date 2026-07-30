@@ -329,6 +329,7 @@ def run_analysis_sync() -> str:
                 "signal": signal.get("signal", "HOLD"),
                 "confidence": signal.get("confidence", 0),
                 "reasons": signal.get("reasons", []),
+                "decision_report": signal.get("decision_report", {}),
             })
         except Exception as exc:
             logger.exception("Analysis failed for %s", symbol)
@@ -337,6 +338,17 @@ def run_analysis_sync() -> str:
                 "signal": "ERROR",
                 "confidence": 0,
                 "reasons": [str(exc)],
+                "decision_report": {
+                    "decision": "ERROR",
+                    "status": "REJECTED",
+                    "approved": False,
+                    "confidence": 0,
+                    "score": 0,
+                    "reasons": [str(exc)],
+                    "decision_summary": {"positive": [], "warnings": [str(exc)]},
+                    "rejection_reasons": [str(exc)],
+                    "report_text": f"Decision: ERROR\nStatus: REJECTED\nConfidence: 0%\nScore: 0\nRejection reasons:\n- {exc}",
+                },
             })
 
     if not results:
@@ -347,6 +359,9 @@ def run_analysis_sync() -> str:
         lines.append(
             f"{result['symbol']} | {result['signal']} | {result['confidence']}%"
         )
+        decision_report = result.get("decision_report") or {}
+        if decision_report.get("report_text"):
+            lines.append(decision_report["report_text"])
         for reason in result["reasons"][:2]:
             lines.append(f"• {reason}")
         lines.append("")

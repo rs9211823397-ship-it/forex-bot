@@ -81,10 +81,14 @@ def run_bot():
                 higher_tf_data.get(symbol)
             )
 
+            decision_report = signal.get("decision_report", {})
             signal_summary[symbol] = {
                 "signal": signal.get("signal", "HOLD"),
                 "confidence": signal.get("confidence", 0),
                 "score": signal.get("score", 0),
+                "status": decision_report.get("status", "REJECTED"),
+                "rejection_reasons": signal.get("rejection_reasons", []),
+                "decision_report": decision_report,
             }
             write_runtime_state(
                 status="RUNNING",
@@ -174,6 +178,11 @@ def run_bot():
 
             for reason in signal["reasons"]:
                 print(f"  ✓ {reason}")
+
+            if signal.get("rejection_reasons"):
+                print("\nRejection Reasons:")
+                for reason in signal["rejection_reasons"]:
+                    print(f"  ✕ {reason}")
 
         except Exception as e:
             print(symbol, "ERROR:", e)
