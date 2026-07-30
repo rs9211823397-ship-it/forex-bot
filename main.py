@@ -6,6 +6,7 @@ from execution.execution_router import ExecutionRouter
 from risk.risk_manager import RiskManager
 from bot_controller import BotController
 from logs.logger import TradeLogger
+from runtime_state import write_runtime_state
 from config.settings import (
     ACCOUNT_BALANCE,
     EXECUTION_MODE,
@@ -28,6 +29,14 @@ execution = ExecutionRouter(paper_trader=paper_trader)
 
 def run_bot():
 
+    write_runtime_state(
+        status="RUNNING",
+        execution_mode=EXECUTION_MODE,
+        trading_timeframe=TRADING_TIMEFRAME,
+        higher_timeframe=HIGHER_TIMEFRAME,
+        phase="DOWNLOADING_MARKET_DATA",
+    )
+
     print("=" * 60)
     print("AI MULTI-ASSET TRADING PLATFORM")
     print(f"EXECUTION MODE: {EXECUTION_MODE}")
@@ -45,6 +54,15 @@ def run_bot():
 
     # Current prices for paper-equity calculation
     current_prices = {}
+    signal_summary = {}
+
+    write_runtime_state(
+        status="RUNNING",
+        execution_mode=EXECUTION_MODE,
+        phase="ANALYZING_MARKETS",
+        scanned_symbols=0,
+        total_symbols=len(all_data),
+    )
 
     print("\nMarket Signals:\n")
 
@@ -61,6 +79,21 @@ def run_bot():
                 analyzed_data,
                 symbol,
                 higher_tf_data.get(symbol)
+            )
+
+            signal_summary[symbol] = {
+                "signal": signal.get("signal", "HOLD"),
+                "confidence": signal.get("confidence", 0),
+                "score": signal.get("score", 0),
+            }
+            write_runtime_state(
+                status="RUNNING",
+                execution_mode=EXECUTION_MODE,
+                phase="ANALYZING_MARKETS",
+                current_symbol=symbol,
+                scanned_symbols=len(signal_summary),
+                total_symbols=len(all_data),
+                signals=signal_summary,
             )
 
             logger.log_signal(
@@ -196,21 +229,58 @@ def run_bot():
                     f"SL: {open_trade['stop_loss']} | "
                     f"TP: {open_trade['take_profit']}"
                 )
+        open_position_count = len(paper_trader.open_trades)
     else:
+        open_position_count = len(execution.positions())
         print("\n" + "=" * 60)
-        print(f"AAQTS MT5 Positions: {len(execution.positions())}")
+        print(f"AAQTS MT5 Positions: {open_position_count}")
 
+    write_runtime_state(
+        status="RUNNING",
+        execution_mode=EXECUTION_MODE,
+        phase="SLEEPING_UNTIL_NEXT_SCAN",
+        current_symbol=None,
+        scanned_symbols=len(signal_summary),
+        total_symbols=len(all_data),
+        open_positions=open_position_count,
+        signals=signal_summary,
+    )
     print("=" * 60)
 
 
 if __name__ == "__main__":
     from bot_loop import BotLoop
 
-    recovered = execution.start()
-    print(f"\nExecution Mode: {EXECUTION_MODE}")
-    if recovered:
-        print(f"Recovered AAQTS MT5 positions: {len(recovered)}")
+    try:
+        recovered = execution.start()
+        print(f"\nExecution Mode: {EXECUTION_MODE}")
+        if recovered:
+            print(f"Recovered AAQTS MT5 positions: {len(recovered)}")
 
-    print("Bot Status:", bot.start_bot())
-    loop = BotLoop(interval=10)
-    loop.start(run_bot)
+        print("Bot Status:", bot.start_bot())
+        write_runtime_state(
+            status="RUNNING",
+            execution_mode=EXECUTION_MODE,
+            phase="STARTING",
+            recovered_positions=len(recovered),
+        )
+        loop = BotLoop(interval=10)
+        loop.start(run_bot)
+    except KeyboardInterrupt:
+        print("\nAAQTS shutdown requested.")
+    except Exception as exc:
+        write_runtime_state(
+            status="ERROR",
+            execution_mode=EXECUTION_MODE,
+            phase="FAILED",
+            error=str(exc),
+        )
+        raise
+    finally:
+        bot.stop_bot()
+        write_runtime_state(
+            status="STOPPED",
+            execution_mode=EXECUTION_MODE,
+            phase="SHUTDOWN",
+        )
+        execution.shutdown()
