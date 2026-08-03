@@ -30,13 +30,14 @@ divergent `strategy-investigation` branch.
 | Regime routing | Added causal trend/range/breakout strategy routing with strict confirmation, HTF conflict gates, reduced risk, and fail-closed volatility handling. |
 | Position lifecycle | Completed the MT5 executor contract for quotes, break-even, trailing stops, partial closes, and wired recovery/management into the application cycle. Demo risk now reads broker equity, positions, stop exposure, and realized exits rather than the paper ledger. |
 | News protection | Added an optional strict local UTC calendar, currency exposure mapping, preflight validation, and fail-closed runtime behavior. |
+| Symbol catalog | Added the requested Forex, metals, and crypto catalog, corrected Yahoo-to-MT5 major mappings, and blocked broker close-only or unsupported new entries. |
 
 ## Validation evidence
 
 - Python compile: passed.
 - Security and tracked-artifact check: passed.
 - Preflight in safe `PAPER` mode: passed.
-- Test suite: **318 passed, 2 subtests passed**.
+- Test suite: **326 passed, 2 subtests passed**.
 - Deterministic backtest smoke: completed one next-bar trade after explicitly
   reporting that its fallback execution signal was used; ending equity
   `1007.1682`, average R `1.4341`, max drawdown `0.2408%` for that synthetic

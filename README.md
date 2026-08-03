@@ -9,6 +9,24 @@ monitoring.
 The safe default is `PAPER`. `MT5_DEMO` must be selected explicitly.
 `MT5_LIVE` is blocked in code and is not enabled by this release.
 
+## Symbol catalog
+
+The authoritative catalog includes the seven Forex majors, USD and cross-quote
+gold/silver, platinum, palladium, BTC/ETH majors, and the requested Bitcoin
+crosses. Default scanning is limited to symbols with a validated research feed
+and USD-account risk model:
+
+- Forex: `EURUSD`, `GBPUSD`, `USDJPY`, `USDCHF`, `USDCAD`, `AUDUSD`, `NZDUSD`
+- Metals: `XAUUSD`, `XAGUSD`, `XPTUSD`, `XPDUSD`
+- Crypto: `BTCUSD`, `ETHUSD` (plus `SOLUSD` in paper research only)
+
+`BTCUSDT`, `ETHBTC`, `BTCJPY`, `BTCKRW`, metal crosses, and all requested BTC
+crosses remain visible in `config/symbols.py` with explicit disabled reasons.
+`BTCAUD`, `BTCCNH`, `BTCTHB`, `BTCZAR`, `BTCXAU`, and `BTCXAG` are broker
+close-only instruments and cannot generate new AAQTS entries. `BTCKRW` is not
+listed in the current Exness specification. This prevents unsupported symbols
+or missing quote-currency conversion from silently producing unsafe orders.
+
 See [AUDIT_STATUS.md](AUDIT_STATUS.md) for the recovery audit, completed work,
 validation evidence, and owner-only remaining actions.
 

@@ -9,6 +9,8 @@
 - Broker-backed demo equity, open-stop exposure, and realized-loss controls.
 - Optional fail-closed JSON economic calendar and symbol currency exposure.
 - Runtime integration tests for managed position recovery and exits.
+- Authoritative 30-instrument symbol catalog with corrected Yahoo/MT5 Forex
+  mappings and explicit close-only/unavailable entry gates.
 
 ## [1.0.0] - 2026-07-27
 

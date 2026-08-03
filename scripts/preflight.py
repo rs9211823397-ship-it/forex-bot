@@ -108,6 +108,23 @@ def check_news_calendar() -> None:
     )
 
 
+def check_symbol_catalog() -> None:
+    from config.instruments import get_instrument_spec
+    from config.settings import EXECUTION_MODE, MT5_SYMBOL_MAP, SYMBOLS
+
+    active = [symbol for group in SYMBOLS.values() for symbol in group]
+    for symbol in active:
+        get_instrument_spec(symbol)
+    if EXECUTION_MODE == "MT5_DEMO":
+        missing = sorted(set(active).difference(MT5_SYMBOL_MAP))
+        if missing:
+            fail(
+                "Active MT5 symbols are missing executable mappings: "
+                + ", ".join(missing)
+            )
+    print(f"[preflight] Symbol catalog OK ({len(active)} active)")
+
+
 def main() -> None:
     check_python_version()
     repo_root = check_repo_root()
@@ -115,6 +132,7 @@ def main() -> None:
     check_optional_packages()
     check_output_folders(repo_root)
     check_execution_mode()
+    check_symbol_catalog()
     check_news_calendar()
     print("[preflight] Preflight passed")
 

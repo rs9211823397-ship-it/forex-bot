@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from bot_controller import BotController
 from bot_loop import BotLoop
 from config.instruments import get_instrument_spec
+from config.symbols import symbol_by_data
 from config.settings import (
     BOT_INTERVAL_SECONDS,
     EXECUTION_MODE,
@@ -118,14 +119,11 @@ class TradingApplication:
         source_symbol: str,
         direction: str,
     ) -> tuple[CurrencyExposure, ...]:
-        broker_symbol = MT5_SYMBOL_MAP.get(source_symbol, "")
-        letters = "".join(
-            character for character in broker_symbol.upper()
-            if character.isalpha()
-        )
-        if len(letters) < 6:
+        try:
+            definition = symbol_by_data(source_symbol)
+            base, quote = definition.base_asset, definition.quote_asset
+        except KeyError:
             return ()
-        base, quote = letters[:3], letters[3:6]
         if base == quote:
             return ()
         base_direction = 1 if direction == "BUY" else -1
