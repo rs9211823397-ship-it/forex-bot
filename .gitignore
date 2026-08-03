@@ -10,6 +10,7 @@ data/cache/
 outputs/
 logs/*.log
 runtime/*.json
+config/news_calendar.local.json
 account.json
 trades.json
 *.backup

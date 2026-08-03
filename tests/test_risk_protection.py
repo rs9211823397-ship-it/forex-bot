@@ -391,6 +391,26 @@ def test_news_filter_blocks_relevant_event_and_fails_gracefully():
     assert malformed.warning_codes == ("NEWS_PROVIDER_ERROR",)
 
 
+def test_news_filter_can_fail_closed_for_live_execution():
+    manager = PortfolioRiskManager(
+        ProtectionConfig(
+            news_filter_enabled=True,
+            fail_closed_on_news_error=True,
+        )
+    )
+
+    unavailable = manager.assess(request(), RiskContext())
+    broken = manager.assess(
+        request(),
+        RiskContext(news_provider=BrokenNewsProvider()),
+    )
+
+    assert unavailable.action is RiskAction.BLOCK
+    assert unavailable.reason_codes == ("NEWS_PROVIDER_UNAVAILABLE",)
+    assert broken.action is RiskAction.BLOCK
+    assert broken.reason_codes == ("NEWS_PROVIDER_ERROR",)
+
+
 def test_same_input_is_deterministic_and_results_are_immutable():
     manager = PortfolioRiskManager(
         ProtectionConfig(max_portfolio_risk_percent=2.0)

@@ -1,0 +1,10 @@
+{
+  "events": [
+    {
+      "event_time": "2030-01-01T13:30:00Z",
+      "impact": "HIGH",
+      "currencies": ["USD"],
+      "name": "Replace with a verified scheduled event"
+    }
+  ]
+}

@@ -4,6 +4,18 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 
+
+def _env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return bool(default)
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
 SYMBOLS = {
     "forex": [
         "EURUSD=X",
@@ -57,6 +69,8 @@ MT5_TERMINAL_PATH = os.getenv(
 MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
 MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "5"))
 BOT_INTERVAL_SECONDS = int(os.getenv("AAQTS_BOT_INTERVAL_SECONDS", "300"))
+NEWS_FILTER_ENABLED = _env_flag("AAQTS_NEWS_FILTER_ENABLED", False)
+NEWS_CALENDAR_FILE = os.getenv("AAQTS_NEWS_CALENDAR_FILE", "").strip()
 
 # Market-data provider symbol -> broker/MT5 symbol. Broker suffixes can be
 # overridden later without touching strategy code.

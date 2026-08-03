@@ -2,8 +2,9 @@
 
 AAQTS is a causal, multi-asset trading research and execution project. It
 includes closed-candle signal generation, point-in-time multi-timeframe
-alignment, realistic backtesting costs, portfolio risk controls, paper
-trading, MT5 demo execution, and Telegram monitoring.
+alignment, causal trend/range/breakout routing, realistic backtesting costs,
+portfolio risk controls, paper trading, managed MT5 demo exits, and Telegram
+monitoring.
 
 The safe default is `PAPER`. `MT5_DEMO` must be selected explicitly.
 `MT5_LIVE` is blocked in code and is not enabled by this release.
@@ -48,6 +49,19 @@ Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` only in `.env`; never commit
 them. A token previously committed to this repository must be revoked and
 replaced through BotFather before Telegram is used.
 
+An optional local economic calendar can block entries around verified news
+without installing another application. Copy
+`config/news_calendar.example.json` to an ignored local file, replace its
+contents with verified UTC events, and set:
+
+```text
+AAQTS_NEWS_FILTER_ENABLED=true
+AAQTS_NEWS_CALENDAR_FILE=config/news_calendar.local.json
+```
+
+When enabled, a missing, malformed, or unavailable calendar blocks new trades.
+Preflight validates the file before the bot starts.
+
 MT5 demo support is Windows-only and requires an already approved MetaTrader 5
 installation:
 
@@ -86,8 +100,20 @@ accounting; it is not evidence of future profitability.
 - Invalid, incomplete, duplicate, or non-monotonic data fails closed.
 - AI components may rank or explain an existing rules-based setup; they do not
   invent trade direction.
+- The regime router delegates trends to the existing causal pipeline, requires
+  Bollinger/RSI re-entry for ranges, requires range-close/ATR/ADX confirmation
+  for breakouts, and blocks unknown or unsafe volatility states.
+- Range and breakout strategies use reduced position-size multipliers that are
+  preserved in deterministic backtest records.
 - Portfolio controls can block or reduce a qualified setup based on open risk,
   realized loss, drawdown, correlation, session, volatility, or news context.
+- MT5 demo positions are recovered into the lifecycle manager and can advance
+  to break-even, trail by ATR, take broker-valid partial profits, retain a
+  runner, or close on time limits. Paper trading continues to use deterministic
+  fixed SL/TP exits until those lifecycle fills are modeled equivalently.
+- Demo portfolio checks use the connected broker's equity, managed positions,
+  remaining loss to each stop, and realized exit deals; paper account state is
+  never mixed into MT5 demo authorization.
 - Runtime state, credentials, logs, caches, and paper-account files are ignored
   by Git and checked by CI.
 

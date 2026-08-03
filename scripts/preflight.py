@@ -90,6 +90,24 @@ def check_execution_mode() -> None:
     print(f"[preflight] Execution mode {EXECUTION_MODE} OK")
 
 
+def check_news_calendar() -> None:
+    from config.settings import NEWS_CALENDAR_FILE, NEWS_FILTER_ENABLED
+
+    if not NEWS_FILTER_ENABLED:
+        print("[preflight] News filter disabled")
+        return
+    if not NEWS_CALENDAR_FILE:
+        fail(
+            "AAQTS_NEWS_CALENDAR_FILE is required when the news filter is enabled"
+        )
+    from risk.news_calendar import JsonNewsEventProvider
+
+    provider = JsonNewsEventProvider(NEWS_CALENDAR_FILE)
+    print(
+        f"[preflight] News calendar OK ({len(provider.events)} events)"
+    )
+
+
 def main() -> None:
     check_python_version()
     repo_root = check_repo_root()
@@ -97,6 +115,7 @@ def main() -> None:
     check_optional_packages()
     check_output_folders(repo_root)
     check_execution_mode()
+    check_news_calendar()
     print("[preflight] Preflight passed")
 
 

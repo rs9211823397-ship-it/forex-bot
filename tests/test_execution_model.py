@@ -419,6 +419,59 @@ def test_position_size_uses_point_in_time_equity():
     )
 
 
+def test_strategy_risk_multiplier_reduces_backtest_position_size():
+    data = market_frame([
+        candle(high=100.5, low=99.5),
+        candle(high=101.0, low=99.0),
+    ])
+    full = BacktestEngine(
+        data,
+        lambda index: {"signal": "BUY", "risk_multiplier": 1.0}
+        if index == 0
+        else "HOLD",
+        instrument=instrument(),
+    )
+    reduced = BacktestEngine(
+        data,
+        lambda index: {
+            "signal": "BUY",
+            "risk_multiplier": 0.5,
+            "strategy": "RANGE_REVERSION",
+            "regime": "RANGE",
+        }
+        if index == 0
+        else "HOLD",
+        instrument=instrument(),
+    )
+
+    full_entry = next(
+        trade for trade in full.run() if trade["type"] == "ENTRY"
+    )
+    reduced_entry = next(
+        trade for trade in reduced.run() if trade["type"] == "ENTRY"
+    )
+
+    assert reduced_entry["quantity"] == pytest.approx(
+        full_entry["quantity"] * 0.5,
+        abs=instrument().quantity_step,
+    )
+    assert reduced_entry["risk_multiplier"] == 0.5
+    assert reduced_entry["strategy"] == "RANGE_REVERSION"
+    assert reduced_entry["regime"] == "RANGE"
+
+
+def test_invalid_strategy_risk_multiplier_fails_closed():
+    data = market_frame([candle(), candle()])
+    engine = BacktestEngine(
+        data,
+        lambda index: {"signal": "BUY", "risk_multiplier": 1.5},
+        instrument=instrument(),
+    )
+
+    with pytest.raises(ValueError, match="between zero and one"):
+        engine.run()
+
+
 def test_open_position_drawdown_is_in_equity_curve():
     data = market_frame([
         candle(high=100.5, low=99.5),
