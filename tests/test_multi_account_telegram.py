@@ -164,6 +164,8 @@ def test_environment_credentials_are_per_account_and_never_returned_publicly():
 
 
 class FakeMT5:
+    ACCOUNT_TRADE_MODE_DEMO = 0
+
     def __init__(self):
         self.initialize_kwargs = None
         self.shutdown_calls = 0
@@ -184,6 +186,7 @@ class FakeMT5:
     def account_info(self):
         return SimpleNamespace(
             login=12345678,
+            trade_mode=self.ACCOUNT_TRADE_MODE_DEMO,
             trade_allowed=True,
             trade_expert=True,
             balance=1000.0,
