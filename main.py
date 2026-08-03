@@ -195,7 +195,9 @@ class TradingApplication:
                 quantity = float(trade["position"])
                 risk_amount = (
                     instrument.planned_loss_per_quantity(
-                        entry_reference=trade["entry"],
+                        entry_reference=trade.get(
+                            "entry_reference", trade["entry"]
+                        ),
                         stop_reference=trade["stop_loss"],
                         side=trade["signal"],
                     )

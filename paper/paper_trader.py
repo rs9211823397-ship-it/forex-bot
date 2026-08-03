@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.settings import PAPER_STARTING_BALANCE
+from config.instruments import get_instrument_spec
 
 
 class PaperTrader:
@@ -98,10 +99,15 @@ class PaperTrader:
             if trade["symbol"] == symbol and trade["status"] == "OPEN":
                 return None
 
+        instrument = get_instrument_spec(symbol)
+        side = str(signal).upper()
+        entry_reference = float(entry)
+        entry_fill = instrument.entry_fill_price(entry_reference, side)
         trade = {
             "symbol": symbol,
-            "signal": signal,
-            "entry": float(entry),
+            "signal": side,
+            "entry_reference": entry_reference,
+            "entry": entry_fill,
             "stop_loss": float(stop_loss),
             "take_profit": float(take_profit),
             "position": float(position),
@@ -126,12 +132,25 @@ class PaperTrader:
                 continue
 
             current = float(prices[trade["symbol"]])
+            instrument = get_instrument_spec(trade["symbol"])
+            exit_fill = instrument.exit_fill_price(current, trade["signal"])
+            quantity = float(trade["position"])
 
             if trade["signal"] == "BUY":
-                floating += (current - trade["entry"]) * trade["position"]
+                gross = (
+                    (exit_fill - float(trade["entry"]))
+                    * quantity
+                    * instrument.contract_multiplier
+                )
+                floating += gross - instrument.commission_cost(quantity)
 
             else:
-                floating += (trade["entry"] - current) * trade["position"]
+                gross = (
+                    (float(trade["entry"]) - exit_fill)
+                    * quantity
+                    * instrument.contract_multiplier
+                )
+                floating += gross - instrument.commission_cost(quantity)
 
         self.floating_pnl = round(floating, 4)
 
@@ -159,10 +178,20 @@ class PaperTrader:
                     close = True
 
                 if close:
-                    trade["exit"] = current_price
-
+                    instrument = get_instrument_spec(trade["symbol"])
+                    exit_fill = instrument.exit_fill_price(
+                        current_price, trade["signal"]
+                    )
+                    quantity = float(trade["position"])
+                    trade["exit_reference"] = current_price
+                    trade["exit"] = exit_fill
+                    gross = (
+                        (exit_fill - float(trade["entry"]))
+                        * quantity
+                        * instrument.contract_multiplier
+                    )
                     trade["pnl"] = round(
-                        (current_price - trade["entry"]) * trade["position"], 4
+                        gross - instrument.commission_cost(quantity), 4
                     )
 
             else:
@@ -177,10 +206,20 @@ class PaperTrader:
                     close = True
 
                 if close:
-                    trade["exit"] = current_price
-
+                    instrument = get_instrument_spec(trade["symbol"])
+                    exit_fill = instrument.exit_fill_price(
+                        current_price, trade["signal"]
+                    )
+                    quantity = float(trade["position"])
+                    trade["exit_reference"] = current_price
+                    trade["exit"] = exit_fill
+                    gross = (
+                        (float(trade["entry"]) - exit_fill)
+                        * quantity
+                        * instrument.contract_multiplier
+                    )
                     trade["pnl"] = round(
-                        (trade["entry"] - current_price) * trade["position"], 4
+                        gross - instrument.commission_cost(quantity), 4
                     )
 
             if close:
