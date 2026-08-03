@@ -290,10 +290,13 @@ class MT5Executor:
         self,
         symbol: str,
         side: str,
-        volume: float,
+        volume: Optional[float],
         stop_loss: float,
         take_profit: float,
         comment: str = "AAQTS",
+        *,
+        reference_entry: Optional[float] = None,
+        risk_amount: Optional[float] = None,
     ) -> TradeResult:
         self._ensure_connected()
         if not self.accept_new_trades:
@@ -302,8 +305,12 @@ class MT5Executor:
         side = side.upper().strip()
         if side not in {"BUY", "SELL"}:
             raise ExecutionError("side must be BUY or SELL")
-        if volume <= 0:
+        if risk_amount is None and (volume is None or volume <= 0):
             raise ExecutionError("volume must be greater than zero")
+        if risk_amount is not None and (
+            not isfinite(float(risk_amount)) or float(risk_amount) <= 0
+        ):
+            raise ExecutionError("risk_amount must be finite and greater than zero")
         if self.config.require_stop_loss and stop_loss <= 0:
             raise ExecutionError("A valid stop loss is mandatory")
         if self.config.require_take_profit and take_profit <= 0:
@@ -313,12 +320,30 @@ class MT5Executor:
         if getattr(info, "trade_mode", 0) == 0:
             raise ExecutionError(f"Trading is disabled for {symbol}")
 
-        volume = self._normalize_volume(volume, info)
         tick = self.symbol_tick(symbol)
 
         is_buy = side == "BUY"
         price = tick.ask if is_buy else tick.bid
+        if reference_entry is not None:
+            stop_loss, take_profit = self._translate_protection(
+                side=side,
+                broker_entry=price,
+                reference_entry=float(reference_entry),
+                reference_stop=float(stop_loss),
+                reference_target=float(take_profit),
+            )
         self._validate_protection(side, price, stop_loss, take_profit, info)
+        if risk_amount is not None:
+            volume = self._volume_for_risk(
+                symbol=symbol,
+                side=side,
+                entry=price,
+                stop_loss=stop_loss,
+                risk_amount=float(risk_amount),
+                info=info,
+            )
+        assert volume is not None
+        volume = self._normalize_volume(volume, info)
         self._validate_position_limits(symbol, side)
 
         request = {
@@ -547,6 +572,81 @@ class MT5Executor:
         minimum = max(getattr(info, "trade_stops_level", 0), 0) * info.point
         if minimum and (abs(entry - sl) < minimum or abs(tp - entry) < minimum):
             raise ExecutionError("SL/TP violates the broker minimum stop distance")
+
+    @staticmethod
+    def _translate_protection(
+        *,
+        side: str,
+        broker_entry: float,
+        reference_entry: float,
+        reference_stop: float,
+        reference_target: float,
+    ) -> tuple[float, float]:
+        """Apply source-market stop/target distances to the broker quote."""
+        if not all(
+            isfinite(value) and value > 0
+            for value in (
+                broker_entry,
+                reference_entry,
+                reference_stop,
+                reference_target,
+            )
+        ):
+            raise ExecutionError("Reference and broker prices must be finite and positive")
+        if side == "BUY" and not (
+            reference_stop < reference_entry < reference_target
+        ):
+            raise ExecutionError("BUY reference protection must satisfy SL < entry < TP")
+        if side == "SELL" and not (
+            reference_target < reference_entry < reference_stop
+        ):
+            raise ExecutionError("SELL reference protection must satisfy TP < entry < SL")
+
+        stop_distance = abs(reference_entry - reference_stop)
+        target_distance = abs(reference_target - reference_entry)
+        if side == "BUY":
+            return broker_entry - stop_distance, broker_entry + target_distance
+        return broker_entry + stop_distance, broker_entry - target_distance
+
+    def _volume_for_risk(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        entry: float,
+        stop_loss: float,
+        risk_amount: float,
+        info: Any,
+    ) -> float:
+        """Size from broker contract economics without exceeding approved risk."""
+        order_type = (
+            self.mt5.ORDER_TYPE_BUY if side == "BUY" else self.mt5.ORDER_TYPE_SELL
+        )
+        projected = self.mt5.order_calc_profit(
+            order_type,
+            symbol,
+            1.0,
+            float(entry),
+            float(stop_loss),
+        )
+        if projected is None or not isfinite(float(projected)):
+            raise ExecutionError(
+                f"MT5 could not calculate entry risk: {self.mt5.last_error()}"
+            )
+        loss_per_lot = abs(float(projected))
+        if loss_per_lot <= 0:
+            raise ExecutionError("MT5 calculated zero loss at the protective stop")
+
+        minimum = float(info.volume_min)
+        maximum = float(info.volume_max)
+        raw_volume = float(risk_amount) / loss_per_lot
+        minimum_risk = loss_per_lot * minimum
+        if raw_volume + 1e-12 < minimum:
+            raise ExecutionError(
+                "Broker minimum volume would exceed approved risk "
+                f"({minimum_risk:.2f} > {risk_amount:.2f})"
+            )
+        return min(raw_volume, maximum)
 
     @staticmethod
     def _normalize_volume(volume: float, info: Any) -> float:
