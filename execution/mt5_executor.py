@@ -124,6 +124,12 @@ class MT5Executor:
         ):
             self.shutdown()
             raise ExecutionError("MT5 connected to an unexpected account login")
+        demo_mode = getattr(self.mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
+        if getattr(account, "trade_mode", None) != demo_mode:
+            self.shutdown()
+            raise ExecutionError(
+                "MT5_DEMO requires a broker demo account; live/contest accounts are blocked"
+            )
         if not terminal.trade_allowed:
             self.shutdown()
             raise ExecutionError("Algorithmic trading is disabled in the MT5 terminal")
