@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,8 @@ def test_write_env_token_replaces_duplicates_and_preserves_other_keys(
     assert "AAQTS_EXECUTION_MODE=PAPER" in contents
     assert contents.count("TELEGRAM_BOT_TOKEN=") == 1
     assert f"TELEGRAM_BOT_TOKEN={VALID_TOKEN}" in contents
-    assert env_file.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert env_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_write_env_token_rejects_invalid_value(tmp_path: Path) -> None:
