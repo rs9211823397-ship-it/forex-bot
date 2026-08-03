@@ -131,13 +131,21 @@ def test_mt5_demo_routes_to_mapped_broker_symbol():
     )
 
     recovered = router.start()
-    result = router.execute("EURUSD=X", "BUY", RISK_PLAN, 99.0)
+    result = router.execute(
+        "EURUSD=X",
+        "BUY",
+        RISK_PLAN,
+        99.0,
+        approved_risk_amount=10.0,
+    )
 
     assert mt5.connected is True
     assert recovered[0].ticket == 11
     assert result["symbol"] == "EURUSD"
-    assert result["volume"] == 0.01
+    assert result["volume"] is None
     assert result["stop_loss"] == 1.0950
+    assert result["reference_entry"] == 1.1000
+    assert result["risk_amount"] == 10.0
     assert paper.open_trades == []
     assert positions.recovered is True
     assert positions.registered == [result]
@@ -157,6 +165,17 @@ def test_unknown_mt5_symbol_is_rejected():
 
     with pytest.raises(ExecutionError, match="No MT5 symbol mapping"):
         router.execute("UNKNOWN-USD", "BUY", RISK_PLAN, 1.0)
+
+
+def test_mt5_demo_requires_portfolio_approved_risk_amount():
+    router = ExecutionRouter(
+        paper_trader=FakePaperTrader(),
+        mode="MT5_DEMO",
+        mt5_executor=FakeMT5Executor(),
+    )
+
+    with pytest.raises(ExecutionError, match="portfolio-approved risk amount"):
+        router.execute("EURUSD=X", "BUY", RISK_PLAN, 1.0)
 
 
 def test_pause_resume_and_emergency_are_forwarded():
