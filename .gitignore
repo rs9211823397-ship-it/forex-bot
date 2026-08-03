@@ -9,7 +9,8 @@ htmlcov/
 data/cache/
 outputs/
 logs/*.log
-runtime/*.json
+runtime/
+config/news_calendar.local.json
 account.json
 trades.json
 *.backup

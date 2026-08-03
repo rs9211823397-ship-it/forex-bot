@@ -31,6 +31,7 @@ INSTRUMENTS = {
         "USDCHF=X",
         "NZDUSD=X",
         "CAD=X",
+        "CHF=X",
     )
 }
 INSTRUMENTS.update({
@@ -57,6 +58,28 @@ INSTRUMENTS.update({
         spread=0.01,
         slippage=0.005,
         commission_per_quantity=2.50,
+    ),
+    "PL=F": InstrumentSpec(
+        symbol="PL=F",
+        tick_size=0.10,
+        contract_multiplier=100.0,
+        quantity_step=1.0,
+        minimum_quantity=1.0,
+        maximum_quantity=25.0,
+        spread=1.00,
+        slippage=0.50,
+        commission_per_quantity=3.50,
+    ),
+    "PA=F": InstrumentSpec(
+        symbol="PA=F",
+        tick_size=0.10,
+        contract_multiplier=100.0,
+        quantity_step=1.0,
+        minimum_quantity=1.0,
+        maximum_quantity=25.0,
+        spread=2.00,
+        slippage=1.00,
+        commission_per_quantity=3.50,
     ),
     "BTC-USD": InstrumentSpec(
         symbol="BTC-USD",

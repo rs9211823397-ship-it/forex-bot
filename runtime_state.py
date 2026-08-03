@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,8 +17,21 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-RUNTIME_DIR = PROJECT_ROOT / "runtime"
-STATE_FILE = RUNTIME_DIR / "aaqts_status.json"
+_CONFIGURED_RUNTIME_DIR = os.getenv("AAQTS_RUNTIME_DIR", "").strip()
+RUNTIME_DIR = (
+    Path(_CONFIGURED_RUNTIME_DIR)
+    if _CONFIGURED_RUNTIME_DIR
+    else PROJECT_ROOT / "runtime"
+)
+if not RUNTIME_DIR.is_absolute():
+    RUNTIME_DIR = PROJECT_ROOT / RUNTIME_DIR
+RUNTIME_ACCOUNT_ID = os.getenv("AAQTS_ACCOUNT_ID", "primary").strip() or "primary"
+_SAFE_RUNTIME_ID = re.sub(r"[^A-Za-z0-9_.-]", "_", RUNTIME_ACCOUNT_ID)
+STATE_FILE = (
+    RUNTIME_DIR / "aaqts_status.json"
+    if _SAFE_RUNTIME_ID == "primary"
+    else RUNTIME_DIR / f"aaqts_status_{_SAFE_RUNTIME_ID}.json"
+)
 
 
 def utc_now_iso() -> str:
@@ -56,6 +70,21 @@ def read_runtime_state() -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
+
+
+def read_all_runtime_states() -> tuple[dict[str, Any], ...]:
+    """Return every valid account-worker heartbeat in stable file order."""
+
+    states = []
+    for path in sorted(RUNTIME_DIR.glob("aaqts_status*.json")):
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            states.append(value)
+    return tuple(states)
 
 
 def heartbeat_is_fresh(state: dict[str, Any], max_age_seconds: int = 90) -> bool:

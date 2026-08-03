@@ -174,13 +174,24 @@ class BacktestEngine:
 
         return index
 
-    def _signal_value(self, raw_signal):
+    def _signal_payload(self, raw_signal):
         if isinstance(raw_signal, dict):
             value = raw_signal.get("signal", "HOLD")
+            risk_multiplier = raw_signal.get("risk_multiplier", 1.0)
+            strategy_name = str(raw_signal.get("strategy", "UNSPECIFIED"))
+            regime = str(raw_signal.get("regime", "UNSPECIFIED"))
         elif hasattr(raw_signal, "signal"):
             value = raw_signal.signal
+            risk_multiplier = getattr(raw_signal, "risk_multiplier", 1.0)
+            strategy_name = str(
+                getattr(raw_signal, "strategy", "UNSPECIFIED")
+            )
+            regime = str(getattr(raw_signal, "regime", "UNSPECIFIED"))
         else:
             value = raw_signal
+            risk_multiplier = 1.0
+            strategy_name = "UNSPECIFIED"
+            regime = "UNSPECIFIED"
 
         normalized = str(value).upper()
 
@@ -189,7 +200,26 @@ class BacktestEngine:
                 "Strategy signal must be BUY, SELL, or HOLD"
             )
 
-        return normalized
+        try:
+            risk_multiplier = float(risk_multiplier)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Strategy risk_multiplier must be a finite number"
+            ) from exc
+        if not isfinite(risk_multiplier) or not 0 <= risk_multiplier <= 1:
+            raise ValueError(
+                "Strategy risk_multiplier must be between zero and one"
+            )
+        return {
+            "signal": normalized,
+            "risk_multiplier": risk_multiplier,
+            "strategy": strategy_name,
+            "regime": regime,
+        }
+
+    def _signal_value(self, raw_signal):
+        """Backward-compatible normalized signal helper."""
+        return self._signal_payload(raw_signal)["signal"]
 
     def _multipliers(self, adx):
         if adx >= 40:
@@ -200,7 +230,8 @@ class BacktestEngine:
 
         return 1.5, 2.5
 
-    def _create_order(self, position, index, row, side):
+    def _create_order(self, position, index, row, signal_payload):
+        side = signal_payload["signal"]
         decision_time = self._decision_time(index, row)
         next_position = position + 1
         eligible_fill_time = None
@@ -223,6 +254,9 @@ class BacktestEngine:
             "decision_price": float(row["close"]),
             "atr": float(row["ATR"]),
             "adx": float(row["ADX"]),
+            "risk_multiplier": signal_payload["risk_multiplier"],
+            "strategy": signal_payload["strategy"],
+            "regime": signal_payload["regime"],
             "status": (
                 "PENDING"
                 if eligible_fill_time is not None
@@ -284,7 +318,8 @@ class BacktestEngine:
             entry_reference,
             stop_loss,
             instrument=self.instrument,
-            side=side
+            side=side,
+            risk_multiplier=order["risk_multiplier"],
         )
 
         if quantity <= 0:
@@ -327,6 +362,9 @@ class BacktestEngine:
             "price_risk": price_risk,
             "initial_risk": initial_risk,
             "risk_percent": risk_percent,
+            "risk_multiplier": order["risk_multiplier"],
+            "strategy": order["strategy"],
+            "regime": order["regime"],
             "status": "OPEN"
         }
         self.trades.append(entry_trade)
@@ -342,6 +380,9 @@ class BacktestEngine:
             "price_risk": price_risk,
             "initial_risk": initial_risk,
             "risk_percent": risk_percent,
+            "risk_multiplier": order["risk_multiplier"],
+            "strategy": order["strategy"],
+            "regime": order["regime"],
             "starting_equity": self.equity,
             "entry_trade": entry_trade
         }
@@ -527,6 +568,9 @@ class BacktestEngine:
             "price_risk": position["price_risk"],
             "initial_risk": initial_risk,
             "risk_percent": position["risk_percent"],
+            "risk_multiplier": position["risk_multiplier"],
+            "strategy": position["strategy"],
+            "regime": position["regime"],
             "r_multiple": r_multiple,
             "starting_equity": position["starting_equity"],
             "balance": self.balance,
@@ -599,14 +643,15 @@ class BacktestEngine:
                 and self.pending_order is None
             ):
                 raw_signal = self.strategy(position)
-                signal = self._signal_value(raw_signal)
+                signal_payload = self._signal_payload(raw_signal)
+                signal = signal_payload["signal"]
 
                 if signal in {"BUY", "SELL"}:
                     self._create_order(
                         position,
                         index,
                         row,
-                        signal
+                        signal_payload,
                     )
 
             self._mark_equity(row)

@@ -90,6 +90,41 @@ def check_execution_mode() -> None:
     print(f"[preflight] Execution mode {EXECUTION_MODE} OK")
 
 
+def check_news_calendar() -> None:
+    from config.settings import NEWS_CALENDAR_FILE, NEWS_FILTER_ENABLED
+
+    if not NEWS_FILTER_ENABLED:
+        print("[preflight] News filter disabled")
+        return
+    if not NEWS_CALENDAR_FILE:
+        fail(
+            "AAQTS_NEWS_CALENDAR_FILE is required when the news filter is enabled"
+        )
+    from risk.news_calendar import JsonNewsEventProvider
+
+    provider = JsonNewsEventProvider(NEWS_CALENDAR_FILE)
+    print(
+        f"[preflight] News calendar OK ({len(provider.events)} events)"
+    )
+
+
+def check_symbol_catalog() -> None:
+    from config.instruments import get_instrument_spec
+    from config.settings import EXECUTION_MODE, MT5_SYMBOL_MAP, SYMBOLS
+
+    active = [symbol for group in SYMBOLS.values() for symbol in group]
+    for symbol in active:
+        get_instrument_spec(symbol)
+    if EXECUTION_MODE == "MT5_DEMO":
+        missing = sorted(set(active).difference(MT5_SYMBOL_MAP))
+        if missing:
+            fail(
+                "Active MT5 symbols are missing executable mappings: "
+                + ", ".join(missing)
+            )
+    print(f"[preflight] Symbol catalog OK ({len(active)} active)")
+
+
 def main() -> None:
     check_python_version()
     repo_root = check_repo_root()
@@ -97,6 +132,8 @@ def main() -> None:
     check_optional_packages()
     check_output_folders(repo_root)
     check_execution_mode()
+    check_symbol_catalog()
+    check_news_calendar()
     print("[preflight] Preflight passed")
 
 
