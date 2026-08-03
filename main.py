@@ -352,6 +352,7 @@ class TradingApplication:
             signal=signal["signal"],
             risk_plan=risk_plan,
             paper_position_size=quantity,
+            approved_risk_amount=assessment.approved_risk_amount,
         )
         logger.info("Execution result for %s: %r", symbol, result)
         return current_price
