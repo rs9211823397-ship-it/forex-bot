@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -25,7 +26,13 @@ def _env_flag(name, default=False):
 HIGHER_TIMEFRAME = "1h"
 TRADING_TIMEFRAME = "15m"
 LOOKBACK_DAYS = "2020-01-01"
-ACCOUNT_BALANCE = 1000
+PAPER_STARTING_BALANCE = float(
+    os.getenv("AAQTS_PAPER_STARTING_BALANCE", "1000")
+)
+if not math.isfinite(PAPER_STARTING_BALANCE) or PAPER_STARTING_BALANCE <= 0:
+    raise ValueError("AAQTS_PAPER_STARTING_BALANCE must be greater than zero")
+# Backward-compatible research/reporting alias.
+ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
 RISK_PERCENT = 1
 
 # Strategy gates remain environment-configurable so research can tune them

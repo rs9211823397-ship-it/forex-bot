@@ -1006,6 +1006,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"Balance: {money(view.balance)}\n"
                 f"Equity: {money(view.equity)}\n"
                 f"Floating P/L: {money(view.floating_pnl)}"
+                + (
+                    f"\nStarting balance: {money(view.starting_balance)}\n"
+                    f"Realized P/L: {money(view.total_pnl)}\n"
+                    f"Closed trades: {view.closed_trades}\n"
+                    f"Wins: {view.wins}\n"
+                    f"Win rate: {view.win_rate:.2f}%"
+                    if account.platform is AccountPlatform.PAPER
+                    else ""
+                )
             ),
             "str": (
                 "Strategy: causal regime router\n"

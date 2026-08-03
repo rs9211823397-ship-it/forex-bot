@@ -412,17 +412,42 @@ class TradingApplication:
             phase="IDLE",
             equity=stats["equity"],
             balance=stats["balance"],
+            floating_pnl=(
+                stats["floating_pnl"]
+                if self.execution.mode == "PAPER"
+                else account.equity - account.balance
+            ),
             open_positions=len(self.execution.positions()),
             closed_trades=closed_trades,
             closed_trades_window=closed_window,
+            starting_balance=stats.get("starting_balance", stats["balance"]),
+            wins=stats.get("wins", 0),
+            win_rate=stats.get("win_rate", 0.0),
+            total_pnl=stats.get("total_pnl", 0.0),
         )
 
     def run_forever(self) -> None:
+        initial_state = {
+            "account_id": self.account_id,
+            "status": "STARTING",
+            "execution_mode": EXECUTION_MODE,
+            "phase": "STARTING",
+        }
+        if self.execution.mode == "PAPER":
+            stats = self.paper_trader.get_stats()
+            initial_state.update(
+                balance=stats["balance"],
+                equity=stats["equity"],
+                floating_pnl=stats["floating_pnl"],
+                open_positions=len(self.paper_trader.open_trades),
+                starting_balance=stats["starting_balance"],
+                closed_trades=stats["total_trades"],
+                wins=stats["wins"],
+                win_rate=stats["win_rate"],
+                total_pnl=stats["total_pnl"],
+            )
         write_runtime_state(
-            account_id=self.account_id,
-            status="STARTING",
-            execution_mode=EXECUTION_MODE,
-            phase="STARTING",
+            **initial_state,
         )
         try:
             print(self.controller.start_bot())

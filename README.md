@@ -8,6 +8,8 @@ role-protected Telegram console that defaults to one personally managed account.
 The multi-account registry remains available as an explicit future opt-in.
 
 The safe default is `PAPER`. `MT5_DEMO` must be selected explicitly.
+Set `AAQTS_PAPER_STARTING_BALANCE` to the forward-test account size; the
+default is `1000`, while a small-account simulation can use `100`.
 `MT5_LIVE` is blocked in code and is not enabled by this release.
 
 ## Symbol catalog

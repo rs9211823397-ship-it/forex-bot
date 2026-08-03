@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +40,17 @@ def mt5_account(account_id="demo_01", *, terminal_path="C:/MT5/terminal64.exe"):
         login="12345678",
         server="Exness-MT5Trial",
         terminal_path=terminal_path,
+    )
+
+
+def paper_account(account_id="paper_demo"):
+    return TradingAccount(
+        account_id=account_id,
+        label="AAQTS Paper Demo",
+        broker="AAQTS",
+        platform="PAPER",
+        environment="PAPER",
+        login=account_id,
     )
 
 
@@ -208,6 +220,61 @@ def test_mt5_snapshot_uses_exact_registered_login_server_and_managed_positions()
     }
     assert mt5.shutdown_calls == 1
     assert aggregate_views((view,))["equity"] == 1010.0
+
+
+def test_paper_snapshot_reads_fresh_worker_metrics(tmp_path):
+    account = paper_account()
+    state = {
+        "account_id": account.account_id,
+        "execution_mode": "PAPER",
+        "status": "RUNNING",
+        "heartbeat_utc": datetime.now(timezone.utc).isoformat(),
+        "starting_balance": 100.0,
+        "balance": 103.0,
+        "equity": 104.5,
+        "floating_pnl": 1.5,
+        "open_positions": 2,
+        "closed_trades": 5,
+        "wins": 3,
+        "win_rate": 60.0,
+        "total_pnl": 3.0,
+    }
+    (tmp_path / "aaqts_status_paper_demo.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+    view = MultiAccountSnapshotReader(runtime_dir=tmp_path).read(account)
+
+    assert view.status == "CONNECTED"
+    assert view.starting_balance == 100.0
+    assert view.balance == 103.0
+    assert view.equity == 104.5
+    assert view.floating_pnl == 1.5
+    assert view.open_positions == 2
+    assert view.closed_trades == 5
+    assert view.wins == 3
+    assert view.win_rate == 60.0
+    assert view.total_pnl == 3.0
+
+
+def test_paper_snapshot_fails_closed_without_a_fresh_worker(tmp_path):
+    account = paper_account()
+    reader = MultiAccountSnapshotReader(runtime_dir=tmp_path)
+    assert reader.read(account).status == "OFFLINE"
+
+    stale = {
+        "account_id": account.account_id,
+        "execution_mode": "PAPER",
+        "status": "RUNNING",
+        "heartbeat_utc": (
+            datetime.now(timezone.utc) - timedelta(minutes=10)
+        ).isoformat(),
+        "balance": 100.0,
+    }
+    (tmp_path / "aaqts_status_paper_demo.json").write_text(
+        json.dumps(stale), encoding="utf-8"
+    )
+    assert reader.read(account).status == "STALE"
 
 
 def test_execution_connector_authenticates_and_validates_expected_login():

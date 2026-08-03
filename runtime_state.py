@@ -26,12 +26,25 @@ RUNTIME_DIR = (
 if not RUNTIME_DIR.is_absolute():
     RUNTIME_DIR = PROJECT_ROOT / RUNTIME_DIR
 RUNTIME_ACCOUNT_ID = os.getenv("AAQTS_ACCOUNT_ID", "primary").strip() or "primary"
-_SAFE_RUNTIME_ID = re.sub(r"[^A-Za-z0-9_.-]", "_", RUNTIME_ACCOUNT_ID)
-STATE_FILE = (
-    RUNTIME_DIR / "aaqts_status.json"
-    if _SAFE_RUNTIME_ID == "primary"
-    else RUNTIME_DIR / f"aaqts_status_{_SAFE_RUNTIME_ID}.json"
-)
+
+
+def runtime_state_file(
+    account_id: str,
+    runtime_dir: str | Path | None = None,
+) -> Path:
+    """Return the safe heartbeat path for one account worker."""
+
+    normalized = str(account_id).strip() or "primary"
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", normalized)
+    root = Path(runtime_dir) if runtime_dir is not None else RUNTIME_DIR
+    return (
+        root / "aaqts_status.json"
+        if safe_id == "primary"
+        else root / f"aaqts_status_{safe_id}.json"
+    )
+
+
+STATE_FILE = runtime_state_file(RUNTIME_ACCOUNT_ID)
 
 
 def utc_now_iso() -> str:

@@ -1,17 +1,27 @@
 import csv
 import os
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config.settings import PAPER_STARTING_BALANCE
+
 
 class PaperTrader:
-    def __init__(self, state_dir=None):
+    def __init__(self, state_dir=None, *, starting_balance=None):
 
         self.open_trades = []
         self.closed_trades = []
 
-        self.starting_balance = 1000.0
+        configured_balance = (
+            PAPER_STARTING_BALANCE
+            if starting_balance is None
+            else float(starting_balance)
+        )
+        if not math.isfinite(configured_balance) or configured_balance <= 0:
+            raise ValueError("Paper starting balance must be a positive number")
+        self.starting_balance = float(configured_balance)
         self.balance = self.starting_balance
         self.equity = self.starting_balance
         self.floating_pnl = 0.0
@@ -51,6 +61,7 @@ class PaperTrader:
         data = {
             "open_trades": self.open_trades,
             "closed_trades": self.closed_trades,
+            "starting_balance": self.starting_balance,
             "balance": self.balance,
         }
 
@@ -66,6 +77,16 @@ class PaperTrader:
                 self.open_trades = data.get("open_trades", [])
 
                 self.closed_trades = data.get("closed_trades", [])
+
+                stored_starting_balance = float(
+                    data.get("starting_balance", self.starting_balance)
+                )
+                if (
+                    not math.isfinite(stored_starting_balance)
+                    or stored_starting_balance <= 0
+                ):
+                    raise ValueError("Stored paper starting balance is invalid")
+                self.starting_balance = stored_starting_balance
 
                 self.balance = data.get("balance", self.starting_balance)
 

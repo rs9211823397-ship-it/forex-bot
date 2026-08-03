@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -14,6 +16,7 @@ from urllib.request import Request, urlopen
 from accounts.credentials import EnvironmentCredentialProvider
 from accounts.registry import AccountPlatform, TradingAccount
 from execution.mt5_executor import AAQTS_MAGIC
+from runtime_state import RUNTIME_DIR, heartbeat_is_fresh, runtime_state_file
 
 _MT5_LOCK = threading.RLock()
 
@@ -28,6 +31,11 @@ class AccountView:
     margin_used: float = 0.0
     free_margin: float = 0.0
     open_positions: int = 0
+    starting_balance: float = 0.0
+    closed_trades: int = 0
+    wins: int = 0
+    win_rate: float = 0.0
+    total_pnl: float = 0.0
     reason: str = ""
     as_of_utc: str = ""
 
@@ -46,11 +54,13 @@ class MultiAccountSnapshotReader:
         mt5_module: Any = None,
         urlopen_fn: Callable[..., Any] = urlopen,
         timeout_seconds: float = 8.0,
+        runtime_dir: str | Path | None = None,
     ):
         self.credentials = credentials or EnvironmentCredentialProvider()
         self._mt5_module = mt5_module
         self._urlopen = urlopen_fn
         self.timeout_seconds = float(timeout_seconds)
+        self.runtime_dir = Path(runtime_dir) if runtime_dir is not None else RUNTIME_DIR
 
     def read(self, account: TradingAccount) -> AccountView:
         if not account.enabled:
@@ -63,11 +73,7 @@ class MultiAccountSnapshotReader:
                 reason="Missing host configuration: " + ", ".join(readiness.missing),
             )
         if account.platform is AccountPlatform.PAPER:
-            return self._view(
-                account,
-                "CONNECTED",
-                reason="Paper account registered",
-            )
+            return self._read_paper(account)
         if account.platform is AccountPlatform.MT5:
             return self._read_mt5(account)
         if account.platform is AccountPlatform.MT4:
@@ -89,6 +95,81 @@ class MultiAccountSnapshotReader:
         except ImportError as exc:
             raise RuntimeError("MetaTrader5 package is unavailable") from exc
         return mt5
+
+    @staticmethod
+    def _finite_number(payload: dict[str, Any], key: str) -> float:
+        try:
+            value = float(payload.get(key, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        return value if math.isfinite(value) else 0.0
+
+    @staticmethod
+    def _nonnegative_integer(payload: dict[str, Any], key: str) -> int:
+        try:
+            return max(0, int(payload.get(key, 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _read_paper(self, account: TradingAccount) -> AccountView:
+        path = runtime_state_file(account.account_id, self.runtime_dir)
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                state = json.load(handle)
+        except FileNotFoundError:
+            return self._view(
+                account,
+                "OFFLINE",
+                reason="Paper worker has not published a heartbeat",
+            )
+        except (OSError, json.JSONDecodeError):
+            return self._view(
+                account,
+                "RUNTIME_INVALID",
+                reason="Paper worker heartbeat is unreadable",
+            )
+        if not isinstance(state, dict):
+            return self._view(
+                account,
+                "RUNTIME_INVALID",
+                reason="Paper worker heartbeat is invalid",
+            )
+        if str(state.get("account_id", "")) != account.account_id:
+            return self._view(
+                account,
+                "RUNTIME_MISMATCH",
+                reason="Paper worker heartbeat belongs to another account",
+            )
+        if str(state.get("execution_mode", "")).upper() != "PAPER":
+            return self._view(
+                account,
+                "RUNTIME_MISMATCH",
+                reason="Account worker is not running in PAPER mode",
+            )
+        if not heartbeat_is_fresh(state):
+            return self._view(
+                account,
+                "STALE",
+                reason="Paper worker heartbeat is stale",
+            )
+
+        worker_status = str(state.get("status", "UNKNOWN")).upper()
+        status = "CONNECTED" if worker_status in {"RUNNING", "PAUSED"} else worker_status
+        return AccountView(
+            account_id=account.account_id,
+            status=status,
+            balance=self._finite_number(state, "balance"),
+            equity=self._finite_number(state, "equity"),
+            floating_pnl=self._finite_number(state, "floating_pnl"),
+            open_positions=self._nonnegative_integer(state, "open_positions"),
+            starting_balance=self._finite_number(state, "starting_balance"),
+            closed_trades=self._nonnegative_integer(state, "closed_trades"),
+            wins=self._nonnegative_integer(state, "wins"),
+            win_rate=self._finite_number(state, "win_rate"),
+            total_pnl=self._finite_number(state, "total_pnl"),
+            reason=f"Paper worker {worker_status.lower()}",
+            as_of_utc=str(state.get("heartbeat_utc", "")),
+        )
 
     def _read_mt5(self, account: TradingAccount) -> AccountView:
         credentials = self.credentials.credentials(account)
