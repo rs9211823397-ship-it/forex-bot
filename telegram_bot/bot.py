@@ -59,10 +59,14 @@ from runtime_state import (
     heartbeat_is_fresh,
     read_all_runtime_states,
     read_runtime_state,
+    runtime_state_file,
 )
 from telegram_bot.alert_monitor import (
     TradeAlertMonitor,
     is_subscribed,
+    paper_closed_position_details,
+    paper_daily_summary_snapshot,
+    read_paper_positions,
     subscribe,
     unsubscribe,
 )
@@ -1446,7 +1450,28 @@ async def post_init(application: Application) -> None:
         )
     except TelegramError:
         logger.warning("Could not update Telegram command menu")
-    monitor = TradeAlertMonitor(application.bot)
+    enabled_accounts = _managed_accounts(enabled_only=True)
+    paper_accounts = tuple(
+        account
+        for account in enabled_accounts
+        if account.platform is AccountPlatform.PAPER
+    )
+    if len(enabled_accounts) == 1 and len(paper_accounts) == 1:
+        account = paper_accounts[0]
+        paper_state_dir = RUNTIME_DIR / "accounts" / account.account_id
+        heartbeat_path = runtime_state_file(account.account_id, RUNTIME_DIR)
+        monitor = TradeAlertMonitor(
+            application.bot,
+            read_positions_fn=lambda: read_paper_positions(paper_state_dir),
+            closed_position_details_fn=lambda position: paper_closed_position_details(
+                paper_state_dir, position
+            ),
+            daily_summary_snapshot_fn=lambda: paper_daily_summary_snapshot(
+                paper_state_dir, heartbeat_path
+            ),
+        )
+    else:
+        monitor = TradeAlertMonitor(application.bot)
     application.bot_data["trade_alert_monitor"] = monitor
     application.bot_data["trade_alert_task"] = asyncio.create_task(
         monitor.run(), name="aaqts-trade-alert-monitor"
