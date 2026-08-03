@@ -150,6 +150,53 @@ def test_buy_request_contains_broker_side_protection():
     assert request["type_filling"] == adapter.ORDER_FILLING_FOK
 
 
+def test_reference_distances_are_translated_to_current_broker_quote():
+    executor, adapter = connected_executor()
+
+    executor.place_market_order(
+        "EURUSD",
+        "BUY",
+        0.01,
+        stop_loss=1.19800,
+        take_profit=1.20400,
+        reference_entry=1.20000,
+    )
+
+    request = adapter.sent[-1]
+    assert request["price"] == 1.10002
+    assert request["sl"] == 1.09802
+    assert request["tp"] == 1.10402
+
+
+def test_broker_contract_risk_sizes_volume_without_rounding_up():
+    executor, adapter = connected_executor()
+
+    executor.place_market_order(
+        "EURUSD",
+        "BUY",
+        None,
+        stop_loss=1.09800,
+        take_profit=1.10400,
+        risk_amount=4.0,
+    )
+
+    assert adapter.sent[-1]["volume"] == 0.01
+
+
+def test_broker_minimum_volume_cannot_exceed_approved_risk():
+    executor, _ = connected_executor()
+
+    with pytest.raises(ExecutionError, match="minimum volume would exceed"):
+        executor.place_market_order(
+            "EURUSD",
+            "BUY",
+            None,
+            stop_loss=1.09800,
+            take_profit=1.10400,
+            risk_amount=1.0,
+        )
+
+
 def test_volume_normalization_never_rounds_risk_up():
     executor, adapter = connected_executor()
 
