@@ -12,7 +12,6 @@ from typing import Any, Optional
 
 from config.settings import (
     EXECUTION_MODE,
-    MT5_FIXED_LOT,
     MT5_LOGIN,
     MT5_MAX_OPEN_POSITIONS,
     MT5_PASSWORD,
@@ -81,6 +80,7 @@ class ExecutionRouter:
         signal: str,
         risk_plan: dict[str, float],
         paper_position_size: float,
+        approved_risk_amount: Optional[float] = None,
     ) -> Any:
         """Execute one already risk-approved trade plan."""
         if not risk_plan:
@@ -110,13 +110,19 @@ class ExecutionRouter:
             raise ExecutionError(
                 f"No MT5 symbol mapping configured for {source_symbol}"
             )
+        if approved_risk_amount is None or approved_risk_amount <= 0:
+            raise ExecutionError(
+                "MT5_DEMO requires a positive portfolio-approved risk amount"
+            )
         result = self.mt5_executor.place_market_order(
             symbol=mt5_symbol,
             side=side,
-            volume=MT5_FIXED_LOT,
+            volume=None,
             stop_loss=risk_plan["stop_loss"],
             take_profit=risk_plan["take_profit"],
             comment=f"AAQTS {source_symbol}",
+            reference_entry=risk_plan["entry"],
+            risk_amount=approved_risk_amount,
         )
         if self.position_manager is not None:
             self.position_manager.register_execution_result(result)
