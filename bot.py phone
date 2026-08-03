@@ -1,0 +1,120 @@
+
+# AAQTS PHONE BOT MANAGER - Works on Android | No MT5
+import requests, time, json, os, yfinance as yf
+from datetime import datetime, timezone
+import pytz
+
+TOKEN='8806385921:AAFsMMhlvfyOQIEuKWm0SLctxhjHKpT44DM'
+CHAT_ID='1463277862'
+STATE_FILE="phone_state.json"
+
+def get_state():
+    try: return json.loads(open(STATE_FILE).read())
+    except: return {"trading":True,"balance":65.0,"start_balance":65.0,"open_trades":[]}
+
+def set_trading(v):
+    s=get_state(); s["trading"]=v; open(STATE_FILE,"w").write(json.dumps(s, indent=2))
+
+def send(t, buttons=None):
+    try:
+        data={'chat_id':CHAT_ID,'text':t,'parse_mode':'Markdown'}
+        if buttons:
+            import json as js
+            data['reply_markup']=js.dumps({"keyboard":buttons,"resize_keyboard":True})
+        requests.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage',data=data,timeout=10)
+    except Exception as e: print(e)
+
+def analyze_detailed(yf_sym, name):
+    try:
+        df_1h = yf.download(yf_sym, period="7d", interval="1h", progress=False, auto_adjust=True)
+        df_4h = yf.download(yf_sym, period="30d", interval="4h", progress=False, auto_adjust=True)
+        df_15m = yf.download(yf_sym, period="2d", interval="15m", progress=False, auto_adjust=True)
+        if df_1h.empty: return None
+        for df in [df_1h, df_4h, df_15m]:
+            df.columns=[c[0] if isinstance(c,tuple) else c for c in df.columns]
+        def calc(df):
+            close=df['Close']; e20=close.ewm(20).mean().iloc[-1]; e50=close.ewm(50).mean().iloc[-1]
+            delta=close.diff(); gain=delta.where(delta>0,0).rolling(14).mean().iloc[-1]; loss=-delta.where(delta<0,0).rolling(14).mean().iloc[-1]
+            rsi=100-(100/(1+(gain/loss if loss!=0 else 100)))
+            return e20,e50,rsi,close.iloc[-1]
+        e20_1h,e50_1h,rsi_1h,price=calc(df_1h)
+        e20_4h,e50_4h,rsi_4h,_=calc(df_4h)
+        e20_15,e50_15,rsi_15,_=calc(df_15m)
+        bullish_1h = e20_1h>e50_1h and rsi_1h>45
+        bearish_1h = e20_1h<e50_1h and rsi_1h<55
+        bullish_4h = e20_4h>e50_4h and rsi_4h>45
+        bearish_4h = e20_4h<e50_4h and rsi_4h<55
+        positive=[]; rejection=[]
+        if bullish_1h: positive.append(f"1H Bull EMA {e20_1h:.2f} > {e50_1h:.2f}")
+        if bearish_1h: positive.append(f"1H Bear EMA {e20_1h:.2f} < {e50_1h:.2f}")
+        if bullish_4h and bullish_1h: positive.append("MTF CONFIRMED")
+        if bearish_4h and bearish_1h: positive.append("MTF CONFIRMED")
+        if bullish_1h and not bullish_4h: rejection.append(f"1H BULL but 4H BEAR RSI {rsi_4h:.0f}")
+        if bearish_1h and not bearish_4h: rejection.append(f"1H BEAR but 4H BULL RSI {rsi_4h:.0f}")
+        if not bullish_1h and not bearish_1h: rejection.append(f"1H flat RSI {rsi_1h:.0f}")
+        if rsi_1h>60 or rsi_1h<40: positive.append(f"Strong RSI {rsi_1h:.0f}")
+        else: rejection.append(f"Weak RSI {rsi_1h:.0f}")
+        if bullish_1h and bullish_4h and e20_15>e50_15: decision="BUY"; conf=75; score=65; regime="TRENDING"; status="APPROVED"
+        elif bearish_1h and bearish_4h and e20_15<e50_15: decision="SELL"; conf=75; score=-65; regime="TRENDING"; status="APPROVED"
+        else: decision="HOLD"; conf=20; score=-10; regime="RANGE"; status="REJECTED"; rejection.append(f"15M no confirm"); rejection.append(f"Quality {abs(score)}/100")
+        return {"symbol": name, "price": price, "decision": decision, "status": status,"confidence": conf, "score": score, "regime": regime,"rsi": rsi_1h, "positive": positive, "rejection": rejection,"e20_1h": e20_1h, "e50_1h": e50_1h, "trend_4h": "BULL" if bullish_4h else "BEAR", "rsi_4h": rsi_4h}
+    except: return None
+
+def build_menu():
+    return [["/dashboard", "/analysis"],["/positions", "/pnl"],["/start", "/stop"],["/closeall"]]
+
+send("📱 *PHONE BOT V5.0 READY*\n13 Symbols | 0.05 Lot | No MT5\nLaptop OFF kar sakta hai!\n/analysis se check kar", build_menu())
+last=0
+while True:
+ try:
+  r=requests.get(f'https://api.telegram.org/bot{TOKEN}/getUpdates',params={'offset':last+1,'timeout':20},timeout=25).json()
+  for u in r.get('result',[]):
+   last=u['update_id']
+   txt=u.get('message',{}).get('text','').strip()
+   low=txt.lower()
+   print(f"CMD {txt}")
+   if '/start' in low:
+    set_trading(True); send("📱 Trading STARTED - Phone Mode ON\nLaptop OFF rakho", build_menu())
+   elif '/stop' in low and 'close' not in low:
+    set_trading(False); send("⏸️ Trading PAUSED - Phone Mode", build_menu())
+   elif 'analysis' in low:
+    send("🔍 Running 13 symbols analysis - 20 sec...")
+    syms=[("EURUSD=X","EURUSD"),("GBPUSD=X","GBPUSD"),("USDJPY=X","USDJPY"),("USDCHF=X","USDCHF"),("USDCAD=X","USDCAD"),("AUDUSD=X","AUDUSD"),("NZDUSD=X","NZDUSD"),("GC=F","XAUUSD"),("PL=F","XPTUSD"),("PA=F","XPDUSD"),("CL=F","USOIL"),("BTC-USD","BTCUSD"),("ETH-USD","ETHUSD")]
+    full_msg="*📱 PHONE V5.0 - 13 SYMBOLS*\nUTC: "+datetime.now(timezone.utc).strftime("%a %H:%M")+"\n\n"
+    for yf_sym, name in syms:
+        res=analyze_detailed(yf_sym, name)
+        if not res: continue
+        now_utc=datetime.now(timezone.utc); wd=now_utc.weekday(); is_closed=False
+        if wd==5: is_closed=True
+        if wd==6 and now_utc.hour<22: is_closed=True
+        if any(x in name for x in ["BTC","ETH"]): is_closed=False
+        market_tag="CLOSED" if is_closed else "OPEN"
+        full_msg+=f"*{res['symbol']}* | {res['decision']} | {res['confidence']}% | {market_tag}\nPrice:{res['price']:.2f} RSI:{res['rsi']:.0f} {res['regime']}\n{res['status']} Score:{res['score']}\n"
+        if res['positive']: full_msg+=f"Pos: {res['positive'][0]}\n"
+        if res['rejection']: full_msg+=f"Rej: {res['rejection'][0]}\n"
+        full_msg+=f"\n"
+    full_msg+="Strat:1H/4H->5M/15M 0.05lot Phone\n"
+    if len(full_msg)>3500:
+        send(full_msg[:3500], build_menu()); time.sleep(1); send(full_msg[3500:], build_menu())
+    else: send(full_msg, build_menu())
+   elif 'dashboard' in low:
+    s=get_state()
+    msg=f"*📱 PHONE DASHBOARD V5.0*\nBal:${s['balance']:.2f} Start:${s['start_balance']:.2f}\nP/L:${s['balance']-s['start_balance']:+.2f}\nOpen:{len(s['open_trades'])} {'ON' if s['trading'] else 'OFF'}\n"
+    for p in s['open_trades'][:5]: msg+=f"{p['symbol']} {p['type']} {p['vol']} @ {p['entry']:.2f}\n"
+    if not s['open_trades']: msg+="No open - waiting signal\n"
+    send(msg, build_menu())
+   elif 'positions' in low:
+    s=get_state()
+    if not s['open_trades']: send("No open positions", build_menu())
+    else:
+        msg="*📱 Positions*\n"
+        for p in s['open_trades']: msg+=f"{p['symbol']} {p['type']} {p['vol']} @ {p['entry']:.5f}\n"
+        send(msg, build_menu())
+   elif 'pnl' in low:
+    s=get_state(); pnl=s['balance']-s['start_balance']
+    send(f"*📱 P/L* Today:${pnl:+.2f} Bal:${s['balance']:.2f} Open:{len(s['open_trades'])}", build_menu())
+   elif 'closeall' in low:
+    s=get_state(); s['open_trades']=[]; open(STATE_FILE,"w").write(json.dumps(s, indent=2))
+    send("✅ All paper trades closed", build_menu())
+ except Exception as e:
+  print(f"Err {e}"); time.sleep(1)
