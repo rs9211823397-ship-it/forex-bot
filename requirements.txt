@@ -1,11 +1,4 @@
-numpy
-pandas
-matplotlib
-scikit-learn
-tensorflow
-pandas-ta
-yfinance
-plotly
-streamlit
-MetaTrader5; platform_system == "Windows"
-pytest
+numpy>=2.0,<3
+pandas>=2.2,<3
+python-dotenv>=1.0,<2
+yfinance>=0.2.54,<2

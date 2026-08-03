@@ -6,12 +6,27 @@ Version: 2.1
 import yfinance as yf
 import pandas as pd
 from config.settings import SYMBOLS, LOOKBACK_DAYS
+from data.historical import (
+    HistoricalDataError,
+    HistoricalDataStore
+)
+from data.timeframes import (
+    normalize_timeframe,
+    normalize_timestamp
+)
 
 
 class MarketData:
 
+    def __init__(
+        self,
+        cache_dir="data/cache",
+        cache_downloads=True
+    ):
+        self.history = HistoricalDataStore(cache_dir)
+        self.cache_downloads = bool(cache_downloads)
 
-    def download_data(self, symbol, interval=None):
+    def _download(self, symbol, interval):
 
         if interval == "15m":
 
@@ -44,7 +59,77 @@ class MarketData:
             )
 
 
+        return data
+
+    def _cached_or_raise(
+        self,
+        symbol,
+        timeframe,
+        error=None,
+        as_of=None
+    ):
+        try:
+            cached = self.history.load(
+                symbol,
+                timeframe
+            )
+
+            if as_of is not None:
+                cutoff = normalize_timestamp(
+                    as_of,
+                    "as_of"
+                )
+                cached = cached.loc[
+                    cached["close_time"] <= cutoff
+                ].copy()
+
+                if cached.empty:
+                    raise HistoricalDataError(
+                        "No cached candles are available at as_of"
+                    )
+
+            return cached
+        except HistoricalDataError:
+            message = f"No data found for {symbol}"
+
+            if error is None:
+                raise Exception(message)
+
+            raise Exception(message) from error
+
+    def download_data(
+        self,
+        symbol,
+        interval=None,
+        *,
+        as_of=None,
+        use_cache=True
+    ):
+        timeframe = normalize_timeframe(
+            interval or "1d"
+        )
+
+        try:
+            data = self._download(symbol, interval)
+        except Exception as exc:
+            if use_cache:
+                return self._cached_or_raise(
+                    symbol,
+                    timeframe,
+                    exc,
+                    as_of=as_of
+                )
+
+            raise
+
         if data.empty:
+            if use_cache:
+                return self._cached_or_raise(
+                    symbol,
+                    timeframe,
+                    as_of=as_of
+                )
+
             raise Exception(f"No data found for {symbol}")
 
 
@@ -79,11 +164,49 @@ class MarketData:
             )
 
 
-        data = data[required]
-
+        data = data[required].copy()
         data.dropna(inplace=True)
+        prepared = self.history.prepare(
+            data,
+            timeframe,
+            as_of=as_of or pd.Timestamp.now(tz="UTC")
+        )
 
-        return data
+        if prepared.empty:
+            if use_cache:
+                return self._cached_or_raise(
+                    symbol,
+                    timeframe,
+                    as_of=as_of
+                )
+
+            raise Exception(
+                f"No completed candles found for {symbol}"
+            )
+
+        if self.cache_downloads:
+            self.history.save(
+                prepared,
+                symbol,
+                timeframe,
+                source="yahoo"
+            )
+
+        return prepared
+
+    def load_csv(
+        self,
+        path,
+        interval,
+        expected_version=None
+    ):
+        """Load a deterministic local CSV replay dataset."""
+
+        return self.history.load_csv(
+            path,
+            interval,
+            expected_version=expected_version
+        )
 
 
     def download_all_data(self, interval=None):

@@ -3,7 +3,7 @@ import threading
 from typing import Callable
 
 from execution.execution_router import ExecutionRouter
-from runtime.bot_loop import BotLoop
+from bot_loop import BotLoop
 
 
 logger = logging.getLogger(__name__)
@@ -20,42 +20,50 @@ class BotController:
     - Run BotLoop in a background thread
     """
 
-    def __init__(
-        self,
-        bot_loop: BotLoop,
-        execution_router: ExecutionRouter,
-        callback: Callable[[], None],
-    ) -> None:
-
-        self.bot_loop = bot_loop
-        self.execution_router = execution_router
-        self.callback = callback
+    def __init__(self):
+        self.bot_loop: BotLoop | None = None
+        self.execution_router: ExecutionRouter | None = None
+        self.callback: Callable[[], None] | None = None
 
         self.running = False
         self.paused = False
 
         self._thread: threading.Thread | None = None
 
-    def start_bot(self) -> str:
+    @classmethod
+    def configured(
+        cls,
+        bot_loop: BotLoop,
+        execution_router: ExecutionRouter,
+        callback: Callable[[], None],
+    ) -> "BotController":
+        controller = cls()
+        controller.bot_loop = bot_loop
+        controller.execution_router = execution_router
+        controller.callback = callback
+        return controller
+
+    def start_bot(self):
 
         if self.running:
             return "BOT ALREADY RUNNING"
 
         logger.info("Starting AAQTS Bot")
 
-        self.execution_router.start()
+        if self.execution_router is not None:
+            self.execution_router.start()
 
         self.running = True
         self.paused = False
 
-        self._thread = threading.Thread(
-            target=self.bot_loop.start,
-            args=(self.callback,),
-            daemon=True,
-            name="AAQTS-BotLoop",
-        )
-
-        self._thread.start()
+        if self.bot_loop is not None and self.callback is not None:
+            self._thread = threading.Thread(
+                target=self.bot_loop.start,
+                args=(self.callback,),
+                daemon=True,
+                name="AAQTS-BotLoop",
+            )
+            self._thread.start()
 
         logger.info("AAQTS Bot started successfully")
 
@@ -68,13 +76,15 @@ class BotController:
 
         logger.info("Stopping AAQTS Bot")
 
-        self.bot_loop.stop()
+        if self.bot_loop is not None:
+            self.bot_loop.stop()
 
         if self._thread is not None:
             self._thread.join(timeout=10)
             self._thread = None
 
-        self.execution_router.shutdown()
+        if self.execution_router is not None:
+            self.execution_router.shutdown()
 
         self.running = False
         self.paused = False
@@ -93,7 +103,8 @@ class BotController:
 
         logger.info("Pausing execution")
 
-        self.execution_router.pause()
+        if self.execution_router is not None:
+            self.execution_router.pause()
 
         self.paused = True
 
@@ -109,7 +120,8 @@ class BotController:
 
         logger.info("Resuming execution")
 
-        self.execution_router.resume()
+        if self.execution_router is not None:
+            self.execution_router.resume()
 
         self.paused = False
 
@@ -119,15 +131,21 @@ class BotController:
 
         logger.critical("Emergency stop initiated")
 
-        positions = self.execution_router.emergency_stop()
+        positions = (
+            self.execution_router.emergency_stop()
+            if self.execution_router is not None
+            else []
+        )
 
-        self.bot_loop.stop()
+        if self.bot_loop is not None:
+            self.bot_loop.stop()
 
         if self._thread is not None:
             self._thread.join(timeout=10)
             self._thread = None
 
-        self.execution_router.shutdown()
+        if self.execution_router is not None:
+            self.execution_router.shutdown()
 
         self.running = False
         self.paused = False

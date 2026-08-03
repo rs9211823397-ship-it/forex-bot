@@ -624,7 +624,8 @@ class MarketRegimeDetector:
             winning_score = volatility_score
 
         elif (
-            trend_score >= 60
+            adx >= self.adx_trend_threshold
+            and trend_score >= 60
             and direction == "BULLISH"
         ):
 
@@ -633,7 +634,8 @@ class MarketRegimeDetector:
             winning_score = trend_score
 
         elif (
-            trend_score >= 60
+            adx >= self.adx_trend_threshold
+            and trend_score >= 60
             and direction == "BEARISH"
         ):
 
@@ -875,14 +877,14 @@ class MarketRegimeDetector:
         confidence = float(
             regime.get(
                 "confidence",
-                0.0,
+                100.0,
             )
         )
 
         risk_multiplier = float(
             regime.get(
                 "risk_multiplier",
-                0.0,
+                1.0,
             )
         )
 

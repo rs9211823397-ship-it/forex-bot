@@ -3,6 +3,7 @@ from strategy.signal_engine import SignalEngine
 from backtesting.backtest_engine import BacktestEngine
 from backtesting.performance import PerformanceReport
 from indicators.technical import TechnicalIndicators
+from config.instruments import get_instrument_spec
 
 
 market = MarketData()
@@ -33,7 +34,7 @@ for i in range(len(data)):
     if i % 500 == 0:
         print(f"Processed {i}/{len(data)} candles")
 
-    df = data.iloc[:i+1]
+    df = data.iloc[max(0, i-250):i+1]
 
     result = engine.generate_signal(
         df,
@@ -52,14 +53,46 @@ def run_strategy(index):
 
 backtest = BacktestEngine(
     data,
-    run_strategy
+    run_strategy,
+    instrument=get_instrument_spec(symbol),
 )
 
 trades = backtest.run()
 
-report = PerformanceReport(trades)
+report = PerformanceReport(
+    trades,
+    initial_equity=backtest.initial_equity,
+    equity_curve=backtest.equity_history
+)
 
 print("==============================")
 print("BACKTEST REPORT")
 print("==============================")
 print(report.summary())
+print("\nTRADE DETAILS")
+print("================")
+
+for trade in trades:
+    if trade["type"] == "EXIT":
+        print(
+            trade["side"],
+            "|",
+            trade["result"],
+            "| P/L:",
+            round(trade["profit"], 2)
+        )
+print("\nWIN/LOSS SUMMARY")
+print("================")
+
+wins = 0
+losses = 0
+
+for trade in trades:
+    if trade["type"] == "EXIT":
+        if trade["result"] == "TAKE PROFIT":
+            wins += 1
+        else:
+            losses += 1
+
+print("Take Profits:", wins)
+print("Stop Losses:", losses)

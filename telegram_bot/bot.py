@@ -321,7 +321,7 @@ def run_analysis_sync() -> str:
     for symbol, data in all_data.items():
         try:
             analyzed_data = indicator.add_indicators(data)
-            signal = signal_engine.generate_signal(
+            signal = signal_engine.generate_analysis(
                 analyzed_data, symbol, higher_tf_data.get(symbol)
             )
             results.append({
