@@ -56,15 +56,25 @@ def write_env_token(env_file: str | Path, token: str) -> None:
         dir=destination.parent,
         text=True,
     )
+    descriptor_open = True
     try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        # fchmod is POSIX-only.  The helper is primarily used in a Linux
+        # Codespace, but keeping the atomic write portable lets the shared
+        # setup and test suite run safely on the Windows MT5 host as well.
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor_open = False
+        with handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_name, destination)
-        os.chmod(destination, 0o600)
+        if os.name == "posix":
+            os.chmod(destination, 0o600)
     finally:
+        if descriptor_open:
+            os.close(descriptor)
         if os.path.exists(temporary_name):
             os.unlink(temporary_name)
 
