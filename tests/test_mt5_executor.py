@@ -18,6 +18,8 @@ class FakeMT5:
     ORDER_FILLING_IOC = 1
     ORDER_FILLING_RETURN = 2
     TRADE_RETCODE_DONE = 10009
+    ACCOUNT_TRADE_MODE_DEMO = 0
+    ACCOUNT_TRADE_MODE_REAL = 2
     DEAL_ENTRY_IN = 0
     DEAL_ENTRY_OUT = 1
     DEAL_ENTRY_OUT_BY = 3
@@ -26,6 +28,7 @@ class FakeMT5:
         self._positions = []
         self._deals = []
         self.sent = []
+        self.account_trade_mode = self.ACCOUNT_TRADE_MODE_DEMO
 
     def initialize(self, **kwargs):
         return True
@@ -43,6 +46,7 @@ class FakeMT5:
         return SimpleNamespace(
             trade_allowed=True,
             trade_expert=True,
+            trade_mode=self.account_trade_mode,
             balance=10_000.0,
             equity=9_975.0,
         )
@@ -96,6 +100,17 @@ def connected_executor(adapter=None):
     executor = MT5Executor(ExecutionConfig(max_open_positions=3), adapter=adapter)
     executor.connect()
     return executor, adapter
+
+
+def test_connect_rejects_non_demo_account():
+    adapter = FakeMT5()
+    adapter.account_trade_mode = adapter.ACCOUNT_TRADE_MODE_REAL
+    executor = MT5Executor(ExecutionConfig(), adapter=adapter)
+
+    with pytest.raises(ExecutionError, match="requires a broker demo account"):
+        executor.connect()
+
+    assert executor.connected is False
 
 
 def managed_position(adapter, *, ticket=10, volume=0.05):
