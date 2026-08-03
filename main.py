@@ -44,7 +44,7 @@ from risk.protection import (
     TradeRiskRequest,
 )
 from risk.risk_manager import RiskManager
-from runtime_state import write_runtime_state
+from runtime_state import engine_instance_lock, write_runtime_state
 from strategy.signal_engine import SignalEngine
 from strategy.regime_router import RegimeStrategyRouter
 
@@ -430,6 +430,10 @@ class TradingApplication:
         )
 
     def run_forever(self) -> None:
+        with engine_instance_lock(self.account_id):
+            self._run_forever_locked()
+
+    def _run_forever_locked(self) -> None:
         initial_state = {
             "account_id": self.account_id,
             "status": "STARTING",
