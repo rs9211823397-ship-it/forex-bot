@@ -1,5 +1,17 @@
 __pycache__/
 *.pyc
+.pytest_cache/
 .env
 .venv/
+venv/
+.coverage
+htmlcov/
+data/cache/
+outputs/
+logs/*.log
 runtime/*.json
+account.json
+trades.json
+*.backup
+*backup.py
+* phone

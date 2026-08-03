@@ -1,7 +1,8 @@
 import csv
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 
 class PaperTrader:
@@ -16,10 +17,11 @@ class PaperTrader:
         self.equity = self.starting_balance
         self.floating_pnl = 0.0
 
-        self.history_file = "logs/trade_history.csv"
-        self.trade_file = "trades.json"
+        project_root = Path(__file__).resolve().parents[1]
+        self.history_file = project_root / "logs" / "trade_history.csv"
+        self.trade_file = project_root / "trades.json"
 
-        os.makedirs("logs", exist_ok=True)
+        self.history_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.load_trades()
 
@@ -127,7 +129,9 @@ class PaperTrader:
 
             "exit": None,
 
-            "pnl": 0
+            "pnl": 0,
+
+            "opened_at": datetime.now(timezone.utc).isoformat()
 
         }
 
@@ -266,6 +270,8 @@ class PaperTrader:
 
 
             if close:
+
+                trade["closed_at"] = datetime.now(timezone.utc).isoformat()
 
 
                 self.balance = round(

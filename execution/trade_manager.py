@@ -223,24 +223,13 @@ class TradeManager:
     # Backward-compatible API
     # ------------------------------------------------------------------
     def calculate_trade(self, data: Any, signal: Any) -> dict[str, Any]:
-        """Preserve the original helper API while returning richer data."""
+        """Preserve the original two-field helper API."""
         current_price = _last_numeric(data, ("close", "Close"), required=True)
         atr = _last_numeric(data, ("ATR", "atr"), required=True)
-        side = normalize_signal(signal).value
-        result: dict[str, Any] = {
+        return {
             "current_price": current_price,
-            "entry_price": current_price,
             "atr": atr,
-            "signal": side,
         }
-        if self.risk_manager is not None and side != TradeSide.HOLD.value:
-            try:
-                levels = self.risk_manager.calculate_trade_levels(side, current_price, atr)
-                if levels:
-                    result.update(_as_dict(levels))
-            except Exception as exc:
-                result["risk_error"] = str(exc)
-        return result
 
     def process_signal(
         self,

@@ -35,8 +35,9 @@ LOOKBACK_DAYS = "2020-01-01"
 ACCOUNT_BALANCE = 1000
 RISK_PERCENT = 1
 
-# Frequency tuning keeps the existing strategy architecture intact while
-# allowing more valid intraday setups through.
+# Strategy gates remain environment-configurable so research can tune them
+# without editing production code.  The checked-in defaults preserve the most
+# recent intraday policy.
 MIN_ADX = float(os.getenv("AAQTS_MIN_ADX", "20"))
 SIGNAL_SCORE_THRESHOLD = int(os.getenv("AAQTS_SIGNAL_SCORE_THRESHOLD", "55"))
 MIN_SIGNAL_CONFIRMATIONS = int(os.getenv("AAQTS_MIN_SIGNAL_CONFIRMATIONS", "2"))
@@ -55,15 +56,18 @@ MT5_TERMINAL_PATH = os.getenv(
 )
 MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
 MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "5"))
+BOT_INTERVAL_SECONDS = int(os.getenv("AAQTS_BOT_INTERVAL_SECONDS", "300"))
 
 # Market-data provider symbol -> broker/MT5 symbol. Broker suffixes can be
 # overridden later without touching strategy code.
 MT5_SYMBOL_MAP = {
     "EURUSD=X": "EURUSD",
     "GBPUSD=X": "GBPUSD",
-    "JPY=X": "USDJPY",
+    "USDJPY=X": "USDJPY",
     "AUDUSD=X": "AUDUSD",
-    "CAD=X": "USDCAD",
+    "USDCAD=X": "USDCAD",
+    "USDCHF=X": "USDCHF",
+    "NZDUSD=X": "NZDUSD",
     "GC=F": "XAUUSD",
     "SI=F": "XAGUSD",
     "BTC-USD": "BTCUSD",

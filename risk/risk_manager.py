@@ -5,6 +5,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Optional
 
 from config.settings import RISK_PERCENT
+from risk.instrument import InstrumentSpec
 
 
 @dataclass(frozen=True)
@@ -305,6 +306,8 @@ class RiskManager:
         entry_price: float,
         stop_loss: float,
         *,
+        instrument: Optional[InstrumentSpec] = None,
+        side: Optional[str] = None,
         risk_percent: Optional[float] = None,
         risk_multiplier: float = 1.0,
         tick_size: Optional[float] = None,
@@ -388,6 +391,24 @@ class RiskManager:
             and stop_distance < self.minimum_stop_distance
         ):
             return 0.0
+
+        if instrument is not None:
+            if not isinstance(instrument, InstrumentSpec):
+                raise TypeError("instrument must be an InstrumentSpec instance")
+
+            resolved_side = side or (
+                "BUY" if stop_loss < entry_price else "SELL"
+            )
+            cash_risk_per_quantity = instrument.planned_loss_per_quantity(
+                entry_reference=entry_price,
+                stop_reference=stop_loss,
+                side=resolved_side,
+            )
+            if cash_risk_per_quantity <= 0:
+                return 0.0
+            return instrument.normalize_quantity(
+                risk_amount / cash_risk_per_quantity
+            )
 
         loss_per_lot: float
 
