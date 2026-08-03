@@ -131,6 +131,18 @@ continues. Stop and emergency actions require Owner role, private chat, an
 expiring confirmation, and TOTP. Emergency close remains limited to positions
 owned by the AAQTS magic number.
 
+For phone-only Codespaces setup, a temporary private browser form can save the
+BotFather token without putting it in terminal history. Keep port `8765`
+private, open the forwarded URL, and close it after the one successful save:
+
+```bash
+.venv/bin/python scripts/codespace_secret_setup.py --host 0.0.0.0 --port 8765
+```
+
+The helper validates the token shape, writes `.env` atomically with mode `600`,
+does not log the submitted value, and shuts down after a successful save or ten
+minutes. It is an onboarding helper only; it never starts or enables trading.
+
 An optional local economic calendar can block entries around verified news
 without installing another application. Copy
 `config/news_calendar.example.json` to an ignored local file, replace its
