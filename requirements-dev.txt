@@ -1,2 +1,2 @@
--r requirements.txt
+-r requirements-telegram.txt
 pytest>=8,<10
