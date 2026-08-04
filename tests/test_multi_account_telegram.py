@@ -1,4 +1,6 @@
+import asyncio
 import json
+from unittest.mock import Mock
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -544,3 +546,23 @@ def test_supervisor_preauthenticated_worker_omits_login_secrets(
     assert captured["env"]["AAQTS_MT5_PASSWORD"] == ""
     assert captured["env"]["AAQTS_MT5_SERVER"] == ""
     assert captured["env"]["AAQTS_MT5_TERMINAL_PATH"] == "C:/MT5/terminal64.exe"
+
+
+def test_telegram_error_handler_ignores_duplicate_message_edit(monkeypatch):
+    from telegram.error import BadRequest
+    from telegram_bot import bot as telegram_bot_module
+
+    exception_logger = Mock()
+    monkeypatch.setattr(telegram_bot_module.logger, "exception", exception_logger)
+
+    duplicate_context = SimpleNamespace(error=BadRequest("Message is not modified"))
+    asyncio.run(telegram_bot_module.error_handler(object(), duplicate_context))
+    exception_logger.assert_not_called()
+
+    unexpected_error = RuntimeError("boom")
+    failure_context = SimpleNamespace(error=unexpected_error)
+    asyncio.run(telegram_bot_module.error_handler(object(), failure_context))
+    exception_logger.assert_called_once_with(
+        "Unhandled Telegram bot error",
+        exc_info=unexpected_error,
+    )
