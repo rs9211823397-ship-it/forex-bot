@@ -8,12 +8,54 @@ from strategy.setup_detector import SetupDetector
 from strategy.trigger_detector import TriggerDetector
 
 
+class ProductionSignalPipeline(SignalPipeline):
+    """Production policy with non-duplicated hard gates.
+
+    The causal contextual trigger is the production price-action gate. Legacy
+    candle and momentum confirmations remain part of score/trade-quality, but
+    are not independently required a second time after those stages have
+    already contributed to the decision. Structure, HTF direction, and the
+    causal contextual trigger remain fail-closed hard requirements.
+    """
+
+    @staticmethod
+    def _eligibility_failures(
+        direction,
+        trigger,
+        momentum,
+        structure,
+        regime,
+        contextual_gate,
+    ):
+        failures = []
+
+        if direction is None:
+            return ("No directional setup",)
+
+        if not structure.allows(direction):
+            failures.append("Market structure conflicts with setup")
+
+        if not regime.allows(direction):
+            failures.append("Higher timeframe conflicts with setup")
+
+        if (
+            contextual_gate.enabled
+            and (
+                not contextual_gate.approved
+                or contextual_gate.direction != direction
+            )
+        ):
+            failures.append("Contextual trigger rejected setup")
+
+        return tuple(failures)
+
+
 class SignalEngine:
 
     def __init__(self):
-        self._initialize(MultiTimeframeAnalyzer())
+        self._initialize(MultiTimeframeAnalyzer(), SignalPipeline)
 
-    def _initialize(self, mtf):
+    def _initialize(self, mtf, pipeline_class=SignalPipeline):
         self.market_structure = MarketStructure()
         self.candles = CandlePatterns()
         self.mtf = mtf
@@ -21,7 +63,7 @@ class SignalEngine:
         self.decision_analyzer = AIDecisionAnalyzer()
         self.setup_detector = SetupDetector()
         self.trigger_detector = TriggerDetector(self.candles)
-        self.pipeline = SignalPipeline(
+        self.pipeline = pipeline_class(
             market_structure=self.market_structure,
             candles=self.candles,
             mtf=self.mtf,
@@ -39,7 +81,8 @@ class SignalEngine:
             MultiTimeframeAnalyzer.production(
                 higher_timeframe=higher_timeframe,
                 lower_timeframe=lower_timeframe,
-            )
+            ),
+            ProductionSignalPipeline,
         )
         return engine
 
