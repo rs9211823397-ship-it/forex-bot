@@ -1,3 +1,5 @@
+import logging
+
 from structure.market_structure import MarketStructure
 from price_action.candles import CandlePatterns
 from strategy.multi_timeframe import MultiTimeframeAnalyzer
@@ -6,6 +8,9 @@ from ai.decision_analyzer import AIDecisionAnalyzer
 from strategy.pipeline import SignalPipeline
 from strategy.setup_detector import SetupDetector
 from strategy.trigger_detector import TriggerDetector
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProductionSignalPipeline(SignalPipeline):
@@ -110,4 +115,20 @@ class SignalEngine:
         )
         report["report_text"] = self.decision_analyzer.format_report(report)
         result["decision_report"] = report
+
+        if result.get("signal") == "HOLD":
+            reasons = tuple(str(item) for item in result.get("reasons", ()) if item)
+            warnings = tuple(
+                str(item)
+                for item in summary.get("warnings", ())
+                if item
+            ) if isinstance(summary, dict) else ()
+            logger.info(
+                "HOLD detail %s | score=%s | reasons=%s | warnings=%s",
+                symbol,
+                result.get("score"),
+                "; ".join(reasons) or "none",
+                "; ".join(warnings) or "none",
+            )
+
         return result
