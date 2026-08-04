@@ -3,7 +3,6 @@
 
 import importlib
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -125,6 +124,74 @@ def check_symbol_catalog() -> None:
     print(f"[preflight] Symbol catalog OK ({len(active)} active)")
 
 
+def check_mt5_demo_broker() -> None:
+    """Validate the real demo venue without placing or checking an order."""
+
+    from config.settings import (
+        EXECUTION_MODE,
+        MT5_EXPECTED_LOGIN,
+        MT5_LOGIN,
+        MT5_PASSWORD,
+        MT5_SERVER,
+        MT5_SYMBOL_MAP,
+        MT5_TERMINAL_PATH,
+    )
+
+    if EXECUTION_MODE != "MT5_DEMO":
+        return
+
+    terminal_path = Path(MT5_TERMINAL_PATH)
+    if not terminal_path.is_file():
+        fail(f"MT5 terminal was not found: {terminal_path}")
+
+    try:
+        from execution.mt5_executor import ExecutionConfig, MT5Executor
+
+        executor = MT5Executor(
+            ExecutionConfig(
+                terminal_path=str(terminal_path),
+                login=int(MT5_LOGIN) if MT5_LOGIN else None,
+                expected_login=(
+                    int(MT5_EXPECTED_LOGIN) if MT5_EXPECTED_LOGIN else None
+                ),
+                password=MT5_PASSWORD,
+                server=MT5_SERVER,
+            )
+        )
+        executor.connect()
+        try:
+            account = executor.account_snapshot()
+            for source_symbol, broker_symbol in MT5_SYMBOL_MAP.items():
+                info = executor.symbol_info(broker_symbol)
+                tick = executor.symbol_tick(broker_symbol)
+                minimum = float(getattr(info, "volume_min", 0.0) or 0.0)
+                maximum = float(getattr(info, "volume_max", 0.0) or 0.0)
+                step = float(getattr(info, "volume_step", 0.0) or 0.0)
+                bid = float(getattr(tick, "bid", 0.0) or 0.0)
+                ask = float(getattr(tick, "ask", 0.0) or 0.0)
+                if minimum <= 0 or maximum < minimum or step <= 0:
+                    fail(
+                        f"Invalid broker volume metadata for {source_symbol} "
+                        f"({broker_symbol})"
+                    )
+                if bid <= 0 or ask <= 0 or ask < bid:
+                    fail(
+                        f"Invalid executable quote for {source_symbol} "
+                        f"({broker_symbol})"
+                    )
+            print(
+                "[preflight] MT5 demo broker OK "
+                f"(balance={account.balance:.2f}, equity={account.equity:.2f}, "
+                f"symbols={len(MT5_SYMBOL_MAP)})"
+            )
+        finally:
+            executor.shutdown()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        fail(f"MT5 demo broker preflight failed: {exc}")
+
+
 def main() -> None:
     check_python_version()
     repo_root = check_repo_root()
@@ -134,6 +201,7 @@ def main() -> None:
     check_execution_mode()
     check_symbol_catalog()
     check_news_calendar()
+    check_mt5_demo_broker()
     print("[preflight] Preflight passed")
 
 
