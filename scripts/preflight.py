@@ -125,7 +125,14 @@ def check_symbol_catalog() -> None:
 
 
 def check_mt5_demo_broker() -> None:
-    """Validate the real demo venue without placing or checking an order."""
+    """Validate the real demo venue without placing or checking an order.
+
+    A mapped symbol can legitimately have no live bid/ask while its broker
+    session is closed.  That is a temporary venue state, not a configuration
+    failure, so preflight warns and continues as long as at least one mapped
+    symbol has an executable quote.  Missing symbols and invalid contract
+    metadata remain fatal.
+    """
 
     from config.settings import (
         EXECUTION_MODE,
@@ -161,6 +168,8 @@ def check_mt5_demo_broker() -> None:
         executor.connect()
         try:
             account = executor.account_snapshot()
+            unquoted = []
+            quoted = 0
             for source_symbol, broker_symbol in MT5_SYMBOL_MAP.items():
                 info = executor.symbol_info(broker_symbol)
                 tick = executor.symbol_tick(broker_symbol)
@@ -175,14 +184,22 @@ def check_mt5_demo_broker() -> None:
                         f"({broker_symbol})"
                     )
                 if bid <= 0 or ask <= 0 or ask < bid:
-                    fail(
-                        f"Invalid executable quote for {source_symbol} "
-                        f"({broker_symbol})"
-                    )
+                    unquoted.append(f"{source_symbol} ({broker_symbol})")
+                    continue
+                quoted += 1
+
+            if quoted == 0:
+                fail("No mapped MT5 symbols currently have an executable quote")
+            if unquoted:
+                print(
+                    "[preflight] WARNING: mapped symbol(s) currently have no "
+                    "executable quote (likely closed broker session): "
+                    + ", ".join(unquoted)
+                )
             print(
                 "[preflight] MT5 demo broker OK "
                 f"(balance={account.balance:.2f}, equity={account.equity:.2f}, "
-                f"symbols={len(MT5_SYMBOL_MAP)})"
+                f"symbols={len(MT5_SYMBOL_MAP)}, quoted={quoted})"
             )
         finally:
             executor.shutdown()
