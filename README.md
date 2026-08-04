@@ -103,7 +103,14 @@ Per-account secrets are supplied on the trusted host. An account ID such as
 ```text
 AAQTS_ACCOUNT_EXNESS_MT5_01_PASSWORD=
 AAQTS_ACCOUNT_EXNESS_MT5_01_TERMINAL_PATH=C:\MT5-01\terminal64.exe
+AAQTS_ACCOUNT_EXNESS_MT5_01_USE_PREAUTHENTICATED_SESSION=false
 ```
+
+For an already logged-in, approved MT5 terminal, set the account-specific
+`USE_PREAUTHENTICATED_SESSION` flag to `true` and leave the account password
+unset. The worker attaches to that terminal without storing a password, then
+fails closed unless the returned login matches the registered account and the
+broker reports demo mode.
 
 Start the Telegram console and account workers in separate terminals:
 
