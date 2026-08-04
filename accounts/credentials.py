@@ -44,23 +44,55 @@ class CredentialReadiness:
 
 
 class EnvironmentCredentialProvider:
-    """Resolve per-account secrets without persisting or logging their values."""
+    """Resolve per-account secrets without persisting or logging their values.
+
+    In single-account deployments the trading engine and Telegram manager must
+    not require two independent copies of the same MT5 configuration.  For the
+    currently managed ``AAQTS_ACCOUNT_ID`` this provider therefore falls back
+    to the global engine MT5 settings.  If no password is present, it may use
+    the already-authenticated terminal session; the snapshot reader still
+    verifies that the returned MT5 login matches the registered account before
+    exposing any account data.
+    """
 
     def __init__(self, environ: Mapping[str, str] | None = None):
         self._environ = os.environ if environ is None else environ
 
+    def _is_primary_runtime_account(self, account: TradingAccount) -> bool:
+        runtime_account_id = self._environ.get("AAQTS_ACCOUNT_ID", "").strip().lower()
+        return bool(runtime_account_id) and runtime_account_id == account.account_id.lower()
+
     def credentials(self, account: TradingAccount) -> AccountCredentials:
         prefix = account_env_prefix(account.account_id)
+        primary_runtime_account = self._is_primary_runtime_account(account)
+
+        account_password = self._environ.get(f"{prefix}_PASSWORD", "").strip()
+        global_password = self._environ.get("AAQTS_MT5_PASSWORD", "").strip()
+        password = account_password or (global_password if primary_runtime_account else "")
+
+        account_terminal = self._environ.get(f"{prefix}_TERMINAL_PATH", "").strip()
+        global_terminal = self._environ.get("AAQTS_MT5_TERMINAL_PATH", "").strip()
+        terminal_path = (
+            account_terminal
+            or (global_terminal if primary_runtime_account else "")
+            or str(account.terminal_path or "").strip()
+        )
+
+        explicit_preauth = _env_flag(
+            self._environ,
+            f"{prefix}_USE_PREAUTHENTICATED_SESSION",
+        )
+        # Safe only for the one runtime account. Multi-account readers continue
+        # to require explicit per-account authentication unless opted in.
+        use_preauthenticated_session = explicit_preauth or (
+            primary_runtime_account and not password
+        )
+
         return AccountCredentials(
-            password=self._environ.get(f"{prefix}_PASSWORD", "").strip(),
+            password=password,
             bridge_token=self._environ.get(f"{prefix}_BRIDGE_TOKEN", "").strip(),
-            terminal_path=self._environ.get(
-                f"{prefix}_TERMINAL_PATH", account.terminal_path
-            ).strip(),
-            use_preauthenticated_session=_env_flag(
-                self._environ,
-                f"{prefix}_USE_PREAUTHENTICATED_SESSION",
-            ),
+            terminal_path=terminal_path,
+            use_preauthenticated_session=use_preauthenticated_session,
         )
 
     def readiness(self, account: TradingAccount) -> CredentialReadiness:
