@@ -20,6 +20,13 @@ def _env_flag(name, default=False):
     raise ValueError(f"{name} must be true or false")
 
 
+def _positive_int(name, default):
+    value = int(os.getenv(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+    return value
+
+
 def _default_mt5_terminal_path():
     """Return the first known local MT5 terminal without overriding env config."""
 
@@ -40,8 +47,6 @@ def _default_mt5_terminal_path():
         if candidate.is_file():
             return str(candidate)
 
-    # Keep the historical default for non-Windows/test environments and emit
-    # the existing initialization error if no installed terminal is present.
     return str(candidates[0])
 
 
@@ -57,13 +62,9 @@ PAPER_STARTING_BALANCE = float(
 )
 if not math.isfinite(PAPER_STARTING_BALANCE) or PAPER_STARTING_BALANCE <= 0:
     raise ValueError("AAQTS_PAPER_STARTING_BALANCE must be greater than zero")
-# Backward-compatible research/reporting alias.
 ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
 RISK_PERCENT = 1
 
-# Strategy gates remain environment-configurable so research can tune them
-# without editing production code.  The checked-in defaults preserve the most
-# recent intraday policy.
 MIN_ADX = float(os.getenv("AAQTS_MIN_ADX", "20"))
 SIGNAL_SCORE_THRESHOLD = int(os.getenv("AAQTS_SIGNAL_SCORE_THRESHOLD", "55"))
 MIN_SIGNAL_CONFIRMATIONS = int(os.getenv("AAQTS_MIN_SIGNAL_CONFIRMATIONS", "2"))
@@ -72,9 +73,7 @@ MIN_TRADE_QUALITY = int(os.getenv("AAQTS_MIN_TRADE_QUALITY", "55"))
 # ==========================
 # EXECUTION SETTINGS
 # ==========================
-# PAPER is the safe default. MT5_DEMO must be explicitly enabled in .env or
-# the shell. MT5_LIVE is intentionally blocked until a separate live-release
-# safety gate is implemented.
+
 EXECUTION_MODE = os.getenv("AAQTS_EXECUTION_MODE", "PAPER").upper().strip()
 SYMBOLS = active_symbols(include_paper_only=EXECUTION_MODE == "PAPER")
 MT5_TERMINAL_PATH = os.getenv(
@@ -88,19 +87,43 @@ MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
 MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
 MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "5"))
 BOT_INTERVAL_SECONDS = int(os.getenv("AAQTS_BOT_INTERVAL_SECONDS", "300"))
-NEWS_FILTER_ENABLED = _env_flag("AAQTS_NEWS_FILTER_ENABLED", False)
-NEWS_CALENDAR_FILE = os.getenv("AAQTS_NEWS_CALENDAR_FILE", "").strip()
 
-# The user-facing default is one personally managed account.  The underlying
-# registry and supervisor retain multi-account support for a future opt-in
-# deployment, but a missing flag must never expose parent-account controls.
+# Production demo trading defaults to a fail-closed high-impact news filter.
+# PAPER remains opt-in so deterministic/offline research does not depend on a
+# live web feed. A local file overrides the refreshing URL provider.
+NEWS_FILTER_ENABLED = _env_flag(
+    "AAQTS_NEWS_FILTER_ENABLED",
+    EXECUTION_MODE == "MT5_DEMO",
+)
+NEWS_CALENDAR_FILE = os.getenv("AAQTS_NEWS_CALENDAR_FILE", "").strip()
+NEWS_CALENDAR_URL = os.getenv(
+    "AAQTS_NEWS_CALENDAR_URL",
+    "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+).strip()
+NEWS_CALENDAR_CACHE = os.getenv(
+    "AAQTS_NEWS_CALENDAR_CACHE",
+    "runtime/news_calendar_cache.json",
+).strip()
+NEWS_REFRESH_MINUTES = _positive_int("AAQTS_NEWS_REFRESH_MINUTES", 30)
+NEWS_MAX_STALE_MINUTES = _positive_int("AAQTS_NEWS_MAX_STALE_MINUTES", 360)
+NEWS_PRE_EVENT_MINUTES = _positive_int("AAQTS_NEWS_PRE_EVENT_MINUTES", 30)
+NEWS_POST_EVENT_MINUTES = _positive_int("AAQTS_NEWS_POST_EVENT_MINUTES", 20)
+NEWS_BLOCKED_IMPACTS = tuple(
+    impact.strip().upper()
+    for impact in os.getenv("AAQTS_NEWS_BLOCKED_IMPACTS", "HIGH").split(",")
+    if impact.strip()
+)
+if not NEWS_BLOCKED_IMPACTS or not set(NEWS_BLOCKED_IMPACTS).issubset(
+    {"LOW", "MEDIUM", "HIGH"}
+):
+    raise ValueError(
+        "AAQTS_NEWS_BLOCKED_IMPACTS must contain LOW, MEDIUM, and/or HIGH"
+    )
+
 SINGLE_ACCOUNT_MODE = _env_flag("AAQTS_SINGLE_ACCOUNT_MODE", True)
 PRIMARY_ACCOUNT_ID = os.getenv("AAQTS_PRIMARY_ACCOUNT_ID", "").strip().lower()
 
 # Market-data provider symbol -> broker/MT5 symbol for approved new entries.
-# Brokers commonly add an account/group-specific suffix (for example Exness
-# trial accounts expose EURUSDm rather than EURUSD). Keep the authoritative
-# catalog venue-neutral and apply that suffix only at the MT5 execution edge.
 MT5_SYMBOL_SUFFIX = os.getenv("AAQTS_MT5_SYMBOL_SUFFIX", "").strip()
 _BASE_MT5_SYMBOL_MAP = executable_symbol_map()
 MT5_SYMBOL_MAP = {
