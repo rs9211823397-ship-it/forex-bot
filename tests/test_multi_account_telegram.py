@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from unittest.mock import Mock
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -566,3 +567,10 @@ def test_telegram_error_handler_ignores_duplicate_message_edit(monkeypatch):
         "Unhandled Telegram bot error",
         exc_info=unexpected_error,
     )
+
+
+def test_telegram_transport_request_urls_are_not_logged_at_info():
+    from telegram_bot import bot as telegram_bot_module
+
+    assert telegram_bot_module.logging.getLogger("httpx").level >= logging.WARNING
+    assert telegram_bot_module.logging.getLogger("httpcore").level >= logging.WARNING
