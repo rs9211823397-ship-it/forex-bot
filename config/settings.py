@@ -19,6 +19,32 @@ def _env_flag(name, default=False):
         return False
     raise ValueError(f"{name} must be true or false")
 
+
+def _default_mt5_terminal_path():
+    """Return the first known local MT5 terminal without overriding env config."""
+
+    program_files = Path(os.getenv("PROGRAMFILES", r"C:\Program Files"))
+    appdata = os.getenv("APPDATA", "").strip()
+    candidates = [
+        program_files / "MetaTrader 5" / "terminal64.exe",
+    ]
+    if appdata:
+        candidates.extend(
+            [
+                Path(appdata) / "Exness JO MT5 Terminal" / "terminal64.exe",
+                Path(appdata) / "Exness MT5 Terminal" / "terminal64.exe",
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    # Keep the historical default for non-Windows/test environments and emit
+    # the existing initialization error if no installed terminal is present.
+    return str(candidates[0])
+
+
 # ==========================
 # MULTI TIMEFRAME SETTINGS
 # ==========================
@@ -53,7 +79,7 @@ EXECUTION_MODE = os.getenv("AAQTS_EXECUTION_MODE", "PAPER").upper().strip()
 SYMBOLS = active_symbols(include_paper_only=EXECUTION_MODE == "PAPER")
 MT5_TERMINAL_PATH = os.getenv(
     "AAQTS_MT5_TERMINAL_PATH",
-    r"C:\Program Files\MetaTrader 5\terminal64.exe",
+    _default_mt5_terminal_path(),
 )
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
 MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip()
