@@ -25,6 +25,7 @@ class ExecutionError(RuntimeError):
 class ExecutionConfig:
     terminal_path: Optional[str] = None
     login: Optional[int] = None
+    expected_login: Optional[int] = None
     password: str = field(default="", repr=False)
     server: str = ""
     magic: int = AAQTS_MAGIC
@@ -119,9 +120,14 @@ class MT5Executor:
         if terminal is None or account is None:
             self.shutdown()
             raise ExecutionError("MT5 terminal/account information is unavailable")
-        if self.config.login is not None and int(getattr(account, "login", -1)) != int(
-            self.config.login
-        ):
+        expected_login = (
+            self.config.expected_login
+            if self.config.expected_login is not None
+            else self.config.login
+        )
+        if expected_login is not None and int(
+            getattr(account, "login", -1)
+        ) != int(expected_login):
             self.shutdown()
             raise ExecutionError("MT5 connected to an unexpected account login")
         demo_mode = getattr(self.mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
