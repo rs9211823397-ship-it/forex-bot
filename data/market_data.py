@@ -3,6 +3,8 @@ Market Data Module
 Version: 2.1
 """
 
+import logging
+
 import yfinance as yf
 import pandas as pd
 from config.settings import SYMBOLS, LOOKBACK_DAYS
@@ -12,8 +14,12 @@ from data.historical import (
 )
 from data.timeframes import (
     normalize_timeframe,
-    normalize_timestamp
+    normalize_timestamp,
+    timeframe_delta,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class MarketData:
@@ -25,6 +31,33 @@ class MarketData:
     ):
         self.history = HistoricalDataStore(cache_dir)
         self.cache_downloads = bool(cache_downloads)
+
+    @staticmethod
+    def _align_provider_candles(data, timeframe):
+        """Drop provider-specific partial bars outside the dominant time grid."""
+
+        if not isinstance(data.index, pd.DatetimeIndex) or len(data) < 2:
+            return data
+
+        timestamps = pd.DatetimeIndex(
+            pd.to_datetime(data.index, utc=True, errors="raise")
+        )
+        delta_ns = int(timeframe_delta(timeframe).value)
+        offsets = timestamps.asi8 % delta_ns
+        counts = pd.Series(offsets).value_counts()
+        maximum = int(counts.max())
+        dominant_offset = int(min(counts[counts == maximum].index))
+        aligned_mask = offsets == dominant_offset
+
+        aligned = data.loc[aligned_mask].copy()
+        aligned.index = timestamps[aligned_mask]
+        if not aligned_mask.all():
+            logger.warning(
+                "Dropped %s off-grid partial provider candle(s) for %s",
+                int((~aligned_mask).sum()),
+                normalize_timeframe(timeframe),
+            )
+        return aligned
 
     def _download(self, symbol, interval):
 
@@ -132,6 +165,18 @@ class MarketData:
 
             raise Exception(f"No data found for {symbol}")
 
+
+        data = self._align_provider_candles(data, timeframe)
+        if data.empty:
+            if use_cache:
+                return self._cached_or_raise(
+                    symbol,
+                    timeframe,
+                    as_of=as_of
+                )
+            raise Exception(
+                f"No aligned candles found for {symbol}"
+            )
 
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
