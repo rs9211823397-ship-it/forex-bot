@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from config.settings import (
     EXECUTION_MODE,
+    MT5_EXPECTED_LOGIN,
     MT5_LOGIN,
     MT5_MAX_OPEN_POSITIONS,
     MT5_PASSWORD,
@@ -55,6 +56,9 @@ class ExecutionRouter:
                 ExecutionConfig(
                     terminal_path=MT5_TERMINAL_PATH,
                     login=int(MT5_LOGIN) if MT5_LOGIN else None,
+                    expected_login=(
+                        int(MT5_EXPECTED_LOGIN) if MT5_EXPECTED_LOGIN else None
+                    ),
                     password=MT5_PASSWORD,
                     server=MT5_SERVER,
                     max_open_positions=MT5_MAX_OPEN_POSITIONS,
