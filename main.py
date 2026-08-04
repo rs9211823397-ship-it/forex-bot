@@ -113,7 +113,7 @@ class TradingApplication:
         elif request.action is ControlAction.EMERGENCY_CLOSE:
             closed = self.controller.emergency_stop()
             result = f"EMERGENCY STOP COMPLETED; CLOSED {len(closed)} POSITIONS"
-        else:  # pragma: no cover - enum validation protects this boundary.
+        else:
             raise ValueError(f"Unsupported control action: {request.action}")
         write_runtime_state(
             account_id=self.account_id,
@@ -303,30 +303,48 @@ class TradingApplication:
         if not risk_plan:
             return current_price
 
-        instrument = get_instrument_spec(symbol)
         equity = self._account_equity()
-        quantity = self.risk_manager.position_size(
-            equity,
-            risk_plan["entry"],
-            risk_plan["stop_loss"],
-            instrument=instrument,
-            side=signal["signal"],
-            risk_multiplier=float(signal.get("risk_multiplier", 1.0)),
+        risk_multiplier = float(signal.get("risk_multiplier", 1.0))
+        requested_risk = (
+            equity * (RISK_PERCENT / 100.0) * risk_multiplier
         )
-        if quantity <= 0:
-            logger.warning("Position size rejected for %s", symbol)
-            return current_price
+
+        # Paper/backtest sizing continues to use deterministic research
+        # InstrumentSpec economics. MT5_DEMO must not be blocked by those
+        # research quantity floors because MT5Executor sizes from live broker
+        # symbol metadata (order_calc_profit, volume_min/step/max) immediately
+        # before order_check/order_send.
+        if self.execution.mode == "PAPER":
+            instrument = get_instrument_spec(symbol)
+            requested_quantity = self.risk_manager.position_size(
+                equity,
+                risk_plan["entry"],
+                risk_plan["stop_loss"],
+                instrument=instrument,
+                side=signal["signal"],
+                risk_multiplier=risk_multiplier,
+            )
+            if requested_quantity <= 0:
+                logger.warning(
+                    "Paper position size rejected for %s "
+                    "(equity=%.2f requested_risk=%.2f)",
+                    symbol,
+                    equity,
+                    requested_risk,
+                )
+                return current_price
+        else:
+            # PortfolioRiskManager authorizes money-at-risk. The actual MT5
+            # lot is intentionally deferred to MT5Executor._volume_for_risk().
+            requested_quantity = 1.0
 
         decision_time = datetime.now(timezone.utc)
-        requested_risk = (
-            equity * (RISK_PERCENT / 100.0) * float(signal.get("risk_multiplier", 1.0))
-        )
         assessment = self.portfolio_risk.assess(
             TradeRiskRequest(
                 decision_time=decision_time,
                 symbol=symbol,
                 direction=signal["signal"],
-                requested_quantity=quantity,
+                requested_quantity=requested_quantity,
                 risk_amount=requested_risk,
                 equity=equity,
                 volatility_ratio=float(trade["atr"]) / current_price,
@@ -345,13 +363,24 @@ class TradingApplication:
             )
             return current_price
 
-        quantity = assessment.approved_quantity
-        self.trade_logger.log_trade(symbol, risk_plan, quantity)
+        if self.execution.mode == "PAPER":
+            approved_quantity = assessment.approved_quantity
+            self.trade_logger.log_trade(symbol, risk_plan, approved_quantity)
+        else:
+            approved_quantity = requested_quantity
+            logger.info(
+                "MT5 broker sizing approved for %s: risk_amount=%.2f "
+                "portfolio_action=%s",
+                symbol,
+                assessment.approved_risk_amount,
+                assessment.action.value,
+            )
+
         result = self.execution.execute(
             source_symbol=symbol,
             signal=signal["signal"],
             risk_plan=risk_plan,
-            paper_position_size=quantity,
+            paper_position_size=approved_quantity,
             approved_risk_amount=assessment.approved_risk_amount,
         )
         logger.info("Execution result for %s: %r", symbol, result)
