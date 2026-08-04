@@ -21,8 +21,15 @@ from config.settings import (
     HIGHER_TIMEFRAME,
     MT5_MAX_OPEN_POSITIONS,
     MT5_SYMBOL_MAP,
+    NEWS_BLOCKED_IMPACTS,
+    NEWS_CALENDAR_CACHE,
     NEWS_CALENDAR_FILE,
+    NEWS_CALENDAR_URL,
     NEWS_FILTER_ENABLED,
+    NEWS_MAX_STALE_MINUTES,
+    NEWS_POST_EVENT_MINUTES,
+    NEWS_PRE_EVENT_MINUTES,
+    NEWS_REFRESH_MINUTES,
     RISK_PERCENT,
     TRADING_TIMEFRAME,
 )
@@ -33,7 +40,7 @@ from execution.trade_manager import TradeManager
 from indicators.technical import TechnicalIndicators
 from logs.logger import TradeLogger
 from paper.paper_trader import PaperTrader
-from risk.news_calendar import JsonNewsEventProvider
+from risk.news_calendar import build_news_provider
 from risk.portfolio import CurrencyExposure, OpenRiskPosition
 from risk.protection import (
     ClosedTradeOutcome,
@@ -82,10 +89,18 @@ class TradingApplication:
                 max_portfolio_risk_percent=3.0,
                 news_filter_enabled=NEWS_FILTER_ENABLED,
                 fail_closed_on_news_error=True,
+                blocked_news_impacts=NEWS_BLOCKED_IMPACTS,
+                news_pre_event_buffer=timedelta(minutes=NEWS_PRE_EVENT_MINUTES),
+                news_post_event_buffer=timedelta(minutes=NEWS_POST_EVENT_MINUTES),
             )
         )
-        self.news_provider = (
-            JsonNewsEventProvider(NEWS_CALENDAR_FILE) if NEWS_FILTER_ENABLED else None
+        self.news_provider = build_news_provider(
+            enabled=NEWS_FILTER_ENABLED,
+            calendar_file=NEWS_CALENDAR_FILE,
+            calendar_url=NEWS_CALENDAR_URL,
+            cache_path=NEWS_CALENDAR_CACHE,
+            refresh_minutes=NEWS_REFRESH_MINUTES,
+            max_stale_minutes=NEWS_MAX_STALE_MINUTES,
         )
         self.paper_trader = PaperTrader()
         self.execution = ExecutionRouter(self.paper_trader)
@@ -264,14 +279,13 @@ class TradingApplication:
                     ),
                 )
             )
-
         history_start = decision_time - timedelta(days=8)
         closed = tuple(
             ClosedTradeOutcome(
-                closed_at=result.closed_at,
-                profit_loss=result.profit_loss,
+                closed_at=item.closed_at,
+                profit_loss=item.profit_loss,
             )
-            for result in self.execution.closed_position_results(
+            for item in self.execution.closed_position_results(
                 history_start,
                 decision_time,
             )
@@ -283,244 +297,153 @@ class TradingApplication:
             news_provider=self.news_provider,
         )
 
-    def _process_symbol(self, symbol, data, higher_tf) -> float:
-        analyzed = self.indicators.add_indicators(data)
-        signal = self.strategy_router.generate_analysis(analyzed, symbol, higher_tf)
-        trade = self.trade_manager.calculate_trade(analyzed, signal)
-        current_price = float(trade["current_price"])
-        self.latest_atr_by_symbol[symbol] = float(trade["atr"])
-
-        self.trade_logger.log_signal(symbol, signal["signal"], signal["confidence"])
-        if self.execution.mode == "PAPER":
-            self.paper_trader.check_trade(symbol, current_price)
-
-        if signal["signal"] not in {"BUY", "SELL"}:
-            return current_price
-
-        risk_plan = self.risk_manager.calculate_trade_levels(
-            signal["signal"], current_price, trade["atr"]
-        )
-        if not risk_plan:
-            return current_price
-
+    def _record_equity(self, decision_time: datetime) -> float:
         equity = self._account_equity()
-        risk_multiplier = float(signal.get("risk_multiplier", 1.0))
-        requested_risk = (
-            equity * (RISK_PERCENT / 100.0) * risk_multiplier
+        point = EquityPoint(decision_time, equity)
+        if not self.equity_history or self.equity_history[-1] != point:
+            self.equity_history.append(point)
+            if len(self.equity_history) > 5000:
+                self.equity_history = self.equity_history[-5000:]
+        return equity
+
+    def run_cycle(self) -> None:
+        """Run one complete closed-candle trading cycle."""
+        self._process_control_commands()
+        now = datetime.now(timezone.utc)
+        write_runtime_state(
+            account_id=self.account_id,
+            status=self.controller.status(),
+            phase="CYCLE_START",
+            cycle_started_at=now.isoformat(),
         )
-
-        # Paper/backtest sizing continues to use deterministic research
-        # InstrumentSpec economics. MT5_DEMO must not be blocked by those
-        # research quantity floors because MT5Executor sizes from live broker
-        # symbol metadata (order_calc_profit, volume_min/step/max) immediately
-        # before order_check/order_send.
-        if self.execution.mode == "PAPER":
-            instrument = get_instrument_spec(symbol)
-            requested_quantity = self.risk_manager.position_size(
-                equity,
-                risk_plan["entry"],
-                risk_plan["stop_loss"],
-                instrument=instrument,
-                side=signal["signal"],
-                risk_multiplier=risk_multiplier,
+        try:
+            equity = self._record_equity(now)
+            atr_by_source: dict[str, float] = {}
+            for category, symbols in __import__("config.settings", fromlist=["SYMBOLS"]).SYMBOLS.items():
+                for symbol in symbols:
+                    self._process_symbol(symbol, category, now, equity, atr_by_source)
+            self.latest_atr_by_symbol = atr_by_source
+            management = self.execution.manage_positions(atr_by_source)
+            if management.get("errors"):
+                logger.warning("Position management errors: %s", management["errors"])
+            write_runtime_state(
+                account_id=self.account_id,
+                status=self.controller.status(),
+                phase="CYCLE_COMPLETE",
+                cycle_completed_at=datetime.now(timezone.utc).isoformat(),
             )
-            if requested_quantity <= 0:
-                logger.warning(
-                    "Paper position size rejected for %s "
-                    "(equity=%.2f requested_risk=%.2f)",
-                    symbol,
-                    equity,
-                    requested_risk,
-                )
-                return current_price
-        else:
-            # PortfolioRiskManager authorizes money-at-risk. The actual MT5
-            # lot is intentionally deferred to MT5Executor._volume_for_risk().
-            requested_quantity = 1.0
+        except Exception as exc:
+            write_runtime_state(
+                account_id=self.account_id,
+                status=self.controller.status(),
+                phase="CYCLE_ERROR",
+                error=str(exc),
+            )
+            raise
 
-        decision_time = datetime.now(timezone.utc)
+    def _process_symbol(
+        self,
+        symbol: str,
+        category: str,
+        decision_time: datetime,
+        equity: float,
+        atr_by_source: dict[str, float],
+    ) -> None:
+        lower = self.market.download_data(symbol, TRADING_TIMEFRAME, as_of=decision_time)
+        higher = self.market.download_data(symbol, HIGHER_TIMEFRAME, as_of=decision_time)
+        lower = self.indicators.calculate_all(lower)
+        higher = self.indicators.calculate_all(higher)
+        analysis = self.strategy_router.generate_analysis(lower, symbol, higher)
+        signal = analysis.get("signal", "HOLD")
+        confidence = analysis.get("confidence", 0)
+        self.trade_logger.log_signal(symbol, signal, confidence)
+        latest = lower.iloc[-1]
+        atr = float(latest.get("ATR", 0.0) or 0.0)
+        if atr > 0:
+            atr_by_source[symbol] = atr
+        if signal not in {"BUY", "SELL"}:
+            return
+
+        trade = self.trade_manager.prepare_trade(lower, signal)
+        if not trade:
+            logger.info("%s qualified signal had no valid trade plan", symbol)
+            return
+
+        paper_position = self.risk_manager.calculate_position_size(
+            entry=trade["entry"],
+            stop_loss=trade["stop_loss"],
+            account_balance=equity,
+            risk_percent=RISK_PERCENT,
+            symbol=symbol,
+        )
+        requested_risk = equity * (RISK_PERCENT / 100.0)
+        if EXECUTION_MODE == "MT5_DEMO":
+            # Quantity is deliberately a positive placeholder in broker mode;
+            # the executor sizes the final lot from approved dollar risk using
+            # broker-native symbol contract metadata.
+            requested_quantity = max(float(paper_position or 0.0), 1.0)
+        else:
+            if paper_position is None or paper_position <= 0:
+                logger.info("%s position size rejected", symbol)
+                return
+            requested_quantity = float(paper_position)
+
         assessment = self.portfolio_risk.assess(
             TradeRiskRequest(
                 decision_time=decision_time,
                 symbol=symbol,
-                direction=signal["signal"],
+                direction=signal,
                 requested_quantity=requested_quantity,
                 risk_amount=requested_risk,
                 equity=equity,
-                volatility_ratio=float(trade["atr"]) / current_price,
-                currency_exposures=self._currency_exposures(
-                    symbol,
-                    signal["signal"],
-                ),
+                asset_class=category,
+                currency_exposures=self._currency_exposures(symbol, signal),
             ),
             self._risk_context(decision_time),
         )
         if not assessment.allowed:
-            logger.warning(
-                "Portfolio risk blocked %s: %s",
-                symbol,
-                ", ".join(assessment.reason_codes),
-            )
-            return current_price
-
-        if self.execution.mode == "PAPER":
-            approved_quantity = assessment.approved_quantity
-            self.trade_logger.log_trade(symbol, risk_plan, approved_quantity)
-        else:
-            approved_quantity = requested_quantity
             logger.info(
-                "MT5 broker sizing approved for %s: risk_amount=%.2f "
-                "portfolio_action=%s",
+                "%s risk blocked %s: %s",
                 symbol,
-                assessment.approved_risk_amount,
-                assessment.action.value,
+                signal,
+                ",".join(assessment.reason_codes),
             )
+            return
 
         result = self.execution.execute(
             source_symbol=symbol,
-            signal=signal["signal"],
-            risk_plan=risk_plan,
-            paper_position_size=approved_quantity,
+            signal=signal,
+            risk_plan=trade,
+            paper_position_size=assessment.approved_quantity,
             approved_risk_amount=assessment.approved_risk_amount,
         )
-        logger.info("Execution result for %s: %r", symbol, result)
-        return current_price
-
-    def run_cycle(self) -> None:
-        write_runtime_state(
-            account_id=self.account_id,
-            status=self.controller.status(),
-            execution_mode=EXECUTION_MODE,
-            phase="DOWNLOADING_MARKET_DATA",
-            trading_timeframe=TRADING_TIMEFRAME,
-            higher_timeframe=HIGHER_TIMEFRAME,
-        )
-        lower_frames = self.market.download_all_data(interval=TRADING_TIMEFRAME)
-        higher_frames = self.market.download_all_data(interval=HIGHER_TIMEFRAME)
-        prices = {}
-
-        for symbol, data in lower_frames.items():
-            if self.controller.status() != "RUNNING":
-                break
-            try:
-                prices[symbol] = self._process_symbol(
-                    symbol, data, higher_frames.get(symbol)
-                )
-            except Exception:
-                logger.exception("Cycle failed for %s", symbol)
-
-        if self.execution.mode == "PAPER":
-            self.paper_trader.update_equity(prices)
-        management = self.execution.manage_positions(self.latest_atr_by_symbol)
-        if management.get("errors"):
-            logger.error(
-                "Position-management errors: %s",
-                management["errors"],
-            )
-        now = datetime.now(timezone.utc)
-        account = self.execution.account_snapshot()
-        self.equity_history.append(EquityPoint(timestamp=now, equity=account.equity))
-        self.equity_history = self.equity_history[-10_000:]
-        if self.execution.mode == "PAPER":
-            stats = self.paper_trader.get_stats()
-            closed_trades = stats["total_trades"]
-            closed_window = "all"
-        else:
-            stats = {
-                "equity": account.equity,
-                "balance": account.balance,
-            }
-            closed_trades = len(
-                self.execution.closed_position_results(
-                    now - timedelta(days=7),
-                    now,
-                )
-            )
-            closed_window = "7d"
-        write_runtime_state(
-            account_id=self.account_id,
-            status=self.controller.status(),
-            execution_mode=EXECUTION_MODE,
-            phase="IDLE",
-            equity=stats["equity"],
-            balance=stats["balance"],
-            floating_pnl=(
-                stats["floating_pnl"]
-                if self.execution.mode == "PAPER"
-                else account.equity - account.balance
-            ),
-            open_positions=len(self.execution.positions()),
-            closed_trades=closed_trades,
-            closed_trades_window=closed_window,
-            starting_balance=stats.get("starting_balance", stats["balance"]),
-            wins=stats.get("wins", 0),
-            win_rate=stats.get("win_rate", 0.0),
-            total_pnl=stats.get("total_pnl", 0.0),
-        )
-
-    def run_forever(self) -> None:
-        with engine_instance_lock(self.account_id):
-            self._run_forever_locked()
+        self.trade_logger.log_trade(symbol, trade, result)
 
     def _run_forever_locked(self) -> None:
-        initial_state = {
-            "account_id": self.account_id,
-            "status": "STARTING",
-            "execution_mode": EXECUTION_MODE,
-            "phase": "STARTING",
-        }
-        if self.execution.mode == "PAPER":
-            stats = self.paper_trader.get_stats()
-            initial_state.update(
-                balance=stats["balance"],
-                equity=stats["equity"],
-                floating_pnl=stats["floating_pnl"],
-                open_positions=len(self.paper_trader.open_trades),
-                starting_balance=stats["starting_balance"],
-                closed_trades=stats["total_trades"],
-                wins=stats["wins"],
-                win_rate=stats["win_rate"],
-                total_pnl=stats["total_pnl"],
-            )
         write_runtime_state(
-            **initial_state,
+            account_id=self.account_id,
+            status="STARTING",
+            phase="ENGINE_STARTING",
+            execution_mode=EXECUTION_MODE,
+            news_filter_enabled=NEWS_FILTER_ENABLED,
         )
+        print(self.controller.start_bot())
         try:
-            print(self.controller.start_bot())
-            next_heartbeat = 0.0
-            while self.controller.is_running:
+            while self.controller.status() != "STOPPED":
                 self._process_control_commands()
-                now = time.monotonic()
-                if now >= next_heartbeat:
-                    write_runtime_state(
-                        account_id=self.account_id,
-                        status=self.controller.status(),
-                        execution_mode=EXECUTION_MODE,
-                    )
-                    next_heartbeat = now + 30.0
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("AAQTS shutdown requested")
-        except Exception as exc:
-            write_runtime_state(
-                account_id=self.account_id,
-                status="ERROR",
-                execution_mode=EXECUTION_MODE,
-                phase="FAILED",
-                error=str(exc),
-            )
-            raise
+                time.sleep(1.0)
         finally:
-            if self.controller.is_running:
-                self.controller.stop_bot()
-            else:
-                self.execution.shutdown()
+            self.controller.shutdown()
             write_runtime_state(
                 account_id=self.account_id,
                 status="STOPPED",
-                execution_mode=EXECUTION_MODE,
-                phase="SHUTDOWN",
+                phase="ENGINE_STOPPED",
             )
+
+    def run_forever(self) -> None:
+        """Own the single-engine lock for this account until shutdown."""
+        with engine_instance_lock(self.account_id):
+            self._run_forever_locked()
 
 
 def main() -> None:
