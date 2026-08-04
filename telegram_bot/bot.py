@@ -1492,7 +1492,11 @@ async def post_shutdown(application: Application) -> None:
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.exception("Unhandled Telegram bot error", exc_info=context.error)
+    error = context.error
+    if isinstance(error, BadRequest) and "message is not modified" in str(error).lower():
+        logger.debug("Ignored duplicate Telegram message edit")
+        return
+    logger.exception("Unhandled Telegram bot error", exc_info=error)
 
 
 def main() -> None:
