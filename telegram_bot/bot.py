@@ -100,6 +100,9 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
+# HTTP request URLs contain the Bot API token; never emit them at INFO level.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("aaqts.telegram")
 paper_trader = PaperTrader()
 RUNTIME_DIR = SHARED_RUNTIME_DIR
