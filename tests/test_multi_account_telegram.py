@@ -469,3 +469,78 @@ def test_supervisor_single_account_mode_starts_only_explicit_primary(tmp_path):
     )
 
     assert supervisor.eligible_accounts() == (second,)
+
+
+
+def test_preauthenticated_mt5_session_is_explicit_and_passwordless():
+    account = mt5_account("existing_session")
+    prefix = account_env_prefix(account.account_id)
+    provider = EnvironmentCredentialProvider(
+        {
+            f"{prefix}_TERMINAL_PATH": "C:/MT5/terminal64.exe",
+            f"{prefix}_USE_PREAUTHENTICATED_SESSION": "true",
+        }
+    )
+
+    credentials = provider.credentials(account)
+
+    assert credentials.password == ""
+    assert credentials.use_preauthenticated_session is True
+    assert provider.readiness(account).ready is True
+
+
+def test_preauthenticated_snapshot_attaches_without_login_secrets():
+    account = mt5_account("existing_session")
+    prefix = account_env_prefix(account.account_id)
+    provider = EnvironmentCredentialProvider(
+        {
+            f"{prefix}_TERMINAL_PATH": "C:/MT5/terminal64.exe",
+            f"{prefix}_USE_PREAUTHENTICATED_SESSION": "true",
+        }
+    )
+    mt5 = FakeMT5()
+
+    view = MultiAccountSnapshotReader(provider, mt5_module=mt5).read(account)
+
+    assert view.status == "CONNECTED"
+    assert mt5.initialize_kwargs == {"path": "C:/MT5/terminal64.exe"}
+    assert mt5.shutdown_calls == 1
+
+
+def test_supervisor_preauthenticated_worker_omits_login_secrets(
+    tmp_path,
+    monkeypatch,
+):
+    account = mt5_account("existing_session")
+    prefix = account_env_prefix(account.account_id)
+    provider = EnvironmentCredentialProvider(
+        {
+            f"{prefix}_TERMINAL_PATH": "C:/MT5/terminal64.exe",
+            f"{prefix}_USE_PREAUTHENTICATED_SESSION": "true",
+        }
+    )
+    registry = AccountRegistry(tmp_path / "accounts.json")
+    registry.add(account)
+    captured = {}
+
+    class Process:
+        pid = 123
+
+    def fake_popen(command, *, cwd, env):
+        captured.update(command=command, cwd=cwd, env=env)
+        return Process()
+
+    monkeypatch.setattr("account_supervisor.subprocess.Popen", fake_popen)
+    supervisor = AccountSupervisor(
+        registry,
+        credentials=provider,
+        project_root=tmp_path,
+    )
+
+    supervisor.start_account(account)
+
+    assert captured["env"]["AAQTS_MT5_LOGIN"] == ""
+    assert captured["env"]["AAQTS_MT5_EXPECTED_LOGIN"] == "12345678"
+    assert captured["env"]["AAQTS_MT5_PASSWORD"] == ""
+    assert captured["env"]["AAQTS_MT5_SERVER"] == ""
+    assert captured["env"]["AAQTS_MT5_TERMINAL_PATH"] == "C:/MT5/terminal64.exe"
