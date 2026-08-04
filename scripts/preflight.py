@@ -4,6 +4,7 @@
 import importlib
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -71,7 +72,7 @@ def check_optional_packages() -> None:
 
 
 def check_output_folders(repo_root: Path) -> None:
-    required_dirs = [repo_root / "logs", repo_root / "outputs"]
+    required_dirs = [repo_root / "logs", repo_root / "outputs", repo_root / "runtime"]
     for directory in required_dirs:
         directory.mkdir(exist_ok=True)
         if not directory.is_dir() or not os.access(directory, os.W_OK):
@@ -90,21 +91,43 @@ def check_execution_mode() -> None:
 
 
 def check_news_calendar() -> None:
-    from config.settings import NEWS_CALENDAR_FILE, NEWS_FILTER_ENABLED
-
-    if not NEWS_FILTER_ENABLED:
-        print("[preflight] News filter disabled")
-        return
-    if not NEWS_CALENDAR_FILE:
-        fail(
-            "AAQTS_NEWS_CALENDAR_FILE is required when the news filter is enabled"
-        )
-    from risk.news_calendar import JsonNewsEventProvider
-
-    provider = JsonNewsEventProvider(NEWS_CALENDAR_FILE)
-    print(
-        f"[preflight] News calendar OK ({len(provider.events)} events)"
+    from config.settings import (
+        EXECUTION_MODE,
+        NEWS_CALENDAR_CACHE,
+        NEWS_CALENDAR_FILE,
+        NEWS_CALENDAR_URL,
+        NEWS_FILTER_ENABLED,
+        NEWS_MAX_STALE_MINUTES,
+        NEWS_REFRESH_MINUTES,
     )
+    from risk.news_calendar import build_news_provider
+
+    if EXECUTION_MODE == "MT5_DEMO" and not NEWS_FILTER_ENABLED:
+        fail("MT5_DEMO requires the fail-closed news filter")
+    if not NEWS_FILTER_ENABLED:
+        print("[preflight] News filter disabled (PAPER mode)")
+        return
+
+    try:
+        provider = build_news_provider(
+            enabled=True,
+            calendar_file=NEWS_CALENDAR_FILE,
+            calendar_url=NEWS_CALENDAR_URL,
+            cache_path=NEWS_CALENDAR_CACHE,
+            refresh_minutes=NEWS_REFRESH_MINUTES,
+            max_stale_minutes=NEWS_MAX_STALE_MINUTES,
+        )
+        assert provider is not None
+        events = provider.events
+        now = datetime.now(timezone.utc)
+        future = sum(event.event_time >= now for event in events)
+        source = NEWS_CALENDAR_FILE or NEWS_CALENDAR_URL
+        print(
+            f"[preflight] News calendar OK ({len(events)} events, "
+            f"future={future}, source={source})"
+        )
+    except Exception as exc:
+        fail(f"News calendar unavailable or stale: {exc}")
 
 
 def check_symbol_catalog() -> None:
@@ -125,14 +148,7 @@ def check_symbol_catalog() -> None:
 
 
 def check_mt5_demo_broker() -> None:
-    """Validate the real demo venue without placing or checking an order.
-
-    A mapped symbol can legitimately have no live bid/ask while its broker
-    session is closed.  That is a temporary venue state, not a configuration
-    failure, so preflight warns and continues as long as at least one mapped
-    symbol has an executable quote.  Missing symbols and invalid contract
-    metadata remain fatal.
-    """
+    """Validate the real demo venue without placing or checking an order."""
 
     from config.settings import (
         EXECUTION_MODE,
