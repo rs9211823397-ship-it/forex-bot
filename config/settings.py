@@ -56,6 +56,7 @@ MT5_TERMINAL_PATH = os.getenv(
     r"C:\Program Files\MetaTrader 5\terminal64.exe",
 )
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
+MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip()
 MT5_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
 MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
 MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
