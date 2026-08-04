@@ -117,12 +117,14 @@ class AccountSupervisor:
             command = [sys.executable, "main.py"]
         elif account.platform is AccountPlatform.MT5:
             credentials = self.credentials.credentials(account)
+            use_session = credentials.use_preauthenticated_session
             environment.update(
                 {
                     "AAQTS_EXECUTION_MODE": "MT5_DEMO",
-                    "AAQTS_MT5_LOGIN": account.login,
-                    "AAQTS_MT5_PASSWORD": credentials.password,
-                    "AAQTS_MT5_SERVER": account.server,
+                    "AAQTS_MT5_LOGIN": "" if use_session else account.login,
+                    "AAQTS_MT5_EXPECTED_LOGIN": account.login,
+                    "AAQTS_MT5_PASSWORD": "" if use_session else credentials.password,
+                    "AAQTS_MT5_SERVER": "" if use_session else account.server,
                     "AAQTS_MT5_TERMINAL_PATH": credentials.terminal_path,
                 }
             )
