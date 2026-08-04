@@ -98,4 +98,12 @@ SINGLE_ACCOUNT_MODE = _env_flag("AAQTS_SINGLE_ACCOUNT_MODE", True)
 PRIMARY_ACCOUNT_ID = os.getenv("AAQTS_PRIMARY_ACCOUNT_ID", "").strip().lower()
 
 # Market-data provider symbol -> broker/MT5 symbol for approved new entries.
-MT5_SYMBOL_MAP = executable_symbol_map()
+# Brokers commonly add an account/group-specific suffix (for example Exness
+# trial accounts expose EURUSDm rather than EURUSD). Keep the authoritative
+# catalog venue-neutral and apply that suffix only at the MT5 execution edge.
+MT5_SYMBOL_SUFFIX = os.getenv("AAQTS_MT5_SYMBOL_SUFFIX", "").strip()
+_BASE_MT5_SYMBOL_MAP = executable_symbol_map()
+MT5_SYMBOL_MAP = {
+    source: f"{broker}{MT5_SYMBOL_SUFFIX}"
+    for source, broker in _BASE_MT5_SYMBOL_MAP.items()
+}
