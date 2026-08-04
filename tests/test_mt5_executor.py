@@ -29,6 +29,7 @@ class FakeMT5:
         self._deals = []
         self.sent = []
         self.account_trade_mode = self.ACCOUNT_TRADE_MODE_DEMO
+        self.account_login = 12345678
 
     def initialize(self, **kwargs):
         return True
@@ -44,6 +45,7 @@ class FakeMT5:
 
     def account_info(self):
         return SimpleNamespace(
+            login=self.account_login,
             trade_allowed=True,
             trade_expert=True,
             trade_mode=self.account_trade_mode,
@@ -111,6 +113,25 @@ def test_connect_rejects_non_demo_account():
         executor.connect()
 
     assert executor.connected is False
+
+
+def test_preauthenticated_connect_validates_expected_login():
+    adapter = FakeMT5()
+    executor = MT5Executor(
+        ExecutionConfig(expected_login=12345678),
+        adapter=adapter,
+    )
+
+    assert executor.connect() is True
+
+    adapter = FakeMT5()
+    adapter.account_login = 87654321
+    executor = MT5Executor(
+        ExecutionConfig(expected_login=12345678),
+        adapter=adapter,
+    )
+    with pytest.raises(ExecutionError, match="unexpected account login"):
+        executor.connect()
 
 
 def managed_position(adapter, *, ticket=10, volume=0.05):
