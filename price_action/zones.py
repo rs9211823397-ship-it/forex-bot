@@ -51,6 +51,16 @@ def unavailable_zones():
 
 
 def calculate_zones(protected_high, protected_low, price):
+    """Return a valid dealing-range zone state when one can be established.
+
+    Protected swing high/low events are confirmed independently. During a
+    structure transition the most recently confirmed high can temporarily be
+    at or below the most recently confirmed low. That pair does not define a
+    valid dealing range, but it is also not a malformed market-data condition.
+    Treat it as an unavailable contextual zone so the strategy can fail closed
+    for that contextual gate without crashing the entire symbol cycle.
+    """
+
     if protected_high is None or protected_low is None:
         return unavailable_zones()
 
@@ -62,9 +72,7 @@ def calculate_zones(protected_high, protected_low, price):
         raise ValueError("Zone inputs must be finite")
 
     if high <= low:
-        raise ValueError(
-            "Protected swing high must be above protected swing low"
-        )
+        return unavailable_zones()
 
     price_range = high - low
     equilibrium = low + (price_range * 0.5)
