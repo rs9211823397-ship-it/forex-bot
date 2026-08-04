@@ -190,14 +190,16 @@ class MultiAccountSnapshotReader:
         with _MT5_LOCK:
             initialized = False
             try:
-                initialized = bool(
-                    mt5.initialize(
-                        path=credentials.terminal_path,
-                        login=login,
-                        password=credentials.password,
-                        server=account.server,
+                initialize_kwargs = {"path": credentials.terminal_path}
+                if not credentials.use_preauthenticated_session:
+                    initialize_kwargs.update(
+                        {
+                            "login": login,
+                            "password": credentials.password,
+                            "server": account.server,
+                        }
                     )
-                )
+                initialized = bool(mt5.initialize(**initialize_kwargs))
                 if not initialized:
                     return self._view(
                         account,
