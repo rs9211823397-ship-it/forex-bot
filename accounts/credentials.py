@@ -15,6 +15,18 @@ def account_env_prefix(account_id: str) -> str:
     return f"AAQTS_ACCOUNT_{suffix}"
 
 
+def _env_flag(values: Mapping[str, str], name: str, default: bool = False) -> bool:
+    raw = values.get(name)
+    if raw is None:
+        return bool(default)
+    normalized = str(raw).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True)
 class AccountCredentials:
     """Secrets held only in process memory."""
@@ -22,6 +34,7 @@ class AccountCredentials:
     password: str = ""
     bridge_token: str = ""
     terminal_path: str = ""
+    use_preauthenticated_session: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +57,10 @@ class EnvironmentCredentialProvider:
             terminal_path=self._environ.get(
                 f"{prefix}_TERMINAL_PATH", account.terminal_path
             ).strip(),
+            use_preauthenticated_session=_env_flag(
+                self._environ,
+                f"{prefix}_USE_PREAUTHENTICATED_SESSION",
+            ),
         )
 
     def readiness(self, account: TradingAccount) -> CredentialReadiness:
@@ -54,10 +71,10 @@ class EnvironmentCredentialProvider:
         prefix = account_env_prefix(account.account_id)
         missing: list[str] = []
         if account.platform is AccountPlatform.MT5:
-            if not values.password:
-                missing.append(f"{prefix}_PASSWORD")
             if not values.terminal_path:
                 missing.append(f"{prefix}_TERMINAL_PATH")
+            if not values.use_preauthenticated_session and not values.password:
+                missing.append(f"{prefix}_PASSWORD")
         elif account.platform is AccountPlatform.MT4:
             if not account.bridge_url:
                 missing.append("bridge_url")
