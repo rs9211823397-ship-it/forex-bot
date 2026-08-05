@@ -16,12 +16,21 @@ class ZoneState:
     location: str
 
     def valid_for_direction(self, direction):
+        """Return whether price is on the correct side of equilibrium.
+
+        The 38.2%-61.8% bands remain useful location labels, but they must not
+        become a second, ultra-narrow hard gate. A BUY is contextually located
+        anywhere in discount (including the preferred bullish pullback band),
+        while a SELL is located anywhere in premium (including the preferred
+        bearish pullback band). Equilibrium and unavailable/crossed ranges fail
+        closed.
+        """
         return (
             direction == "BUY"
-            and self.location == "BULLISH_PULLBACK"
+            and self.location in {"DISCOUNT", "BULLISH_PULLBACK"}
         ) or (
             direction == "SELL"
-            and self.location == "BEARISH_PULLBACK"
+            and self.location in {"PREMIUM", "BEARISH_PULLBACK"}
         )
 
     def to_dict(self):
