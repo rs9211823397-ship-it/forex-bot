@@ -1,9 +1,10 @@
 """
 Market Data Module
-Version: 2.1
+Version: 2.2
 """
 
 import logging
+import os
 
 import yfinance as yf
 import pandas as pd
@@ -27,10 +28,24 @@ class MarketData:
     def __init__(
         self,
         cache_dir="data/cache",
-        cache_downloads=True
+        cache_downloads=True,
+        *,
+        execution_mode=None,
+        allow_cache_fallback=None,
     ):
         self.history = HistoricalDataStore(cache_dir)
         self.cache_downloads = bool(cache_downloads)
+        self.execution_mode = str(
+            execution_mode
+            if execution_mode is not None
+            else os.getenv("AAQTS_EXECUTION_MODE", "PAPER")
+        ).upper().strip()
+        if allow_cache_fallback is None:
+            # Cached candles are useful for research/PAPER continuity, but a
+            # broker-connected demo must never create a new trade from stale
+            # analytical data while executing against a live MT5 quote.
+            allow_cache_fallback = self.execution_mode != "MT5_DEMO"
+        self.allow_cache_fallback = bool(allow_cache_fallback)
 
     @staticmethod
     def _align_provider_candles(data, timeframe):
@@ -101,6 +116,12 @@ class MarketData:
         error=None,
         as_of=None
     ):
+        if not self.allow_cache_fallback:
+            detail = f": {error}" if error is not None else ""
+            raise HistoricalDataError(
+                f"Fresh market data unavailable for {symbol}; "
+                f"{self.execution_mode} forbids cached fallback{detail}"
+            ) from error
         try:
             cached = self.history.load(
                 symbol,
@@ -121,6 +142,11 @@ class MarketData:
                         "No cached candles are available at as_of"
                     )
 
+            logger.warning(
+                "Using cached market data for %s %s after provider failure",
+                symbol,
+                timeframe,
+            )
             return cached
         except HistoricalDataError:
             message = f"No data found for {symbol}"
@@ -275,6 +301,12 @@ class MarketData:
 
                 except Exception as e:
 
+                    logger.error(
+                        "Fresh market data unavailable for %s %s: %s",
+                        symbol,
+                        normalize_timeframe(interval or "1d"),
+                        e,
+                    )
                     print(
                         f"{symbol} ERROR: {e}"
                     )
