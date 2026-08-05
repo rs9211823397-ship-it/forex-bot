@@ -26,7 +26,11 @@ class ManagedClosedDeal:
 
 
 class MT5TradeAudit:
-    """Write deduplicated entry/exit records and classify broker exit origin."""
+    """Write deduplicated entry/exit records and classify broker exit origin.
+
+    Broker exit deals may have magic=0. Ownership is therefore discovered from
+    the opening deal's magic and retained by MT5 position_id for all exits.
+    """
 
     HEADER = (
         "Event", "TimeUTC", "PositionID", "DealTicket", "Symbol", "Side",
@@ -34,13 +38,37 @@ class MT5TradeAudit:
         "BrokerReason", "Magic", "Comment",
     )
 
-    def __init__(self, executor: Any, path: str | Path = "logs/mt5_trade_audit.csv"):
+    def __init__(self, executor: Any, path: str | Path = "logs/trade_history.csv"):
         self.executor = executor
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        if not self.path.exists() or self.path.stat().st_size == 0:
             with self.path.open("w", newline="", encoding="utf-8") as handle:
                 csv.writer(handle).writerow(self.HEADER)
+            return
+        try:
+            with self.path.open("r", newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                fieldnames = tuple(reader.fieldnames or ())
+                rows = list(reader)
+        except OSError:
+            return
+        if fieldnames == self.HEADER:
+            return
+        # Older builds created a paper-style header but never wrote MT5 rows.
+        # Replace that empty legacy schema; preserve any non-empty legacy data.
+        if rows:
+            legacy = self.path.with_suffix(self.path.suffix + ".legacy")
+            counter = 1
+            while legacy.exists():
+                legacy = self.path.with_suffix(self.path.suffix + f".legacy{counter}")
+                counter += 1
+            self.path.replace(legacy)
+        with self.path.open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerow(self.HEADER)
 
     @staticmethod
     def _as_utc(value: datetime, field_name: str) -> datetime:
