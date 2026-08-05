@@ -359,6 +359,9 @@ class ContextualProductionAdapter:
         )
         reasons = (
             f"Contextual Trigger: {output.trigger}",
+            f"Contextual Location: {output.location}",
+            f"Contextual Liquidity: {output.liquidity_event}",
+            f"Contextual Candle Quality: {output.candle_quality}",
         ) + tuple(
             f"Contextual {code}"
             for code in output.reason_codes
