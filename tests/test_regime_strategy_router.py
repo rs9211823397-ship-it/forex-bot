@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 
 from strategy.regime_detector import (
@@ -114,6 +116,15 @@ def range_reentry_frame(side="BUY"):
     return frame
 
 
+def range_no_entry_frame():
+    frame = range_reentry_frame("BUY").copy()
+    frame.loc[0, "close"] = 97.0
+    frame.loc[1, "close"] = 97.1
+    frame.loc[1, "open"] = 97.0
+    frame.loc[1, "RSI"] = 50.0
+    return frame
+
+
 def breakout_frame():
     rows = []
     for index in range(20):
@@ -145,6 +156,14 @@ def breakout_frame():
     return frame
 
 
+def breakout_no_entry_frame():
+    frame = breakout_frame().copy()
+    frame.loc[frame.index[-1], "close"] = 100.6
+    frame.loc[frame.index[-1], "high"] = 100.8
+    frame.loc[frame.index[-1], "open"] = 100.5
+    return frame
+
+
 def test_trend_regime_delegates_to_existing_causal_engine():
     trend = StubTrendEngine("BUY")
     result = router(
@@ -156,6 +175,7 @@ def test_trend_regime_delegates_to_existing_causal_engine():
     assert result["signal"] == "BUY"
     assert result["strategy"] == "TREND"
     assert result["risk_multiplier"] == 1.0
+    assert result["regime_confidence"] == 75.0
 
 
 def test_range_router_requires_confirmed_band_reentry_and_reduces_risk():
@@ -166,6 +186,8 @@ def test_range_router_requires_confirmed_band_reentry_and_reduces_risk():
     assert result["signal"] == "BUY"
     assert result["strategy"] == "RANGE_REVERSION"
     assert result["risk_multiplier"] == 0.5
+    assert result["confidence"] == 70
+    assert result["regime_confidence"] == 70.0
     assert result["decision_report"]["approved"] is True
 
 
@@ -176,6 +198,22 @@ def test_range_router_supports_bearish_reentry():
 
     assert result["signal"] == "SELL"
     assert result["score"] < 0
+
+
+def test_range_hold_does_not_report_regime_confidence_as_trade_confidence(caplog):
+    caplog.set_level(logging.INFO)
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=78, risk=0.5)
+    ).generate_analysis(range_no_entry_frame(), "CAD=X")
+
+    assert result["signal"] == "HOLD"
+    assert result["confidence"] == 0
+    assert result["regime_confidence"] == 78.0
+    assert result["risk_multiplier"] == 0.0
+    assert "Range detected but no confirmed Bollinger/RSI re-entry" in result["reasons"]
+    assert "ROUTED HOLD detail CAD=X" in caplog.text
+    assert "regime_confidence=78.0" in caplog.text
+    assert "trade_confidence=0" in caplog.text
 
 
 def test_range_trade_is_blocked_by_directional_higher_timeframe():
@@ -190,6 +228,8 @@ def test_range_trade_is_blocked_by_directional_higher_timeframe():
 
     assert result["signal"] == "HOLD"
     assert result["risk_multiplier"] == 0.0
+    assert result["confidence"] == 0
+    assert result["regime_confidence"] == 70.0
 
 
 def test_breakout_requires_range_close_atr_adx_and_htf_compatibility():
@@ -212,7 +252,31 @@ def test_breakout_requires_range_close_atr_adx_and_htf_compatibility():
 
     assert accepted["signal"] == "BUY"
     assert accepted["risk_multiplier"] == 0.8
+    assert accepted["confidence"] == 82
+    assert accepted["regime_confidence"] == 82.0
     assert blocked["signal"] == "HOLD"
+    assert blocked["confidence"] == 0
+    assert blocked["risk_multiplier"] == 0.0
+
+
+def test_breakout_hold_keeps_regime_confidence_separate():
+    detector = StaticDetector(
+        REGIME_BREAKOUT,
+        direction="BULLISH",
+        confidence=77,
+        risk=0.8,
+    )
+    result = router(detector, htf="BULLISH").generate_analysis(
+        breakout_no_entry_frame(),
+        "ETH-USD",
+        higher_tf=pd.DataFrame({"close": [1.0]}),
+    )
+
+    assert result["signal"] == "HOLD"
+    assert result["confidence"] == 0
+    assert result["regime_confidence"] == 77.0
+    assert result["risk_multiplier"] == 0.0
+    assert "Breakout regime lacks a strong close/ATR/ADX confirmation" in result["reasons"]
 
 
 def test_low_volatility_fails_closed():
@@ -223,3 +287,5 @@ def test_low_volatility_fails_closed():
     assert result["signal"] == "HOLD"
     assert result["strategy"] == "NO_TRADE"
     assert result["risk_multiplier"] == 0.0
+    assert result["confidence"] == 0
+    assert result["regime_confidence"] == 90.0
