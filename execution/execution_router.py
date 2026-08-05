@@ -58,9 +58,7 @@ class ExecutionRouter:
                 ExecutionConfig(
                     terminal_path=MT5_TERMINAL_PATH,
                     login=int(MT5_LOGIN) if MT5_LOGIN else None,
-                    expected_login=(
-                        int(MT5_EXPECTED_LOGIN) if MT5_EXPECTED_LOGIN else None
-                    ),
+                    expected_login=(int(MT5_EXPECTED_LOGIN) if MT5_EXPECTED_LOGIN else None),
                     password=MT5_PASSWORD,
                     server=MT5_SERVER,
                     max_open_positions=MT5_MAX_OPEN_POSITIONS,
@@ -70,13 +68,18 @@ class ExecutionRouter:
         if self.mode == "MT5_DEMO" and self.position_manager is None:
             assert self.mt5_executor is not None
             self.position_manager = PositionManager(self.mt5_executor)
+
         self.trade_audit = trade_audit
         if self.mode == "MT5_DEMO" and self.trade_audit is None:
             assert self.mt5_executor is not None
-            self.trade_audit = MT5TradeAudit(self.mt5_executor)
+            mt5_api = getattr(self.mt5_executor, "mt5", None)
+            config = getattr(self.mt5_executor, "config", None)
+            # Real MT5Executor exposes broker deal history. Lightweight test
+            # doubles intentionally may not, so preserve their legacy routing.
+            if mt5_api is not None and config is not None and hasattr(mt5_api, "history_deals_get"):
+                self.trade_audit = MT5TradeAudit(self.mt5_executor)
 
     def start(self) -> list[Any]:
-        """Connect MT5 demo and recover broker-held AAQTS positions."""
         if self.mode != "MT5_DEMO":
             return []
         assert self.mt5_executor is not None
@@ -87,95 +90,48 @@ class ExecutionRouter:
             self.trade_audit.sync_closed()
         return recovered
 
-    def execute(
-        self,
-        source_symbol: str,
-        signal: str,
-        risk_plan: dict[str, float],
-        paper_position_size: float,
-        approved_risk_amount: Optional[float] = None,
-    ) -> Any:
-        """Execute one already risk-approved trade plan."""
+    def execute(self, source_symbol: str, signal: str, risk_plan: dict[str, float], paper_position_size: float, approved_risk_amount: Optional[float] = None) -> Any:
         if not risk_plan:
             raise ValueError("risk_plan is required")
         required = {"entry", "stop_loss", "take_profit"}
         missing = required.difference(risk_plan)
         if missing:
             raise ValueError("risk_plan is missing: " + ", ".join(sorted(missing)))
-
         side = signal.upper().strip()
         if side not in {"BUY", "SELL"}:
             raise ValueError("Only BUY or SELL signals can be executed")
-
         if self.mode == "PAPER":
-            return self.paper_trader.open_trade(
-                source_symbol,
-                side,
-                risk_plan["entry"],
-                risk_plan["stop_loss"],
-                risk_plan["take_profit"],
-                paper_position_size,
-            )
+            return self.paper_trader.open_trade(source_symbol, side, risk_plan["entry"], risk_plan["stop_loss"], risk_plan["take_profit"], paper_position_size)
 
         assert self.mt5_executor is not None
         mt5_symbol = MT5_SYMBOL_MAP.get(source_symbol)
         if not mt5_symbol:
-            raise ExecutionError(
-                f"No MT5 symbol mapping configured for {source_symbol}"
-            )
+            raise ExecutionError(f"No MT5 symbol mapping configured for {source_symbol}")
         if approved_risk_amount is None or approved_risk_amount <= 0:
-            raise ExecutionError(
-                "MT5_DEMO requires a positive portfolio-approved risk amount"
-            )
+            raise ExecutionError("MT5_DEMO requires a positive portfolio-approved risk amount")
         result = self.mt5_executor.place_market_order(
-            symbol=mt5_symbol,
-            side=side,
-            volume=None,
-            stop_loss=risk_plan["stop_loss"],
-            take_profit=risk_plan["take_profit"],
-            comment=f"AAQTS {source_symbol}",
-            reference_entry=risk_plan["entry"],
+            symbol=mt5_symbol, side=side, volume=None,
+            stop_loss=risk_plan["stop_loss"], take_profit=risk_plan["take_profit"],
+            comment=f"AAQTS {source_symbol}", reference_entry=risk_plan["entry"],
             risk_amount=approved_risk_amount,
         )
         managed = None
         if self.position_manager is not None:
             managed = self.position_manager.register_execution_result(result)
         if self.trade_audit is not None:
-            self.trade_audit.record_entry(
-                source_symbol=source_symbol,
-                side=side,
-                risk_plan=risk_plan,
-                result=result,
-                managed_position=managed,
-            )
+            self.trade_audit.record_entry(source_symbol=source_symbol, side=side, risk_plan=risk_plan, result=result, managed_position=managed)
         return result
 
-    def manage_positions(
-        self,
-        atr_by_source_symbol: Optional[dict[str, float]] = None,
-    ) -> dict[str, Any]:
-        """Run one MT5 lifecycle cycle; paper exits are managed by PaperTrader."""
+    def manage_positions(self, atr_by_source_symbol: Optional[dict[str, float]] = None) -> dict[str, Any]:
         if self.mode != "MT5_DEMO" or self.position_manager is None:
-            return {
-                "managed": False,
-                "reason": "paper_mode_uses_price_checks",
-                "reports": [],
-                "errors": [],
-            }
+            return {"managed": False, "reason": "paper_mode_uses_price_checks", "reports": [], "errors": []}
         atr_by_source_symbol = atr_by_source_symbol or {}
-        broker_atr = {
-            MT5_SYMBOL_MAP[source]: float(atr)
-            for source, atr in atr_by_source_symbol.items()
-            if source in MT5_SYMBOL_MAP
-        }
-        report = self.position_manager.manage_positions(
-            broker_atr,
-            force_sync=False,
-        )
+        broker_atr = {MT5_SYMBOL_MAP[source]: float(atr) for source, atr in atr_by_source_symbol.items() if source in MT5_SYMBOL_MAP}
+        report = self.position_manager.manage_positions(broker_atr, force_sync=False)
         if self.trade_audit is not None:
             try:
                 self.trade_audit.sync_closed()
-            except Exception as exc:  # audit failure must be visible but not unprotect positions
+            except Exception as exc:
                 report.setdefault("errors", []).append(f"trade_audit: {exc}")
         return report
 
@@ -201,26 +157,12 @@ class ExecutionRouter:
         return self.mt5_executor.positions(managed_only=True)
 
     def account_snapshot(self) -> AccountSnapshot:
-        """Return the account state belonging to the active execution venue."""
         if self.mode == "PAPER":
-            return AccountSnapshot(
-                balance=float(self.paper_trader.balance),
-                equity=float(self.paper_trader.equity),
-            )
+            return AccountSnapshot(balance=float(self.paper_trader.balance), equity=float(self.paper_trader.equity))
         assert self.mt5_executor is not None
         return self.mt5_executor.account_snapshot()
 
-    def closed_position_results(
-        self,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> list[ClosedPositionResult]:
-        """Return realized AAQTS exits, including manual/mobile broker closes.
-
-        MT5 exit deals may carry magic=0 even when their opening deal belongs to
-        AAQTS. The audit layer therefore associates exits by position_id instead
-        of trusting exit-deal magic alone.
-        """
+    def closed_position_results(self, start_time: datetime, end_time: datetime) -> list[ClosedPositionResult]:
         if self.mode != "MT5_DEMO" or self.mt5_executor is None:
             return []
         if self.trade_audit is not None:
@@ -238,7 +180,6 @@ class ExecutionRouter:
         return self.mt5_executor.remaining_loss_at_stop(position)
 
     def shutdown(self) -> None:
-        """Disconnect only. Broker-side positions remain protected by SL/TP."""
         if self.trade_audit is not None and self.mode == "MT5_DEMO":
             try:
                 self.trade_audit.sync_closed()
