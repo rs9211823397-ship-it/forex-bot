@@ -57,7 +57,6 @@ def _parse_rows(payload: object) -> tuple[NewsEvent, ...]:
         if not isinstance(row, dict):
             raise NewsCalendarError(f"News event {index} must be a JSON object")
 
-        # Native AAQTS format.
         if "event_time" in row:
             try:
                 currencies = row.get("currencies", [])
@@ -77,15 +76,13 @@ def _parse_rows(payload: object) -> tuple[NewsEvent, ...]:
                 ) from exc
             continue
 
-        # Forex Factory weekly JSON export format:
-        # title, country, date, impact, forecast, previous.
         if "date" in row and ("country" in row or "currency" in row):
             impact = _normalise_impact(row.get("impact"))
             if impact is None:
-                # Holidays/non-economic rows are intentionally ignored; the
-                # risk filter only consumes LOW/MEDIUM/HIGH economic events.
                 continue
-            currency = str(row.get("country") or row.get("currency") or "").strip().upper()
+            currency = str(
+                row.get("country") or row.get("currency") or ""
+            ).strip().upper()
             if not currency:
                 raise NewsCalendarError(
                     f"News event {index} has no currency/country code"
@@ -146,13 +143,7 @@ class JsonNewsEventProvider:
 
 
 class RefreshingNewsEventProvider:
-    """Refresh a remote JSON calendar and fail closed once its cache is stale.
-
-    A successful response is atomically cached on disk. Network failures may
-    temporarily fall back to the cache, but only while that cache is younger
-    than ``max_stale``. Once stale, ``events_between`` raises so the portfolio
-    risk manager can block new entries instead of silently trading blind.
-    """
+    """Refresh a remote JSON calendar and fail closed once its cache is stale."""
 
     def __init__(
         self,
@@ -227,8 +218,23 @@ class RefreshingNewsEventProvider:
             if os.path.exists(temporary_name):
                 os.unlink(temporary_name)
 
-    def refresh(self, now: datetime | None = None) -> tuple[NewsEvent, ...]:
+    def refresh(
+        self,
+        now: datetime | None = None,
+        *,
+        force: bool = False,
+    ) -> tuple[NewsEvent, ...]:
+        """Fetch at most once per refresh interval unless explicitly forced."""
         instant = as_utc(now or datetime.now(timezone.utc), "now")
+        if (
+            not force
+            and self._last_success is not None
+            and self._last_attempt is not None
+            and instant >= self._last_attempt
+            and instant - self._last_attempt < self.refresh_interval
+        ):
+            return self._events
+
         self._last_attempt = instant
         request = urllib.request.Request(
             self.url,
@@ -256,6 +262,7 @@ class RefreshingNewsEventProvider:
         instant = as_utc(now, "now")
         due = (
             self._last_attempt is None
+            or instant < self._last_attempt
             or instant - self._last_attempt >= self.refresh_interval
         )
         if due:
@@ -295,8 +302,6 @@ def build_news_provider(
     refresh_minutes: int = 30,
     max_stale_minutes: int = 360,
 ):
-    """Build the configured production provider with explicit precedence."""
-
     if not enabled:
         return None
     if str(calendar_file).strip():
