@@ -27,6 +27,7 @@ from execution.mt5_executor import (
     ExecutionError,
     MT5Executor,
 )
+from execution.mt5_trade_audit import MT5TradeAudit
 from execution.position_manager import PositionManager
 
 
@@ -40,6 +41,7 @@ class ExecutionRouter:
         mode: str = EXECUTION_MODE,
         mt5_executor: Optional[MT5Executor] = None,
         position_manager: Optional[PositionManager] = None,
+        trade_audit: Optional[MT5TradeAudit] = None,
     ) -> None:
         self.paper_trader = paper_trader
         self.mode = mode.upper().strip()
@@ -68,6 +70,10 @@ class ExecutionRouter:
         if self.mode == "MT5_DEMO" and self.position_manager is None:
             assert self.mt5_executor is not None
             self.position_manager = PositionManager(self.mt5_executor)
+        self.trade_audit = trade_audit
+        if self.mode == "MT5_DEMO" and self.trade_audit is None:
+            assert self.mt5_executor is not None
+            self.trade_audit = MT5TradeAudit(self.mt5_executor)
 
     def start(self) -> list[Any]:
         """Connect MT5 demo and recover broker-held AAQTS positions."""
@@ -76,7 +82,10 @@ class ExecutionRouter:
         assert self.mt5_executor is not None
         assert self.position_manager is not None
         self.mt5_executor.connect()
-        return self.position_manager.recover_positions(reset_registry=True)
+        recovered = self.position_manager.recover_positions(reset_registry=True)
+        if self.trade_audit is not None:
+            self.trade_audit.sync_closed()
+        return recovered
 
     def execute(
         self,
@@ -92,7 +101,7 @@ class ExecutionRouter:
         required = {"entry", "stop_loss", "take_profit"}
         missing = required.difference(risk_plan)
         if missing:
-            raise ValueError(f"risk_plan is missing: {', '.join(sorted(missing))}")
+            raise ValueError("risk_plan is missing: " + ", ".join(sorted(missing)))
 
         side = signal.upper().strip()
         if side not in {"BUY", "SELL"}:
@@ -128,8 +137,17 @@ class ExecutionRouter:
             reference_entry=risk_plan["entry"],
             risk_amount=approved_risk_amount,
         )
+        managed = None
         if self.position_manager is not None:
-            self.position_manager.register_execution_result(result)
+            managed = self.position_manager.register_execution_result(result)
+        if self.trade_audit is not None:
+            self.trade_audit.record_entry(
+                source_symbol=source_symbol,
+                side=side,
+                risk_plan=risk_plan,
+                result=result,
+                managed_position=managed,
+            )
         return result
 
     def manage_positions(
@@ -150,10 +168,16 @@ class ExecutionRouter:
             for source, atr in atr_by_source_symbol.items()
             if source in MT5_SYMBOL_MAP
         }
-        return self.position_manager.manage_positions(
+        report = self.position_manager.manage_positions(
             broker_atr,
             force_sync=False,
         )
+        if self.trade_audit is not None:
+            try:
+                self.trade_audit.sync_closed()
+            except Exception as exc:  # audit failure must be visible but not unprotect positions
+                report.setdefault("errors", []).append(f"trade_audit: {exc}")
+        return report
 
     def pause(self) -> None:
         if self.mt5_executor is not None:
@@ -166,7 +190,10 @@ class ExecutionRouter:
     def emergency_stop(self) -> list[Any]:
         if self.mode != "MT5_DEMO" or self.mt5_executor is None:
             return []
-        return self.mt5_executor.emergency_stop()
+        results = self.mt5_executor.emergency_stop()
+        if self.trade_audit is not None:
+            self.trade_audit.sync_closed()
+        return results
 
     def positions(self) -> list[Any]:
         if self.mode != "MT5_DEMO" or self.mt5_executor is None:
@@ -188,9 +215,16 @@ class ExecutionRouter:
         start_time: datetime,
         end_time: datetime,
     ) -> list[ClosedPositionResult]:
-        """Return broker realized exits; paper history remains locally owned."""
+        """Return realized AAQTS exits, including manual/mobile broker closes.
+
+        MT5 exit deals may carry magic=0 even when their opening deal belongs to
+        AAQTS. The audit layer therefore associates exits by position_id instead
+        of trusting exit-deal magic alone.
+        """
         if self.mode != "MT5_DEMO" or self.mt5_executor is None:
             return []
+        if self.trade_audit is not None:
+            return self.trade_audit.closed_position_results(start_time, end_time)
         return self.mt5_executor.closed_position_results(start_time, end_time)
 
     def position_side(self, position: Any) -> str:
@@ -205,5 +239,10 @@ class ExecutionRouter:
 
     def shutdown(self) -> None:
         """Disconnect only. Broker-side positions remain protected by SL/TP."""
+        if self.trade_audit is not None and self.mode == "MT5_DEMO":
+            try:
+                self.trade_audit.sync_closed()
+            except Exception:
+                pass
         if self.mt5_executor is not None:
             self.mt5_executor.shutdown()
