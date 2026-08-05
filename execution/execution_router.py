@@ -7,7 +7,7 @@ release gate exists.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from config.settings import (
@@ -15,6 +15,8 @@ from config.settings import (
     MT5_EXPECTED_LOGIN,
     MT5_LOGIN,
     MT5_MAX_OPEN_POSITIONS,
+    MT5_MAX_SPREAD_STOP_RATIO,
+    MT5_MAX_TICK_AGE_SECONDS,
     MT5_PASSWORD,
     MT5_SERVER,
     MT5_SYMBOL_MAP,
@@ -74,8 +76,6 @@ class ExecutionRouter:
             assert self.mt5_executor is not None
             mt5_api = getattr(self.mt5_executor, "mt5", None)
             config = getattr(self.mt5_executor, "config", None)
-            # Real MT5Executor exposes broker deal history. Lightweight test
-            # doubles intentionally may not, so preserve their legacy routing.
             if mt5_api is not None and config is not None and hasattr(mt5_api, "history_deals_get"):
                 self.trade_audit = MT5TradeAudit(self.mt5_executor)
 
@@ -89,6 +89,39 @@ class ExecutionRouter:
         if self.trade_audit is not None:
             self.trade_audit.sync_closed()
         return recovered
+
+    def _validate_entry_quote(self, mt5_symbol: str, risk_plan: dict[str, float]) -> None:
+        """Fail closed on stale executable ticks or spread disproportionate to risk."""
+        assert self.mt5_executor is not None
+        info = self.mt5_executor.symbol_info(mt5_symbol)
+        tick = self.mt5_executor.symbol_tick(mt5_symbol)
+        bid = float(getattr(tick, "bid", 0.0) or 0.0)
+        ask = float(getattr(tick, "ask", 0.0) or 0.0)
+        if bid <= 0 or ask <= 0 or ask < bid:
+            raise ExecutionError(f"Invalid executable quote for {mt5_symbol}")
+
+        timestamp_ms = float(getattr(tick, "time_msc", 0.0) or 0.0)
+        timestamp_s = timestamp_ms / 1000.0 if timestamp_ms > 0 else float(
+            getattr(tick, "time", 0.0) or 0.0
+        )
+        if timestamp_s > 0:
+            age = datetime.now(timezone.utc).timestamp() - timestamp_s
+            if age < -5 or age > MT5_MAX_TICK_AGE_SECONDS:
+                raise ExecutionError(
+                    f"Stale MT5 tick for {mt5_symbol}: age={age:.1f}s "
+                    f"max={MT5_MAX_TICK_AGE_SECONDS:.1f}s"
+                )
+
+        point = float(getattr(info, "point", 0.0) or 0.0)
+        spread = ask - bid
+        stop_distance = abs(float(risk_plan["entry"]) - float(risk_plan["stop_loss"]))
+        reference = max(stop_distance, point, 1e-12)
+        ratio = spread / reference
+        if ratio > MT5_MAX_SPREAD_STOP_RATIO:
+            raise ExecutionError(
+                f"Spread too wide for {mt5_symbol}: spread/stop={ratio:.3f} "
+                f"> {MT5_MAX_SPREAD_STOP_RATIO:.3f}"
+            )
 
     def execute(self, source_symbol: str, signal: str, risk_plan: dict[str, float], paper_position_size: float, approved_risk_amount: Optional[float] = None) -> Any:
         if not risk_plan:
@@ -109,6 +142,7 @@ class ExecutionRouter:
             raise ExecutionError(f"No MT5 symbol mapping configured for {source_symbol}")
         if approved_risk_amount is None or approved_risk_amount <= 0:
             raise ExecutionError("MT5_DEMO requires a positive portfolio-approved risk amount")
+        self._validate_entry_quote(mt5_symbol, risk_plan)
         result = self.mt5_executor.place_market_order(
             symbol=mt5_symbol, side=side, volume=None,
             stop_loss=risk_plan["stop_loss"], take_profit=risk_plan["take_profit"],
