@@ -27,14 +27,25 @@ def _positive_int(name, default):
     return value
 
 
+def _positive_float(name, default):
+    value = float(os.getenv(name, str(default)))
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
+    return value
+
+
+def _bounded_float(name, default, lower, upper):
+    value = float(os.getenv(name, str(default)))
+    if not math.isfinite(value) or value < lower or value > upper:
+        raise ValueError(f"{name} must be between {lower} and {upper}")
+    return value
+
+
 def _default_mt5_terminal_path():
     """Return the first known local MT5 terminal without overriding env config."""
-
     program_files = Path(os.getenv("PROGRAMFILES", r"C:\Program Files"))
     appdata = os.getenv("APPDATA", "").strip()
-    candidates = [
-        program_files / "MetaTrader 5" / "terminal64.exe",
-    ]
+    candidates = [program_files / "MetaTrader 5" / "terminal64.exe"]
     if appdata:
         candidates.extend(
             [
@@ -42,11 +53,9 @@ def _default_mt5_terminal_path():
                 Path(appdata) / "Exness MT5 Terminal" / "terminal64.exe",
             ]
         )
-
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
-
     return str(candidates[0])
 
 
@@ -57,13 +66,11 @@ def _default_mt5_terminal_path():
 HIGHER_TIMEFRAME = "1h"
 TRADING_TIMEFRAME = "15m"
 LOOKBACK_DAYS = "2020-01-01"
-PAPER_STARTING_BALANCE = float(
-    os.getenv("AAQTS_PAPER_STARTING_BALANCE", "1000")
-)
+PAPER_STARTING_BALANCE = float(os.getenv("AAQTS_PAPER_STARTING_BALANCE", "1000"))
 if not math.isfinite(PAPER_STARTING_BALANCE) or PAPER_STARTING_BALANCE <= 0:
     raise ValueError("AAQTS_PAPER_STARTING_BALANCE must be greater than zero")
 ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
-RISK_PERCENT = 1
+RISK_PERCENT = _bounded_float("AAQTS_RISK_PERCENT", 1.0, 0.05, 5.0)
 
 MIN_ADX = float(os.getenv("AAQTS_MIN_ADX", "20"))
 SIGNAL_SCORE_THRESHOLD = int(os.getenv("AAQTS_SIGNAL_SCORE_THRESHOLD", "55"))
@@ -76,10 +83,7 @@ MIN_TRADE_QUALITY = int(os.getenv("AAQTS_MIN_TRADE_QUALITY", "55"))
 
 EXECUTION_MODE = os.getenv("AAQTS_EXECUTION_MODE", "PAPER").upper().strip()
 SYMBOLS = active_symbols(include_paper_only=EXECUTION_MODE == "PAPER")
-MT5_TERMINAL_PATH = os.getenv(
-    "AAQTS_MT5_TERMINAL_PATH",
-    _default_mt5_terminal_path(),
-)
+MT5_TERMINAL_PATH = os.getenv("AAQTS_MT5_TERMINAL_PATH", _default_mt5_terminal_path())
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
 MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip()
 MT5_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
@@ -87,10 +91,18 @@ MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
 MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
 MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "5"))
 BOT_INTERVAL_SECONDS = int(os.getenv("AAQTS_BOT_INTERVAL_SECONDS", "300"))
+MT5_MAX_TICK_AGE_SECONDS = _positive_float("AAQTS_MT5_MAX_TICK_AGE_SECONDS", 15.0)
+MT5_MAX_SPREAD_STOP_RATIO = _bounded_float(
+    "AAQTS_MT5_MAX_SPREAD_STOP_RATIO", 0.25, 0.01, 1.0
+)
+PORTFOLIO_MAX_ABS_CORRELATION = _bounded_float(
+    "AAQTS_PORTFOLIO_MAX_ABS_CORRELATION", 0.80, 0.0, 1.0
+)
+PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = _bounded_float(
+    "AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT", 2.0, 0.1, 100.0
+)
 
 # Production demo trading defaults to a fail-closed high-impact news filter.
-# PAPER remains opt-in so deterministic/offline research does not depend on a
-# live web feed. A local file overrides the refreshing URL provider.
 NEWS_FILTER_ENABLED = _env_flag(
     "AAQTS_NEWS_FILTER_ENABLED",
     EXECUTION_MODE == "MT5_DEMO",
