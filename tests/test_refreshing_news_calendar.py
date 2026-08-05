@@ -49,11 +49,13 @@ def test_forex_factory_rows_are_normalized_and_filtered(tmp_path):
 
 
 def test_remote_success_is_atomically_cached_and_reusable(tmp_path):
+    fetched = datetime.now(timezone.utc)
+    event_time = fetched + timedelta(hours=2)
     payload = [
         {
             "title": "CPI",
             "country": "USD",
-            "date": "2026-08-05T12:30:00+00:00",
+            "date": event_time.isoformat(),
             "impact": "High",
         }
     ]
@@ -63,7 +65,6 @@ def test_remote_success_is_atomically_cached_and_reusable(tmp_path):
         cache_path=cache,
         opener=lambda request, timeout: Response(payload),
     )
-    fetched = datetime.now(timezone.utc)
     provider.refresh(fetched)
     assert cache.is_file()
 
@@ -131,6 +132,64 @@ def test_stale_cache_fails_closed(tmp_path):
     )
     with pytest.raises(NewsCalendarError, match="stale"):
         provider.events_between(
-            datetime.now(timezone.utc) - timedelta(hours=1),
+            datetime.now(timezone.utc),
             datetime.now(timezone.utc) + timedelta(hours=1),
         )
+
+
+def test_bad_remote_payload_does_not_replace_good_cache(tmp_path):
+    cache = tmp_path / "calendar.json"
+    good_payload = [
+        {
+            "title": "CPI",
+            "country": "USD",
+            "date": "2026-08-05T12:30:00+00:00",
+            "impact": "High",
+        }
+    ]
+    provider = RefreshingNewsEventProvider(
+        "https://example.test/calendar.json",
+        cache_path=cache,
+        opener=lambda request, timeout: Response(good_payload),
+    )
+    fetched = datetime.now(timezone.utc)
+    provider.refresh(fetched)
+    original = cache.read_bytes()
+
+    bad = RefreshingNewsEventProvider(
+        "https://example.test/calendar.json",
+        cache_path=cache,
+        opener=lambda request, timeout: Response({"not": "a list"}),
+    )
+    with pytest.raises(NewsCalendarError):
+        bad.refresh(fetched + timedelta(minutes=31))
+
+    assert cache.read_bytes() == original
+
+
+def test_refresh_lock_allows_one_remote_fetch(tmp_path):
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(1)
+        return Response(
+            [
+                {
+                    "title": "CPI",
+                    "country": "USD",
+                    "date": "2026-08-05T12:30:00+00:00",
+                    "impact": "High",
+                }
+            ]
+        )
+
+    provider = RefreshingNewsEventProvider(
+        "https://example.test/calendar.json",
+        cache_path=tmp_path / "calendar.json",
+        opener=opener,
+    )
+    now = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
+    provider.refresh(now)
+    provider.refresh(now + timedelta(minutes=1))
+
+    assert len(calls) == 1
