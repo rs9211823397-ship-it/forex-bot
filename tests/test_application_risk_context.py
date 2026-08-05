@@ -40,6 +40,7 @@ def test_demo_risk_context_uses_broker_positions_and_realized_results():
     app = TradingApplication.__new__(TradingApplication)
     app.execution = FakeDemoExecution()
     app.equity_history = []
+    app.latest_correlations = ()
     app.news_provider = None
     now = datetime.now(timezone.utc)
 
@@ -51,3 +52,4 @@ def test_demo_risk_context_uses_broker_positions_and_realized_results():
     assert context.open_positions[0].quantity == 0.05
     assert len(context.closed_trades) == 1
     assert context.closed_trades[0].profit_loss == -25.0
+    assert context.correlations == ()
