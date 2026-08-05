@@ -30,6 +30,8 @@ from config.settings import (
     NEWS_POST_EVENT_MINUTES,
     NEWS_PRE_EVENT_MINUTES,
     NEWS_REFRESH_MINUTES,
+    PORTFOLIO_MAX_ABS_CORRELATION,
+    PORTFOLIO_MAX_CORRELATED_RISK_PERCENT,
     RISK_PERCENT,
     TRADING_TIMEFRAME,
 )
@@ -41,7 +43,7 @@ from indicators.technical import TechnicalIndicators
 from logs.logger import TradeLogger
 from paper.paper_trader import PaperTrader
 from risk.news_calendar import build_news_provider
-from risk.portfolio import CurrencyExposure, OpenRiskPosition
+from risk.portfolio import CorrelationObservation, CurrencyExposure, OpenRiskPosition
 from risk.protection import (
     ClosedTradeOutcome,
     EquityPoint,
@@ -87,6 +89,8 @@ class TradingApplication:
                 max_consecutive_losses=3,
                 max_open_trades=MT5_MAX_OPEN_POSITIONS,
                 max_portfolio_risk_percent=3.0,
+                max_abs_correlation=PORTFOLIO_MAX_ABS_CORRELATION,
+                max_correlated_risk_percent=PORTFOLIO_MAX_CORRELATED_RISK_PERCENT,
                 news_filter_enabled=NEWS_FILTER_ENABLED,
                 fail_closed_on_news_error=True,
                 blocked_news_impacts=NEWS_BLOCKED_IMPACTS,
@@ -107,6 +111,7 @@ class TradingApplication:
         self.trade_logger = TradeLogger()
         self.equity_history: list[EquityPoint] = []
         self.latest_atr_by_symbol: dict[str, float] = {}
+        self.latest_correlations: tuple[CorrelationObservation, ...] = ()
         self.loop = BotLoop(interval=BOT_INTERVAL_SECONDS)
         self.controller = BotController.configured(
             bot_loop=self.loop,
@@ -116,7 +121,6 @@ class TradingApplication:
 
     def _handle_control_request(self, request: ControlRequest) -> str:
         """Apply one already-authorized Telegram command to this engine."""
-
         if request.account_id != self.account_id:
             raise ValueError("Control request targeted a different account")
         if request.action is ControlAction.PAUSE_ENTRIES:
@@ -196,6 +200,51 @@ class TradingApplication:
                 return source
         return normalized
 
+    @staticmethod
+    def _frame_is_demo_safe(frame) -> bool:
+        return bool(
+            frame is not None
+            and not getattr(frame, "empty", True)
+            and getattr(frame, "attrs", {}).get("source") == "MT5"
+            and getattr(frame, "attrs", {}).get("fresh") is True
+        )
+
+    @staticmethod
+    def _build_correlations(
+        frames: dict[str, object],
+        observed_at: datetime,
+    ) -> tuple[CorrelationObservation, ...]:
+        """Build causal rolling return correlations from completed lower-TF bars."""
+        symbols = sorted(frames)
+        observations: list[CorrelationObservation] = []
+        for index, first in enumerate(symbols):
+            first_frame = frames[first]
+            if getattr(first_frame, "empty", True) or "close" not in first_frame:
+                continue
+            first_returns = first_frame["close"].astype(float).pct_change().dropna().tail(120)
+            for second in symbols[index + 1:]:
+                second_frame = frames[second]
+                if getattr(second_frame, "empty", True) or "close" not in second_frame:
+                    continue
+                second_returns = second_frame["close"].astype(float).pct_change().dropna().tail(120)
+                aligned = first_returns.to_frame("first").join(
+                    second_returns.to_frame("second"), how="inner"
+                ).dropna()
+                if len(aligned) < 30:
+                    continue
+                value = float(aligned["first"].corr(aligned["second"]))
+                if value != value:  # NaN
+                    continue
+                observations.append(
+                    CorrelationObservation(
+                        first_symbol=first,
+                        second_symbol=second,
+                        observed_at=observed_at,
+                        correlation=max(-1.0, min(1.0, value)),
+                    )
+                )
+        return tuple(observations)
+
     def _account_equity(self) -> float:
         return self.execution.account_snapshot().equity
 
@@ -210,9 +259,7 @@ class TradingApplication:
                 quantity = float(trade["position"])
                 risk_amount = (
                     instrument.planned_loss_per_quantity(
-                        entry_reference=trade.get(
-                            "entry_reference", trade["entry"]
-                        ),
+                        entry_reference=trade.get("entry_reference", trade["entry"]),
                         stop_reference=trade["stop_loss"],
                         side=trade["signal"],
                     )
@@ -222,15 +269,12 @@ class TradingApplication:
                     OpenRiskPosition(
                         symbol=trade["symbol"],
                         direction=trade["signal"],
-                        opened_at=self._parse_time(
-                            trade.get("opened_at"), decision_time
-                        ),
+                        opened_at=self._parse_time(trade.get("opened_at"), decision_time),
                         risk_amount=risk_amount,
                         quantity=quantity,
                         strategy="aaqts",
                         currency_exposures=self._currency_exposures(
-                            trade["symbol"],
-                            trade["signal"],
+                            trade["symbol"], trade["signal"]
                         ),
                     )
                 )
@@ -252,6 +296,7 @@ class TradingApplication:
             open_positions=tuple(positions),
             closed_trades=tuple(closed),
             equity_history=tuple(self.equity_history),
+            correlations=self.latest_correlations,
             news_provider=self.news_provider,
         )
 
@@ -267,15 +312,13 @@ class TradingApplication:
                     symbol=source_symbol,
                     direction=direction,
                     opened_at=self._parse_time(
-                        getattr(position, "time", None),
-                        decision_time,
+                        getattr(position, "time", None), decision_time
                     ),
                     risk_amount=self.execution.remaining_loss_at_stop(position),
                     quantity=float(getattr(position, "volume", 0.0)),
                     strategy="aaqts",
                     currency_exposures=self._currency_exposures(
-                        source_symbol,
-                        direction,
+                        source_symbol, direction
                     ),
                 )
             )
@@ -287,18 +330,24 @@ class TradingApplication:
                 profit_loss=result.profit_loss,
             )
             for result in self.execution.closed_position_results(
-                history_start,
-                decision_time,
+                history_start, decision_time
             )
         )
         return RiskContext(
             open_positions=tuple(positions),
             closed_trades=closed,
             equity_history=tuple(self.equity_history),
+            correlations=self.latest_correlations,
             news_provider=self.news_provider,
         )
 
     def _process_symbol(self, symbol, data, higher_tf) -> float:
+        if self.execution.mode == "MT5_DEMO":
+            if not self._frame_is_demo_safe(data):
+                raise RuntimeError(f"Unsafe/stale lower-timeframe data blocked for {symbol}")
+            if not self._frame_is_demo_safe(higher_tf):
+                raise RuntimeError(f"Unsafe/stale higher-timeframe data blocked for {symbol}")
+
         analyzed = self.indicators.add_indicators(data)
         signal = self.strategy_router.generate_analysis(analyzed, symbol, higher_tf)
         trade = self.trade_manager.calculate_trade(analyzed, signal)
@@ -320,9 +369,7 @@ class TradingApplication:
 
         equity = self._account_equity()
         risk_multiplier = float(signal.get("risk_multiplier", 1.0))
-        requested_risk = (
-            equity * (RISK_PERCENT / 100.0) * risk_multiplier
-        )
+        requested_risk = equity * (RISK_PERCENT / 100.0) * risk_multiplier
 
         if self.execution.mode == "PAPER":
             instrument = get_instrument_spec(symbol)
@@ -336,8 +383,7 @@ class TradingApplication:
             )
             if requested_quantity <= 0:
                 logger.warning(
-                    "Paper position size rejected for %s "
-                    "(equity=%.2f requested_risk=%.2f)",
+                    "Paper position size rejected for %s (equity=%.2f requested_risk=%.2f)",
                     symbol,
                     equity,
                     requested_risk,
@@ -357,8 +403,7 @@ class TradingApplication:
                 equity=equity,
                 volatility_ratio=float(trade["atr"]) / current_price,
                 currency_exposures=self._currency_exposures(
-                    symbol,
-                    signal["signal"],
+                    symbol, signal["signal"]
                 ),
             ),
             self._risk_context(decision_time),
@@ -377,8 +422,7 @@ class TradingApplication:
         else:
             approved_quantity = requested_quantity
             logger.info(
-                "MT5 broker sizing approved for %s: risk_amount=%.2f "
-                "portfolio_action=%s",
+                "MT5 broker sizing approved for %s: risk_amount=%.2f portfolio_action=%s",
                 symbol,
                 assessment.approved_risk_amount,
                 assessment.action.value,
@@ -402,14 +446,30 @@ class TradingApplication:
             phase="DOWNLOADING_MARKET_DATA",
             trading_timeframe=TRADING_TIMEFRAME,
             higher_timeframe=HIGHER_TIMEFRAME,
+            market_data_provider=self.market.provider,
         )
         lower_frames = self.market.download_all_data(interval=TRADING_TIMEFRAME)
         higher_frames = self.market.download_all_data(interval=HIGHER_TIMEFRAME)
+        observed_at = datetime.now(timezone.utc)
+        self.latest_correlations = self._build_correlations(lower_frames, observed_at)
         prices = {}
+
+        expected = set(MT5_SYMBOL_MAP) if self.execution.mode == "MT5_DEMO" else set(lower_frames)
+        missing_lower = sorted(expected.difference(lower_frames))
+        missing_higher = sorted(expected.difference(higher_frames))
+        if self.execution.mode == "MT5_DEMO" and (missing_lower or missing_higher):
+            logger.error(
+                "Demo data health degraded; affected symbols will fail closed | lower=%s higher=%s",
+                missing_lower,
+                missing_higher,
+            )
 
         for symbol, data in lower_frames.items():
             if self.controller.status() != "RUNNING":
                 break
+            if self.execution.mode == "MT5_DEMO" and symbol not in higher_frames:
+                logger.error("Skipping %s: required higher-timeframe data unavailable", symbol)
+                continue
             try:
                 prices[symbol] = self._process_symbol(
                     symbol, data, higher_frames.get(symbol)
@@ -421,10 +481,7 @@ class TradingApplication:
             self.paper_trader.update_equity(prices)
         management = self.execution.manage_positions(self.latest_atr_by_symbol)
         if management.get("errors"):
-            logger.error(
-                "Position-management errors: %s",
-                management["errors"],
-            )
+            logger.error("Position-management errors: %s", management["errors"])
         now = datetime.now(timezone.utc)
         account = self.execution.account_snapshot()
         self.equity_history.append(EquityPoint(timestamp=now, equity=account.equity))
@@ -434,15 +491,9 @@ class TradingApplication:
             closed_trades = stats["total_trades"]
             closed_window = "all"
         else:
-            stats = {
-                "equity": account.equity,
-                "balance": account.balance,
-            }
+            stats = {"equity": account.equity, "balance": account.balance}
             closed_trades = len(
-                self.execution.closed_position_results(
-                    now - timedelta(days=7),
-                    now,
-                )
+                self.execution.closed_position_results(now - timedelta(days=7), now)
             )
             closed_window = "7d"
         write_runtime_state(
@@ -450,6 +501,11 @@ class TradingApplication:
             status=self.controller.status(),
             execution_mode=EXECUTION_MODE,
             phase="IDLE",
+            market_data_provider=self.market.provider,
+            market_data_healthy=not (missing_lower or missing_higher),
+            missing_lower_symbols=missing_lower,
+            missing_higher_symbols=missing_higher,
+            correlation_observations=len(self.latest_correlations),
             equity=stats["equity"],
             balance=stats["balance"],
             floating_pnl=(
@@ -477,6 +533,7 @@ class TradingApplication:
             "execution_mode": EXECUTION_MODE,
             "phase": "STARTING",
             "news_filter_enabled": NEWS_FILTER_ENABLED,
+            "market_data_provider": self.market.provider,
         }
         if self.execution.mode == "PAPER":
             stats = self.paper_trader.get_stats()
@@ -491,9 +548,7 @@ class TradingApplication:
                 win_rate=stats["win_rate"],
                 total_pnl=stats["total_pnl"],
             )
-        write_runtime_state(
-            **initial_state,
-        )
+        write_runtime_state(**initial_state)
         try:
             print(self.controller.start_bot())
             next_heartbeat = 0.0
