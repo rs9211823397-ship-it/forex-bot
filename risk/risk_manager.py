@@ -82,7 +82,7 @@ class RiskManager:
         *,
         stop_atr_multiplier: float = 1.5,
         minimum_risk_reward: float = 1.5,
-        maximum_risk_percent: float = 2.0,
+        maximum_risk_percent: float = RISK_PERCENT,
         maximum_daily_loss_percent: float = 5.0,
         maximum_open_trades: int = 5,
         maximum_consecutive_losses: int = 3,
