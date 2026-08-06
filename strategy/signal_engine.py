@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 
 from structure.market_structure import MarketStructure
 from price_action.candles import CandlePatterns
@@ -16,12 +17,20 @@ logger = logging.getLogger(__name__)
 class ProductionSignalPipeline(SignalPipeline):
     """Production policy with non-duplicated hard gates.
 
-    The causal contextual trigger is the production price-action gate. Legacy
-    candle and momentum confirmations remain part of score/trade-quality, but
-    are not independently required a second time after those stages have
-    already contributed to the decision. Structure, HTF direction, and the
-    causal contextual trigger remain fail-closed hard requirements.
+    Structure and higher-timeframe direction are hard safety gates. Momentum,
+    legacy candle confirmation, and contextual trigger evidence contribute to
+    ranking/quality without each receiving an independent veto.
+
+    Context remains fail-closed for wrong HTF/structure/location. The only
+    contextual case allowed to become soft evidence is a fully aligned setup in
+    a valid location where the *only* missing item is an exact contextual candle
+    trigger and the setup is already high-conviction by independent evidence.
+    This prevents a good trend setup being rejected twice for the same missing
+    micro-trigger while still refusing premium BUYs / discount SELLs.
     """
+
+    HIGH_CONVICTION_QUALITY = 65
+    HIGH_CONVICTION_SCORE_BUFFER = 10
 
     @staticmethod
     def _eligibility_failures(
@@ -53,6 +62,85 @@ class ProductionSignalPipeline(SignalPipeline):
             failures.append("Contextual trigger rejected setup")
 
         return tuple(failures)
+
+    def _final_decision(
+        self,
+        setup,
+        trigger,
+        momentum,
+        volume,
+        structure,
+        regime,
+        quality,
+        contextual_gate,
+        strict_direction=False,
+    ):
+        """Apply a narrowly-scoped soft-trigger policy for strong aligned setups."""
+
+        direction = setup.direction
+        directional_score = (
+            setup.trend_score
+            + momentum.score
+            + trigger.candle_score
+            + volume.score
+            + structure.score
+        )
+        required_score = self.BUY_THRESHOLD + self.HIGH_CONVICTION_SCORE_BUFFER
+
+        output = getattr(contextual_gate, "output", None)
+        reason_codes = set(getattr(output, "reason_codes", ()) or ())
+        missing_trigger_only = (
+            "NO_CONTEXTUAL_TRIGGER" in reason_codes
+            and "LOCATION_VALID" in reason_codes
+            and "HTF_ALIGNED" in reason_codes
+            and "STRUCTURE_ALIGNED" in reason_codes
+            and not {
+                "INVALID_LOCATION",
+                "HTF_DIRECTION_MISMATCH",
+                "STRUCTURE_DIRECTION_MISMATCH",
+                "SETUP_EXPIRED",
+                "SETUP_NOT_ACTIVE",
+            }.intersection(reason_codes)
+        )
+        high_conviction = (
+            direction in {"BUY", "SELL"}
+            and quality.approved
+            and quality.quality >= self.HIGH_CONVICTION_QUALITY
+            and abs(directional_score) >= required_score
+            and structure.allows(direction)
+            and regime.allows(direction)
+        )
+
+        effective_contextual_gate = contextual_gate
+        if (
+            contextual_gate.enabled
+            and not contextual_gate.approved
+            and contextual_gate.direction == direction
+            and missing_trigger_only
+            and high_conviction
+        ):
+            effective_contextual_gate = replace(
+                contextual_gate,
+                enabled=False,
+                approved=True,
+                reasons=contextual_gate.reasons
+                + (
+                    "Contextual trigger is soft evidence: high-conviction setup "
+                    "already has aligned HTF, structure, and valid location",
+                ),
+            )
+
+        return super()._final_decision(
+            setup=setup,
+            trigger=trigger,
+            momentum=momentum,
+            volume=volume,
+            structure=structure,
+            regime=regime,
+            quality=quality,
+            contextual_gate=effective_contextual_gate,
+            strict_direction=strict_direction,
+        )
 
 
 class SignalEngine:
