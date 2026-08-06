@@ -19,6 +19,11 @@ from config.settings import (
     BOT_INTERVAL_SECONDS,
     EXECUTION_MODE,
     HIGHER_TIMEFRAME,
+    MAX_CONSECUTIVE_LOSSES,
+    MAX_DAILY_LOSS_PERCENT,
+    MAX_EQUITY_DRAWDOWN_PERCENT,
+    MAX_PORTFOLIO_RISK_PERCENT,
+    MAX_WEEKLY_LOSS_PERCENT,
     MT5_MAX_OPEN_POSITIONS,
     MT5_SYMBOL_MAP,
     NEWS_BLOCKED_IMPACTS,
@@ -44,19 +49,11 @@ from logs.logger import TradeLogger
 from paper.paper_trader import PaperTrader
 from risk.news_calendar import build_news_provider
 from risk.portfolio import CorrelationObservation, CurrencyExposure, OpenRiskPosition
-from risk.protection import (
-    ClosedTradeOutcome,
-    EquityPoint,
-    PortfolioRiskManager,
-    ProtectionConfig,
-    RiskContext,
-    TradeRiskRequest,
-)
+from risk.protection import ClosedTradeOutcome, EquityPoint, PortfolioRiskManager, ProtectionConfig, RiskContext, TradeRiskRequest
 from risk.risk_manager import RiskManager
 from runtime_state import engine_instance_lock, write_runtime_state
 from strategy.signal_engine import SignalEngine
 from strategy.regime_router import RegimeStrategyRouter
-
 
 logger = logging.getLogger(__name__)
 
@@ -70,25 +67,18 @@ class TradingApplication:
         self.control_commands = ControlCommandStore(command_root)
         self.market = MarketData()
         self.indicators = TechnicalIndicators()
-        self.signal_engine = SignalEngine.production(
-            higher_timeframe=HIGHER_TIMEFRAME,
-            lower_timeframe=TRADING_TIMEFRAME,
-        )
-        self.strategy_router = RegimeStrategyRouter(
-            self.signal_engine,
-            higher_timeframe=HIGHER_TIMEFRAME,
-            lower_timeframe=TRADING_TIMEFRAME,
-        )
+        self.signal_engine = SignalEngine.production(higher_timeframe=HIGHER_TIMEFRAME, lower_timeframe=TRADING_TIMEFRAME)
+        self.strategy_router = RegimeStrategyRouter(self.signal_engine, higher_timeframe=HIGHER_TIMEFRAME, lower_timeframe=TRADING_TIMEFRAME)
         self.trade_manager = TradeManager()
         self.risk_manager = RiskManager()
         self.portfolio_risk = PortfolioRiskManager(
             ProtectionConfig(
-                max_daily_loss_percent=2.0,
-                max_weekly_loss_percent=5.0,
-                max_equity_drawdown_percent=10.0,
-                max_consecutive_losses=3,
+                max_daily_loss_percent=MAX_DAILY_LOSS_PERCENT,
+                max_weekly_loss_percent=MAX_WEEKLY_LOSS_PERCENT,
+                max_equity_drawdown_percent=MAX_EQUITY_DRAWDOWN_PERCENT,
+                max_consecutive_losses=MAX_CONSECUTIVE_LOSSES,
                 max_open_trades=MT5_MAX_OPEN_POSITIONS,
-                max_portfolio_risk_percent=3.0,
+                max_portfolio_risk_percent=MAX_PORTFOLIO_RISK_PERCENT,
                 max_abs_correlation=PORTFOLIO_MAX_ABS_CORRELATION,
                 max_correlated_risk_percent=PORTFOLIO_MAX_CORRELATED_RISK_PERCENT,
                 news_filter_enabled=NEWS_FILTER_ENABLED,
@@ -113,11 +103,7 @@ class TradingApplication:
         self.latest_atr_by_symbol: dict[str, float] = {}
         self.latest_correlations: tuple[CorrelationObservation, ...] = ()
         self.loop = BotLoop(interval=BOT_INTERVAL_SECONDS)
-        self.controller = BotController.configured(
-            bot_loop=self.loop,
-            execution_router=self.execution,
-            callback=self.run_cycle,
-        )
+        self.controller = BotController.configured(bot_loop=self.loop, execution_router=self.execution, callback=self.run_cycle)
 
     def _handle_control_request(self, request: ControlRequest) -> str:
         if request.account_id != self.account_id:
@@ -129,8 +115,7 @@ class TradingApplication:
         elif request.action is ControlAction.STOP_ENGINE:
             result = self.controller.stop_bot()
         elif request.action is ControlAction.EMERGENCY_CLOSE:
-            closed = self.controller.emergency_stop()
-            result = f"EMERGENCY STOP COMPLETED; CLOSED {len(closed)} POSITIONS"
+            closed = self.controller.emergency_stop(); result = f"EMERGENCY STOP COMPLETED; CLOSED {len(closed)} POSITIONS"
         else:
             raise ValueError(f"Unsupported control action: {request.action}")
         write_runtime_state(account_id=self.account_id, status=self.controller.status(), phase=f"CONTROL_{request.action.value}", last_control_request=request.request_id)
@@ -143,8 +128,7 @@ class TradingApplication:
 
     @staticmethod
     def _parse_time(value: object, fallback: datetime) -> datetime:
-        if isinstance(value, datetime):
-            parsed = value
+        if isinstance(value, datetime): parsed = value
         elif isinstance(value, (int, float)):
             try: parsed = datetime.fromtimestamp(float(value), timezone.utc)
             except (OverflowError, OSError, ValueError): return fallback
@@ -156,10 +140,8 @@ class TradingApplication:
 
     @staticmethod
     def _currency_exposures(source_symbol: str, direction: str) -> tuple[CurrencyExposure, ...]:
-        try:
-            definition = symbol_by_data(source_symbol); base, quote = definition.base_asset, definition.quote_asset
-        except KeyError:
-            return ()
+        try: definition = symbol_by_data(source_symbol); base, quote = definition.base_asset, definition.quote_asset
+        except KeyError: return ()
         if base == quote: return ()
         base_direction = 1 if direction == "BUY" else -1
         return (CurrencyExposure(base, base_direction), CurrencyExposure(quote, -base_direction))
@@ -212,7 +194,7 @@ class TradingApplication:
         return RiskContext(open_positions=tuple(positions), closed_trades=tuple(closed), equity_history=tuple(self.equity_history), correlations=self.latest_correlations, news_provider=self.news_provider)
 
     def _mt5_risk_context(self, decision_time: datetime) -> RiskContext:
-        equity = self._account_equity(); positions = []
+        positions = []
         for position in self.execution.positions():
             source_symbol = self._source_symbol(position.symbol); direction = self.execution.position_side(position)
             positions.append(OpenRiskPosition(symbol=source_symbol, direction=direction, opened_at=self._parse_time(getattr(position, "time", None), decision_time), risk_amount=self.execution.remaining_loss_at_stop(position), quantity=float(getattr(position, "volume", 0.0)), strategy="aaqts", currency_exposures=self._currency_exposures(source_symbol, direction)))
@@ -227,8 +209,7 @@ class TradingApplication:
         analyzed = self.indicators.add_indicators(data)
         signal = self.strategy_router.generate_analysis(analyzed, symbol, higher_tf)
         trade = self.trade_manager.calculate_trade(analyzed, signal)
-        current_price = float(trade["current_price"])
-        self.latest_atr_by_symbol[symbol] = float(trade["atr"])
+        current_price = float(trade["current_price"]); self.latest_atr_by_symbol[symbol] = float(trade["atr"])
         self.trade_logger.log_signal(symbol, signal["signal"], signal["confidence"])
         if self.execution.mode == "PAPER": self.paper_trader.check_trade(symbol, current_price)
         if signal["signal"] not in {"BUY", "SELL"}: return current_price
@@ -245,21 +226,16 @@ class TradingApplication:
         assessment = self.portfolio_risk.assess(TradeRiskRequest(decision_time=decision_time, symbol=symbol, direction=signal["signal"], requested_quantity=requested_quantity, risk_amount=requested_risk, equity=equity, volatility_ratio=float(trade["atr"]) / current_price, currency_exposures=self._currency_exposures(symbol, signal["signal"])), self._risk_context(decision_time))
         if not assessment.allowed:
             logger.warning("Portfolio risk blocked %s: %s", symbol, ", ".join(assessment.reason_codes)); return current_price
-        if self.execution.mode == "PAPER":
-            approved_quantity = assessment.approved_quantity; self.trade_logger.log_trade(symbol, risk_plan, approved_quantity)
-        else:
-            approved_quantity = requested_quantity; logger.info("MT5 broker sizing approved for %s: risk_amount=%.2f portfolio_action=%s", symbol, assessment.approved_risk_amount, assessment.action.value)
+        if self.execution.mode == "PAPER": approved_quantity = assessment.approved_quantity; self.trade_logger.log_trade(symbol, risk_plan, approved_quantity)
+        else: approved_quantity = requested_quantity; logger.info("MT5 broker sizing approved for %s: risk_amount=%.2f portfolio_action=%s", symbol, assessment.approved_risk_amount, assessment.action.value)
         result = self.execution.execute(source_symbol=symbol, signal=signal["signal"], risk_plan=risk_plan, paper_position_size=approved_quantity, approved_risk_amount=assessment.approved_risk_amount)
         logger.info("Execution result for %s: %r", symbol, result)
         return current_price
 
     def run_cycle(self) -> None:
-        # Per-cycle analytical state must never leak across a failed data cycle.
-        # In particular, stale ATR values must not be reused for trailing logic.
         self.latest_atr_by_symbol = {}
         write_runtime_state(account_id=self.account_id, status=self.controller.status(), execution_mode=EXECUTION_MODE, phase="DOWNLOADING_MARKET_DATA", trading_timeframe=TRADING_TIMEFRAME, higher_timeframe=HIGHER_TIMEFRAME, market_data_provider=self.market.provider)
-        lower_frames = self.market.download_all_data(interval=TRADING_TIMEFRAME)
-        higher_frames = self.market.download_all_data(interval=HIGHER_TIMEFRAME)
+        lower_frames = self.market.download_all_data(interval=TRADING_TIMEFRAME); higher_frames = self.market.download_all_data(interval=HIGHER_TIMEFRAME)
         observed_at = datetime.now(timezone.utc); self.latest_correlations = self._build_correlations(lower_frames, observed_at); prices = {}
         expected = set(MT5_SYMBOL_MAP) if self.execution.mode == "MT5_DEMO" else set(lower_frames)
         missing_lower = sorted(expected.difference(lower_frames)); missing_higher = sorted(expected.difference(higher_frames))
@@ -274,10 +250,8 @@ class TradingApplication:
         management = self.execution.manage_positions(self.latest_atr_by_symbol)
         if management.get("errors"): logger.error("Position-management errors: %s", management["errors"])
         now = datetime.now(timezone.utc); account = self.execution.account_snapshot(); self.equity_history.append(EquityPoint(timestamp=now, equity=account.equity)); self.equity_history = self.equity_history[-10_000:]
-        if self.execution.mode == "PAPER":
-            stats = self.paper_trader.get_stats(); closed_trades = stats["total_trades"]; closed_window = "all"
-        else:
-            stats = {"equity": account.equity, "balance": account.balance}; closed_trades = len(self.execution.closed_position_results(now - timedelta(days=7), now)); closed_window = "7d"
+        if self.execution.mode == "PAPER": stats = self.paper_trader.get_stats(); closed_trades = stats["total_trades"]; closed_window = "all"
+        else: stats = {"equity": account.equity, "balance": account.balance}; closed_trades = len(self.execution.closed_position_results(now - timedelta(days=7), now)); closed_window = "7d"
         write_runtime_state(account_id=self.account_id, status=self.controller.status(), execution_mode=EXECUTION_MODE, phase="IDLE", market_data_provider=self.market.provider, market_data_healthy=not (missing_lower or missing_higher), missing_lower_symbols=missing_lower, missing_higher_symbols=missing_higher, correlation_observations=len(self.latest_correlations), equity=stats["equity"], balance=stats["balance"], floating_pnl=(stats["floating_pnl"] if self.execution.mode == "PAPER" else account.equity - account.balance), open_positions=len(self.execution.positions()), closed_trades=closed_trades, closed_trades_window=closed_window, starting_balance=stats.get("starting_balance", stats["balance"]), wins=stats.get("wins", 0), losses=stats.get("losses", 0))
 
 
@@ -287,14 +261,9 @@ def main() -> None:
     with engine_instance_lock(app.account_id):
         try:
             app.controller.start_bot()
-            while app.controller.status() != "STOPPED":
-                app._process_control_commands()
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            logger.info("AAQTS shutdown requested")
-        finally:
-            app.controller.stop_bot()
+            while app.controller.status() != "STOPPED": app._process_control_commands(); time.sleep(0.5)
+        except KeyboardInterrupt: logger.info("AAQTS shutdown requested")
+        finally: app.controller.stop_bot()
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
