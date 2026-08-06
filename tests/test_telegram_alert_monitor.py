@@ -1,3 +1,6 @@
+import json
+from datetime import datetime, timezone
+
 from telegram_bot import alert_monitor
 from telegram_bot.alert_monitor import PositionSnapshot
 
@@ -77,3 +80,60 @@ def test_daily_summary_format():
     assert "66.7%" in text
     assert "+$75.00" in text
     assert "Open positions: 1" in text
+
+
+def test_paper_alerts_read_open_close_and_daily_performance(tmp_path):
+    opened_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    closed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    open_trade = {
+        "symbol": "EURUSD=X",
+        "signal": "BUY",
+        "entry": 1.1,
+        "stop_loss": 1.09,
+        "take_profit": 1.12,
+        "position": 0.01,
+        "status": "OPEN",
+        "pnl": 0.0,
+        "opened_at": opened_at,
+    }
+    closed_trade = {
+        **open_trade,
+        "status": "TAKE PROFIT",
+        "exit": 1.12,
+        "pnl": 2.5,
+        "closed_at": closed_at,
+    }
+    (tmp_path / "trades.json").write_text(
+        json.dumps(
+            {
+                "starting_balance": 100.0,
+                "balance": 102.5,
+                "open_trades": [open_trade],
+                "closed_trades": [closed_trade],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_path = tmp_path / "status.json"
+    runtime_path.write_text(
+        json.dumps({"balance": 102.5, "equity": 103.0, "floating_pnl": 0.5}),
+        encoding="utf-8",
+    )
+
+    positions = alert_monitor.read_paper_positions(tmp_path)
+    assert len(positions) == 1
+    position = next(iter(positions.values()))
+    assert position.symbol == "EURUSD=X"
+    assert position.comment == "AAQTS PAPER"
+
+    details = alert_monitor.paper_closed_position_details(tmp_path, position)
+    assert details["reason"] == "TAKE PROFIT"
+    assert details["profit"] == 2.5
+
+    summary = alert_monitor.paper_daily_summary_snapshot(tmp_path, runtime_path)
+    assert summary["trades"] == 1
+    assert summary["wins"] == 1
+    assert summary["net_pnl"] == 2.5
+    assert summary["balance"] == 102.5
+    assert summary["equity"] == 103.0
+    assert summary["floating_pnl"] == 0.5

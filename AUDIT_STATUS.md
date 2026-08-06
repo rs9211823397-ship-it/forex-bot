@@ -27,16 +27,23 @@ divergent `strategy-investigation` branch.
 | Hygiene | Removed tracked logs, runtime account/trade JSON, backups, phone copies, output artifacts, and bytecode caches. |
 | Automation | Added GitHub Actions for install, compile, security, preflight, tests, and an offline deterministic backtest smoke test. |
 | Documentation | Added safe no-admin Windows commands, configuration template, architecture contracts, and release validation steps. |
+| Regime routing | Added causal trend/range/breakout strategy routing with strict confirmation, HTF conflict gates, reduced risk, and fail-closed volatility handling. |
+| Position lifecycle | Completed the MT5 executor contract for quotes, break-even, trailing stops, partial closes, and wired recovery/management into the application cycle. Demo risk now reads broker equity, positions, stop exposure, and realized exits rather than the paper ledger. |
+| News protection | Added an optional strict local UTC calendar, currency exposure mapping, preflight validation, and fail-closed runtime behavior. |
+| Symbol catalog | Added the requested Forex, metals, and crypto catalog, corrected Yahoo-to-MT5 major mappings, and blocked broker close-only or unsupported new entries. |
+| Telegram parent console | Added role-protected inline menus, account pagination, portfolio views, account setup wizard, alerts, audit, settings, scoped safety controls, expiring confirmations, and TOTP for stop/emergency actions. |
+| Multi-account runtime | Added a non-secret MT4/MT5/Exness registry, environment-only credentials, direct MT5 account validation, MT4 bridge contract, isolated worker supervisor, per-account paper state, and durable command queues consumed by the real engine workers. |
+| Single-account default | Simplified Telegram to one selected account by default, hid portfolio/account-switching controls, capped new registration at one, and made ambiguous legacy registries fail closed unless `AAQTS_PRIMARY_ACCOUNT_ID` is set. Multi-account internals remain an explicit opt-in. |
 
 ## Validation evidence
 
 - Python compile: passed.
 - Security and tracked-artifact check: passed.
 - Preflight in safe `PAPER` mode: passed.
-- Test suite: **291 passed, 2 subtests passed**.
+- Test suite: **339 passed, 2 subtests passed**.
 - Deterministic backtest smoke: completed one next-bar trade after explicitly
   reporting that its fallback execution signal was used; ending equity
-  `1014.3363`, average R `1.4341`, max drawdown `0.4794%` for that synthetic
+  `1007.1682`, average R `1.4341`, max drawdown `0.2408%` for that synthetic
   smoke sample. This validates mechanics only, not profitability.
 - Diff whitespace check: passed.
 
@@ -47,13 +54,13 @@ divergent `strategy-investigation` branch.
    clones/history.
 2. Put the replacement token only in local `.env`, then test the Telegram bot
    on an approved runtime machine.
-3. If MetaTrader 5 is already approved and installed, configure a demo account
-   and complete a multi-session demo soak test covering restart recovery,
+3. On an approved Windows host or VPS, configure the selected demo account and
+   complete a multi-session demo soak test covering restart recovery,
    disconnections, duplicate orders, spreads, SL/TP, and emergency stop.
 4. Run walk-forward, out-of-sample research on versioned real data across
    symbols and market regimes before changing any risk settings.
-5. Review and merge the recovery pull request. Keep `MT5_LIVE` locked until a
-   separate, evidence-backed live-release decision is made.
+5. Review and merge the strengthening pull request. Keep `MT5_LIVE` locked
+   until a separate, evidence-backed live-release decision is made.
 
 No code change can honestly guarantee trading profit. The repository is now
 structured to measure expectancy and drawdown causally and to fail closed when

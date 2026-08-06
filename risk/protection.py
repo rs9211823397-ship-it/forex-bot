@@ -226,12 +226,17 @@ class ProtectionConfig:
     minimum_volatility_ratio: float | None = None
     maximum_volatility_ratio: float | None = None
     news_filter_enabled: bool = False
+    fail_closed_on_news_error: bool = False
     blocked_news_impacts: tuple[str, ...] = ("HIGH",)
     news_pre_event_buffer: timedelta = timedelta(minutes=30)
     news_post_event_buffer: timedelta = timedelta(minutes=15)
     reduce_size_when_possible: bool = True
 
     def __post_init__(self) -> None:
+        if not isinstance(self.news_filter_enabled, bool):
+            raise TypeError("news_filter_enabled must be a boolean")
+        if not isinstance(self.fail_closed_on_news_error, bool):
+            raise TypeError("fail_closed_on_news_error must be a boolean")
         percent_fields = (
             "max_daily_loss_percent",
             "max_weekly_loss_percent",
@@ -747,7 +752,10 @@ class PortfolioRiskManager:
         if not self.config.news_filter_enabled:
             return
         if provider is None:
-            warnings.append("NEWS_PROVIDER_UNAVAILABLE")
+            if self.config.fail_closed_on_news_error:
+                blocking.append("NEWS_PROVIDER_UNAVAILABLE")
+            else:
+                warnings.append("NEWS_PROVIDER_UNAVAILABLE")
             return
 
         start = (
@@ -794,7 +802,10 @@ class PortfolioRiskManager:
                 blocking.append("NEWS_EVENT_WINDOW")
                 return
         except Exception:
-            warnings.append("NEWS_PROVIDER_ERROR")
+            if self.config.fail_closed_on_news_error:
+                blocking.append("NEWS_PROVIDER_ERROR")
+            else:
+                warnings.append("NEWS_PROVIDER_ERROR")
 
 
 # Compatibility-oriented name for callers that prefer a generic label.

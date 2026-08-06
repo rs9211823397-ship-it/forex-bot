@@ -16,12 +16,21 @@ class ZoneState:
     location: str
 
     def valid_for_direction(self, direction):
+        """Return whether price is on the correct side of equilibrium.
+
+        The 38.2%-61.8% bands remain useful location labels, but they must not
+        become a second, ultra-narrow hard gate. A BUY is contextually located
+        anywhere in discount (including the preferred bullish pullback band),
+        while a SELL is located anywhere in premium (including the preferred
+        bearish pullback band). Equilibrium and unavailable/crossed ranges fail
+        closed.
+        """
         return (
             direction == "BUY"
-            and self.location == "BULLISH_PULLBACK"
+            and self.location in {"DISCOUNT", "BULLISH_PULLBACK"}
         ) or (
             direction == "SELL"
-            and self.location == "BEARISH_PULLBACK"
+            and self.location in {"PREMIUM", "BEARISH_PULLBACK"}
         )
 
     def to_dict(self):
@@ -51,6 +60,16 @@ def unavailable_zones():
 
 
 def calculate_zones(protected_high, protected_low, price):
+    """Return a valid dealing-range zone state when one can be established.
+
+    Protected swing high/low events are confirmed independently. During a
+    structure transition the most recently confirmed high can temporarily be
+    at or below the most recently confirmed low. That pair does not define a
+    valid dealing range, but it is also not a malformed market-data condition.
+    Treat it as an unavailable contextual zone so the strategy can fail closed
+    for that contextual gate without crashing the entire symbol cycle.
+    """
+
     if protected_high is None or protected_low is None:
         return unavailable_zones()
 
@@ -62,9 +81,7 @@ def calculate_zones(protected_high, protected_low, price):
         raise ValueError("Zone inputs must be finite")
 
     if high <= low:
-        raise ValueError(
-            "Protected swing high must be above protected swing low"
-        )
+        return unavailable_zones()
 
     price_range = high - low
     equilibrium = low + (price_range * 0.5)

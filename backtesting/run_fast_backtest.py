@@ -10,6 +10,7 @@ from backtesting.performance import PerformanceReport
 from config.instruments import get_instrument_spec
 from indicators.technical import TechnicalIndicators
 from strategy.signal_engine import SignalEngine
+from strategy.regime_router import RegimeStrategyRouter
 
 
 SYMBOL = "ETH-USD"
@@ -64,18 +65,23 @@ def run() -> dict:
         higher_timeframe=HIGHER_TIMEFRAME,
         lower_timeframe=LOWER_TIMEFRAME,
     )
+    router = RegimeStrategyRouter(
+        engine,
+        higher_timeframe=HIGHER_TIMEFRAME,
+        lower_timeframe=LOWER_TIMEFRAME,
+    )
     signals = []
 
     for index in range(len(data)):
         if index < 100:
-            signals.append("HOLD")
+            signals.append({"signal": "HOLD", "risk_multiplier": 0.0})
             continue
         window = data.iloc[max(0, index - 250):index + 1]
-        result = engine.generate_signal(window, SYMBOL, higher)
-        signals.append(result["signal"])
+        result = router.generate_signal(window, SYMBOL, higher)
+        signals.append(result)
 
     directional_signals = sum(
-        signal in {"BUY", "SELL"} for signal in signals
+        signal.get("signal") in {"BUY", "SELL"} for signal in signals
     )
     smoke_fallback_used = directional_signals == 0
     execution_signals = list(signals)
@@ -83,7 +89,12 @@ def run() -> dict:
         # The strategy is intentionally selective. Exercise next-bar fills and
         # cost accounting even when this synthetic sample has no qualified
         # setup; this is a release smoke test, not a profitability claim.
-        execution_signals[100] = "BUY"
+        execution_signals[100] = {
+            "signal": "BUY",
+            "risk_multiplier": 0.5,
+            "strategy": "SMOKE_FALLBACK",
+            "regime": "SYNTHETIC",
+        }
 
     backtest = BacktestEngine(
         data,

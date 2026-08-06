@@ -63,6 +63,24 @@ The manager supports:
 It deliberately does not share mutable controllers, journals, positions, or
 configuration files between accounts.
 
+The Telegram-facing `AccountRegistry` adds public MT4/MT5/Exness metadata,
+stable compact callback identifiers, account groups, and atomic persistence.
+Passwords and bridge tokens are resolved only from per-account environment
+variables. `account_supervisor.py` launches isolated paper and MT5-demo worker
+processes and rejects duplicate MT5 terminal paths. Registered live accounts
+remain read-only and are never launched.
+
+The application-facing default is `AAQTS_SINGLE_ACCOUNT_MODE=true`. Telegram
+and `account_supervisor.py` select exactly one registry record, or the explicit
+`AAQTS_PRIMARY_ACCOUNT_ID` when a legacy registry contains several. Ambiguous
+selection returns no runnable account. Setting the mode to `false` restores the
+underlying multi-account behavior without migrating or deleting registry data.
+
+`ControlCommandStore` is a per-account atomic command spool between the
+Telegram process and each real worker. Pause, resume, stop, and emergency
+requests are therefore not fake Telegram-process controller calls. Every
+worker claims only its own queue and records completion or failure.
+
 ## Safety controls
 
 `EmergencyStopStore` persists kill-switch state with atomic file replacement.
@@ -73,9 +91,10 @@ file fails closed and reports `EMERGENCY_STOP_STATE_INVALID`.
 gross exposure. It only returns `ALLOW` or `BLOCK`; it never creates a trade,
 changes direction, or silently resizes an order.
 
-These controls are not yet wired into `main.py`. A future deployment
-composition root must invoke them after portfolio approval and immediately
-before broker submission.
+The worker command spool is wired into `main.py` for pause, resume, stop, and
+AAQTS-managed emergency closure. Parent exposure ceilings and per-account risk
+profile editing still require a later production composition that enforces the
+resolved profile immediately before every broker submission.
 
 ## Configuration
 

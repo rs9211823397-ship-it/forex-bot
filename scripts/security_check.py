@@ -7,7 +7,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 TELEGRAM_TOKEN = re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b")
 RUNTIME_PATTERNS = (
@@ -21,9 +20,9 @@ RUNTIME_PATTERNS = (
 )
 
 
-def tracked_files() -> list[str]:
+def candidate_files() -> list[str]:
     result = subprocess.run(
-        ["git", "ls-files"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -34,13 +33,19 @@ def tracked_files() -> list[str]:
 
 def main() -> None:
     failures = []
-    for relative in tracked_files():
+    for relative in candidate_files():
         lowered = relative.lower()
         if any(pattern in lowered for pattern in RUNTIME_PATTERNS):
             failures.append(f"tracked runtime/backup artifact: {relative}")
         path = ROOT / relative
         if not path.is_file() or path.suffix.lower() not in {
-            ".py", ".md", ".txt", ".json", ".yml", ".yaml", ".env"
+            ".py",
+            ".md",
+            ".txt",
+            ".json",
+            ".yml",
+            ".yaml",
+            ".env",
         }:
             continue
         try:

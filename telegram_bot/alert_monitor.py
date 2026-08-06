@@ -8,13 +8,14 @@ persisted locally so alerts survive bot restarts.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from config.settings import MT5_TERMINAL_PATH
 from execution.mt5_executor import AAQTS_MAGIC
@@ -122,6 +123,140 @@ def read_positions() -> dict[int, PositionSnapshot]:
         return positions
     finally:
         mt5.shutdown()
+
+
+def _paper_ledger(state_dir: str | Path) -> dict[str, Any]:
+    path = Path(state_dir) / "trades.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Paper trade ledger is unreadable") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Paper trade ledger is invalid")
+    return payload
+
+
+def _paper_ticket(trade: dict[str, Any]) -> int:
+    identity = {
+        key: trade.get(key)
+        for key in (
+            "opened_at",
+            "symbol",
+            "signal",
+            "entry",
+            "stop_loss",
+            "take_profit",
+            "position",
+        )
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "big")
+
+
+def _paper_time(value: Any) -> int:
+    try:
+        timestamp = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return 0
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return int(timestamp.timestamp())
+
+
+def read_paper_positions(state_dir: str | Path) -> dict[int, PositionSnapshot]:
+    """Read open positions from one isolated PAPER account ledger."""
+
+    positions = {}
+    for trade in _paper_ledger(state_dir).get("open_trades", []):
+        if not isinstance(trade, dict) or trade.get("status") != "OPEN":
+            continue
+        ticket = _paper_ticket(trade)
+        positions[ticket] = PositionSnapshot(
+            ticket=ticket,
+            symbol=str(trade.get("symbol", "Unknown")),
+            side=str(trade.get("signal", "UNKNOWN")).upper(),
+            volume=float(trade.get("position", 0.0)),
+            entry=float(trade.get("entry", 0.0)),
+            current=float(trade.get("entry", 0.0)),
+            stop_loss=float(trade.get("stop_loss", 0.0)),
+            take_profit=float(trade.get("take_profit", 0.0)),
+            profit=float(trade.get("pnl", 0.0)),
+            opened_at=_paper_time(trade.get("opened_at")),
+            comment="AAQTS PAPER",
+        )
+    return positions
+
+
+def paper_closed_position_details(
+    state_dir: str | Path,
+    position: PositionSnapshot,
+) -> dict[str, Any]:
+    """Resolve one disappeared PAPER position from the persisted ledger."""
+
+    for trade in _paper_ledger(state_dir).get("closed_trades", []):
+        if isinstance(trade, dict) and _paper_ticket(trade) == position.ticket:
+            return {
+                "exit": float(trade.get("exit", position.current)),
+                "profit": float(trade.get("pnl", position.profit)),
+                "reason": str(trade.get("status", "CLOSED")),
+                "closed_at": _paper_time(trade.get("closed_at")),
+            }
+    return {
+        "exit": position.current,
+        "profit": position.profit,
+        "reason": "CLOSED",
+        "closed_at": int(datetime.now(timezone.utc).timestamp()),
+    }
+
+
+def paper_daily_summary_snapshot(
+    state_dir: str | Path,
+    runtime_state_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build today's PAPER performance summary without touching MT5."""
+
+    ledger = _paper_ledger(state_dir)
+    today = datetime.now(timezone.utc).date()
+    trades = [
+        trade
+        for trade in ledger.get("closed_trades", [])
+        if isinstance(trade, dict)
+        and datetime.fromtimestamp(
+            _paper_time(trade.get("closed_at")), tz=timezone.utc
+        ).date()
+        == today
+    ]
+    pnls = [float(trade.get("pnl", 0.0)) for trade in trades]
+    wins = sum(1 for pnl in pnls if pnl > 0)
+    losses = sum(1 for pnl in pnls if pnl < 0)
+    runtime = {}
+    if runtime_state_path is not None:
+        try:
+            runtime = json.loads(Path(runtime_state_path).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            runtime = {}
+    if not isinstance(runtime, dict):
+        runtime = {}
+    balance = float(runtime.get("balance", ledger.get("balance", 0.0)))
+    equity = float(runtime.get("equity", balance))
+    floating = float(runtime.get("floating_pnl", equity - balance))
+    return {
+        "trades": len(pnls),
+        "wins": wins,
+        "losses": losses,
+        "win_rate": (wins / len(pnls) * 100.0) if pnls else 0.0,
+        "net_pnl": sum(pnls),
+        "best": max(pnls, default=0.0),
+        "worst": min(pnls, default=0.0),
+        "open_positions": len(ledger.get("open_trades", [])),
+        "floating_pnl": floating,
+        "balance": balance,
+        "equity": equity,
+    }
 
 
 def _deal_reason(mt5: Any, deal: Any) -> str:
@@ -279,8 +414,20 @@ def format_daily_summary(snapshot: dict[str, Any]) -> str:
 
 
 class TradeAlertMonitor:
-    def __init__(self, bot: Any):
+    def __init__(
+        self,
+        bot: Any,
+        *,
+        read_positions_fn: Callable[[], dict[int, PositionSnapshot]] = read_positions,
+        closed_position_details_fn: Callable[
+            [PositionSnapshot], dict[str, Any]
+        ] = closed_position_details,
+        daily_summary_snapshot_fn: Callable[[], dict[str, Any]] = daily_summary_snapshot,
+    ):
         self.bot = bot
+        self._read_positions = read_positions_fn
+        self._closed_position_details = closed_position_details_fn
+        self._daily_summary_snapshot = daily_summary_snapshot_fn
         self._positions: dict[int, PositionSnapshot] | None = None
         self._last_summary_date: str | None = None
         self._stopping = False
@@ -299,7 +446,7 @@ class TradeAlertMonitor:
         logger.info("AAQTS trade alert monitor started; polling every %ss", POLL_SECONDS)
         while not self._stopping:
             try:
-                current = await asyncio.to_thread(read_positions)
+                current = await asyncio.to_thread(self._read_positions)
                 if self._positions is None:
                     # Baseline existing positions without replaying old open alerts.
                     self._positions = current
@@ -310,14 +457,16 @@ class TradeAlertMonitor:
                         await self._broadcast(format_open_alert(current[ticket]))
                     for ticket in sorted(closed_tickets):
                         old_position = self._positions[ticket]
-                        details = await asyncio.to_thread(closed_position_details, old_position)
+                        details = await asyncio.to_thread(
+                            self._closed_position_details, old_position
+                        )
                         await self._broadcast(format_close_alert(old_position, details))
                     self._positions = current
 
                 now = datetime.now(timezone.utc)
                 today = now.date().isoformat()
                 if now.hour >= DAILY_SUMMARY_HOUR_UTC and self._last_summary_date != today:
-                    snapshot = await asyncio.to_thread(daily_summary_snapshot)
+                    snapshot = await asyncio.to_thread(self._daily_summary_snapshot)
                     await self._broadcast(format_daily_summary(snapshot))
                     self._last_summary_date = today
             except asyncio.CancelledError:
