@@ -8,7 +8,8 @@ release gate exists.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from config.settings import (
@@ -38,6 +39,21 @@ from execution.position_manager import PositionManager
 
 logger = logging.getLogger(__name__)
 VALID_MODES = {"PAPER", "MT5_DEMO", "MT5_LIVE"}
+
+
+def _stop_loss_cooldown_minutes() -> int:
+    raw = os.getenv("AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES", "60").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            "AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES must be an integer"
+        ) from exc
+    if value < 0 or value > 1440:
+        raise ValueError(
+            "AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES must be between 0 and 1440"
+        )
+    return value
 
 
 def _position_management_symbol_map() -> dict[str, str]:
@@ -145,6 +161,43 @@ class ExecutionRouter:
                 f"> {MT5_MAX_SPREAD_STOP_RATIO:.3f}"
             )
 
+    def _enforce_stop_loss_cooldown(self, source_symbol: str, side: str) -> None:
+        """Block churn after an AAQTS-managed stop loss on the same symbol.
+
+        The guard uses broker history rather than in-memory state, so it survives
+        restarts and also sees stops that were filled while the process was
+        between scan cycles. A 60-minute default equals four completed 15-minute
+        bars, forcing the strategy to observe genuinely fresh market structure
+        before it can re-enter that symbol. Set the environment value to 0 only
+        for controlled research/tests.
+        """
+        if self.mode != "MT5_DEMO" or self.trade_audit is None:
+            return
+        cooldown_minutes = _stop_loss_cooldown_minutes()
+        if cooldown_minutes <= 0:
+            return
+        broker_symbol = str(MT5_SYMBOL_MAP.get(source_symbol, "")).strip().upper()
+        if not broker_symbol:
+            return
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(minutes=cooldown_minutes)
+        recent = self.trade_audit.managed_closed_deals(start, end)
+        stop_losses = [
+            item
+            for item in recent
+            if str(getattr(item, "symbol", "")).strip().upper() == broker_symbol
+            and str(getattr(item, "exit_reason", "")).strip().upper() == "STOP_LOSS"
+        ]
+        if not stop_losses:
+            return
+        latest = max(stop_losses, key=lambda item: item.closed_at)
+        elapsed = max(0.0, (end - latest.closed_at).total_seconds() / 60.0)
+        remaining = max(0.0, cooldown_minutes - elapsed)
+        raise ExecutionError(
+            f"Stop-loss cooldown active for {source_symbol}: blocked {side} re-entry; "
+            f"last AAQTS stop was {elapsed:.1f}m ago, {remaining:.1f}m remaining"
+        )
+
     def execute(self, source_symbol: str, signal: str, risk_plan: dict[str, float], paper_position_size: float, approved_risk_amount: Optional[float] = None) -> Any:
         if not risk_plan:
             raise ValueError("risk_plan is required")
@@ -164,6 +217,7 @@ class ExecutionRouter:
             raise ExecutionError(f"No MT5 symbol mapping configured for {source_symbol}")
         if approved_risk_amount is None or approved_risk_amount <= 0:
             raise ExecutionError("MT5_DEMO requires a positive portfolio-approved risk amount")
+        self._enforce_stop_loss_cooldown(source_symbol, side)
         self._validate_entry_quote(mt5_symbol, risk_plan)
         result = self.mt5_executor.place_market_order(
             symbol=mt5_symbol, side=side, volume=None,
