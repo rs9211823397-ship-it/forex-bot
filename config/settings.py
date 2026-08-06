@@ -10,7 +10,8 @@ from config.symbol_policy import (
 )
 from config.symbols import active_symbols, executable_symbol_map
 
-load_dotenv(Path(__file__).resolve().parents[1] / '.env')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(REPO_ROOT / '.env')
 
 
 def _env_flag(name, default=False):
@@ -54,7 +55,6 @@ def _bounded_int(name, default, lower, upper):
 
 
 def _default_mt5_terminal_path():
-    """Return the first known local MT5 terminal without overriding env config."""
     program_files = Path(os.getenv("PROGRAMFILES", r"C:\Program Files"))
     appdata = os.getenv("APPDATA", "").strip()
     candidates = [program_files / "MetaTrader 5" / "terminal64.exe"]
@@ -69,6 +69,22 @@ def _default_mt5_terminal_path():
         if candidate.is_file():
             return str(candidate)
     return str(candidates[0])
+
+
+def _pinned_login_file() -> Path:
+    configured = os.getenv("AAQTS_MT5_EXPECTED_LOGIN_FILE", "runtime/mt5_expected_login.txt").strip()
+    path = Path(configured)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _read_pinned_login() -> str:
+    try:
+        value = _pinned_login_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if value and not value.isdigit():
+        raise ValueError("Pinned MT5 login file must contain only the numeric account login")
+    return value
 
 
 # ==========================
@@ -87,28 +103,13 @@ SIGNAL_SCORE_THRESHOLD = _bounded_int("AAQTS_SIGNAL_SCORE_THRESHOLD", 55, -100, 
 MIN_SIGNAL_CONFIRMATIONS = _bounded_int("AAQTS_MIN_SIGNAL_CONFIRMATIONS", 2, 1, 10)
 MIN_TRADE_QUALITY = _bounded_int("AAQTS_MIN_TRADE_QUALITY", 55, 0, 100)
 
-# ==========================
-# PORTFOLIO PROTECTION
-# ==========================
-# Defaults preserve the pre-existing production policy while removing hidden
-# hardcoding from main.py. Every value can now be explicitly reviewed and
-# overridden at deployment time.
-
-MAX_DAILY_LOSS_PERCENT = _bounded_float(
-    "AAQTS_MAX_DAILY_LOSS_PERCENT", 2.0, 0.1, 100.0
-)
-MAX_WEEKLY_LOSS_PERCENT = _bounded_float(
-    "AAQTS_MAX_WEEKLY_LOSS_PERCENT", 5.0, 0.1, 100.0
-)
-MAX_EQUITY_DRAWDOWN_PERCENT = _bounded_float(
-    "AAQTS_MAX_EQUITY_DRAWDOWN_PERCENT", 10.0, 0.1, 100.0
-)
-MAX_CONSECUTIVE_LOSSES = _bounded_int(
-    "AAQTS_MAX_CONSECUTIVE_LOSSES", 3, 1, 20
-)
-MAX_PORTFOLIO_RISK_PERCENT = _bounded_float(
-    "AAQTS_MAX_PORTFOLIO_RISK_PERCENT", 3.0, 0.1, 100.0
-)
+# Coherent protection limits for a 3% maximum per-trade risk budget. Two full
+# independent positions can coexist, while correlated exposure is reduced first.
+MAX_DAILY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_DAILY_LOSS_PERCENT", 6.0, 0.1, 100.0)
+MAX_WEEKLY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_WEEKLY_LOSS_PERCENT", 12.0, 0.1, 100.0)
+MAX_EQUITY_DRAWDOWN_PERCENT = _bounded_float("AAQTS_MAX_EQUITY_DRAWDOWN_PERCENT", 15.0, 0.1, 100.0)
+MAX_CONSECUTIVE_LOSSES = _bounded_int("AAQTS_MAX_CONSECUTIVE_LOSSES", 3, 1, 20)
+MAX_PORTFOLIO_RISK_PERCENT = _bounded_float("AAQTS_MAX_PORTFOLIO_RISK_PERCENT", 6.0, 0.1, 100.0)
 
 # ==========================
 # EXECUTION SETTINGS
@@ -128,11 +129,12 @@ SYMBOLS = filter_active_symbols(
 
 MT5_TERMINAL_PATH = os.getenv("AAQTS_MT5_TERMINAL_PATH", _default_mt5_terminal_path())
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
-MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip()
+MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip() or _read_pinned_login()
+MT5_EXPECTED_LOGIN_FILE = str(_pinned_login_file())
 MT5_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
 MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
 MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.01)
-MT5_MAX_OPEN_POSITIONS = _bounded_int("AAQTS_MT5_MAX_OPEN_POSITIONS", 5, 1, 20)
+MT5_MAX_OPEN_POSITIONS = _bounded_int("AAQTS_MT5_MAX_OPEN_POSITIONS", 3, 1, 20)
 BOT_INTERVAL_SECONDS = _bounded_int("AAQTS_BOT_INTERVAL_SECONDS", 300, 15, 86400)
 MT5_MAX_TICK_AGE_SECONDS = _bounded_float("AAQTS_MT5_MAX_TICK_AGE_SECONDS", 15.0, 1.0, 300.0)
 MT5_MAX_SPREAD_STOP_RATIO = _bounded_float(
@@ -142,9 +144,10 @@ PORTFOLIO_MAX_ABS_CORRELATION = _bounded_float(
     "AAQTS_PORTFOLIO_MAX_ABS_CORRELATION", 0.80, 0.0, 1.0
 )
 PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = _bounded_float(
-    "AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT", 2.0, 0.1, 100.0
+    "AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT", 4.5, 0.1, 100.0
 )
 
+# Production demo trading defaults to a fail-closed high-impact news filter.
 NEWS_FILTER_ENABLED = _env_flag(
     "AAQTS_NEWS_FILTER_ENABLED",
     EXECUTION_MODE == "MT5_DEMO",
