@@ -7,6 +7,7 @@ release gate exists.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -20,8 +21,10 @@ from config.settings import (
     MT5_PASSWORD,
     MT5_SERVER,
     MT5_SYMBOL_MAP,
+    MT5_SYMBOL_SUFFIX,
     MT5_TERMINAL_PATH,
 )
+from config.symbols import executable_symbol_map
 from execution.mt5_executor import (
     AccountSnapshot,
     ClosedPositionResult,
@@ -33,7 +36,23 @@ from execution.mt5_trade_audit import MT5TradeAudit
 from execution.position_manager import PositionManager
 
 
+logger = logging.getLogger(__name__)
 VALID_MODES = {"PAPER", "MT5_DEMO", "MT5_LIVE"}
+
+
+def _position_management_symbol_map() -> dict[str, str]:
+    """Return the full broker map used only for already-open position care.
+
+    New entries intentionally use the filtered ``MT5_SYMBOL_MAP``. Position
+    management must not use that filter: disabling a symbol for new entries
+    must never stop break-even/trailing/exit management for a position that was
+    opened before the symbol was disabled.
+    """
+
+    return {
+        source: f"{broker}{MT5_SYMBOL_SUFFIX}"
+        for source, broker in executable_symbol_map().items()
+    }
 
 
 class ExecutionRouter:
@@ -64,6 +83,8 @@ class ExecutionRouter:
                     password=MT5_PASSWORD,
                     server=MT5_SERVER,
                     max_open_positions=MT5_MAX_OPEN_POSITIONS,
+                    max_tick_age_seconds=MT5_MAX_TICK_AGE_SECONDS,
+                    max_spread_stop_ratio=MT5_MAX_SPREAD_STOP_RATIO,
                 )
             )
         self.position_manager = position_manager
@@ -104,13 +125,14 @@ class ExecutionRouter:
         timestamp_s = timestamp_ms / 1000.0 if timestamp_ms > 0 else float(
             getattr(tick, "time", 0.0) or 0.0
         )
-        if timestamp_s > 0:
-            age = datetime.now(timezone.utc).timestamp() - timestamp_s
-            if age < -5 or age > MT5_MAX_TICK_AGE_SECONDS:
-                raise ExecutionError(
-                    f"Stale MT5 tick for {mt5_symbol}: age={age:.1f}s "
-                    f"max={MT5_MAX_TICK_AGE_SECONDS:.1f}s"
-                )
+        if timestamp_s <= 0:
+            raise ExecutionError(f"MT5 tick for {mt5_symbol} has no valid timestamp")
+        age = datetime.now(timezone.utc).timestamp() - timestamp_s
+        if age < -5 or age > MT5_MAX_TICK_AGE_SECONDS:
+            raise ExecutionError(
+                f"Stale MT5 tick for {mt5_symbol}: age={age:.1f}s "
+                f"max={MT5_MAX_TICK_AGE_SECONDS:.1f}s"
+            )
 
         point = float(getattr(info, "point", 0.0) or 0.0)
         spread = ask - bid
@@ -160,12 +182,18 @@ class ExecutionRouter:
         if self.mode != "MT5_DEMO" or self.position_manager is None:
             return {"managed": False, "reason": "paper_mode_uses_price_checks", "reports": [], "errors": []}
         atr_by_source_symbol = atr_by_source_symbol or {}
-        broker_atr = {MT5_SYMBOL_MAP[source]: float(atr) for source, atr in atr_by_source_symbol.items() if source in MT5_SYMBOL_MAP}
+        management_map = _position_management_symbol_map()
+        broker_atr = {
+            management_map[source]: float(atr)
+            for source, atr in atr_by_source_symbol.items()
+            if source in management_map
+        }
         report = self.position_manager.manage_positions(broker_atr, force_sync=False)
         if self.trade_audit is not None:
             try:
                 self.trade_audit.sync_closed()
             except Exception as exc:
+                logger.exception("MT5 trade-audit synchronization failed during position management")
                 report.setdefault("errors", []).append(f"trade_audit: {exc}")
         return report
 
@@ -218,6 +246,6 @@ class ExecutionRouter:
             try:
                 self.trade_audit.sync_closed()
             except Exception:
-                pass
+                logger.exception("Final MT5 trade-audit synchronization failed")
         if self.mt5_executor is not None:
             self.mt5_executor.shutdown()
