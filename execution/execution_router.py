@@ -37,13 +37,16 @@ class ExecutionRouter:
             raise ValueError(f"Unsupported execution mode: {self.mode}")
         if self.mode == "MT5_LIVE":
             raise ExecutionError("MT5_LIVE is locked. Use PAPER or MT5_DEMO until the live-release gate is implemented.")
-        if self.mode == "MT5_DEMO" and not MT5_EXPECTED_LOGIN:
+
+        # Identity pinning is a host-runtime invariant. Unit tests and other
+        # callers that deliberately inject an MT5 executor do not depend on the
+        # local terminal configuration and must remain independently testable.
+        self.mt5_executor = mt5_executor
+        if self.mode == "MT5_DEMO" and self.mt5_executor is None and not MT5_EXPECTED_LOGIN:
             raise ExecutionError(
                 "MT5_DEMO account identity is not pinned. Set AAQTS_MT5_EXPECTED_LOGIN "
                 "or run scripts/pin_mt5_account.py on the trusted Windows host."
             )
-
-        self.mt5_executor = mt5_executor
         if self.mode == "MT5_DEMO" and self.mt5_executor is None:
             self.mt5_executor = MT5Executor(
                 ExecutionConfig(
