@@ -3,6 +3,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+from config.symbol_policy import (
+    filter_active_symbols,
+    filter_executable_map,
+    parse_disabled_broker_symbols,
+)
 from config.symbols import active_symbols, executable_symbol_map
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
@@ -89,7 +94,18 @@ MIN_TRADE_QUALITY = _bounded_int("AAQTS_MIN_TRADE_QUALITY", 55, 0, 100)
 EXECUTION_MODE = os.getenv("AAQTS_EXECUTION_MODE", "PAPER").upper().strip()
 if EXECUTION_MODE not in {"PAPER", "MT5_DEMO", "MT5_LIVE"}:
     raise ValueError("AAQTS_EXECUTION_MODE must be PAPER, MT5_DEMO, or MT5_LIVE")
-SYMBOLS = active_symbols(include_paper_only=EXECUTION_MODE == "PAPER")
+
+# Small-account safety: temporarily remove high-minimum-risk metals from both
+# scanning and execution. Set AAQTS_DISABLED_BROKER_SYMBOLS to an empty string
+# later to re-enable the catalog defaults, or provide a different comma list.
+DISABLED_BROKER_SYMBOLS = parse_disabled_broker_symbols(
+    os.getenv("AAQTS_DISABLED_BROKER_SYMBOLS")
+)
+SYMBOLS = filter_active_symbols(
+    active_symbols(include_paper_only=EXECUTION_MODE == "PAPER"),
+    DISABLED_BROKER_SYMBOLS,
+)
+
 MT5_TERMINAL_PATH = os.getenv("AAQTS_MT5_TERMINAL_PATH", _default_mt5_terminal_path())
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
 MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip()
@@ -144,7 +160,10 @@ PRIMARY_ACCOUNT_ID = os.getenv("AAQTS_PRIMARY_ACCOUNT_ID", "").strip().lower()
 
 # Market-data provider symbol -> broker/MT5 symbol for approved new entries.
 MT5_SYMBOL_SUFFIX = os.getenv("AAQTS_MT5_SYMBOL_SUFFIX", "").strip()
-_BASE_MT5_SYMBOL_MAP = executable_symbol_map()
+_BASE_MT5_SYMBOL_MAP = filter_executable_map(
+    executable_symbol_map(),
+    DISABLED_BROKER_SYMBOLS,
+)
 MT5_SYMBOL_MAP = {
     source: f"{broker}{MT5_SYMBOL_SUFFIX}"
     for source, broker in _BASE_MT5_SYMBOL_MAP.items()
