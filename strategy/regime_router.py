@@ -123,21 +123,26 @@ class RegimeStrategyRouter:
             )
 
         if regime_name == REGIME_RANGE:
-            if higher_tf is not None and htf_regime != "NEUTRAL":
-                return self._hold(
-                    regime=regime_name,
-                    regime_confidence=regime_confidence,
-                    strategy="RANGE_REVERSION",
-                    reasons=["Range entry blocked by directional higher timeframe"],
-                    htf_regime=htf_regime,
-                )
             decision = self._range_reversion(data, regime)
+            signal = decision.get("signal", "HOLD")
+            if signal in {"BUY", "SELL"} and higher_tf is not None:
+                expected_htf = "BULLISH" if signal == "BUY" else "BEARISH"
+                if htf_regime not in {expected_htf, "NEUTRAL"}:
+                    return self._hold(
+                        regime=regime_name,
+                        regime_confidence=regime_confidence,
+                        strategy="RANGE_REVERSION",
+                        reasons=[
+                            f"Range {signal} conflicts with {htf_regime} higher timeframe"
+                        ],
+                        htf_regime=htf_regime,
+                    )
             return self._decorate(
                 decision,
                 regime=regime_name,
                 regime_confidence=regime_confidence,
                 strategy="RANGE_REVERSION",
-                risk_multiplier=risk_multiplier if decision.get("signal") in {"BUY", "SELL"} else 0.0,
+                risk_multiplier=risk_multiplier if signal in {"BUY", "SELL"} else 0.0,
                 htf_regime=htf_regime,
             )
 
