@@ -1,5 +1,6 @@
 import math
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -87,6 +88,38 @@ def _read_pinned_login() -> str:
     return value
 
 
+def _risk_baseline_file() -> Path:
+    configured = os.getenv(
+        "AAQTS_MT5_RISK_BASELINE_FILE",
+        "runtime/mt5_risk_baseline_utc.txt",
+    ).strip()
+    path = Path(configured)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _read_risk_baseline() -> datetime | None:
+    explicit = os.getenv("AAQTS_MT5_RISK_BASELINE_UTC", "").strip()
+    if explicit:
+        value = explicit
+    else:
+        try:
+            value = _risk_baseline_file().read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            "MT5 risk baseline must be an ISO-8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("MT5 risk baseline must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
 # ==========================
 # MULTI TIMEFRAME SETTINGS
 # ==========================
@@ -131,6 +164,8 @@ MT5_TERMINAL_PATH = os.getenv("AAQTS_MT5_TERMINAL_PATH", _default_mt5_terminal_p
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
 MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip() or _read_pinned_login()
 MT5_EXPECTED_LOGIN_FILE = str(_pinned_login_file())
+MT5_RISK_BASELINE_UTC = _read_risk_baseline()
+MT5_RISK_BASELINE_FILE = str(_risk_baseline_file())
 MT5_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
 MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
 MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.01)
