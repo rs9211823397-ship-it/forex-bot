@@ -41,6 +41,13 @@ def _bounded_float(name, default, lower, upper):
     return value
 
 
+def _bounded_int(name, default, lower, upper):
+    value = int(os.getenv(name, str(default)))
+    if value < lower or value > upper:
+        raise ValueError(f"{name} must be between {lower} and {upper}")
+    return value
+
+
 def _default_mt5_terminal_path():
     """Return the first known local MT5 terminal without overriding env config."""
     program_files = Path(os.getenv("PROGRAMFILES", r"C:\Program Files"))
@@ -66,32 +73,32 @@ def _default_mt5_terminal_path():
 HIGHER_TIMEFRAME = "1h"
 TRADING_TIMEFRAME = "15m"
 LOOKBACK_DAYS = "2020-01-01"
-PAPER_STARTING_BALANCE = float(os.getenv("AAQTS_PAPER_STARTING_BALANCE", "1000"))
-if not math.isfinite(PAPER_STARTING_BALANCE) or PAPER_STARTING_BALANCE <= 0:
-    raise ValueError("AAQTS_PAPER_STARTING_BALANCE must be greater than zero")
+PAPER_STARTING_BALANCE = _positive_float("AAQTS_PAPER_STARTING_BALANCE", 1000.0)
 ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
 RISK_PERCENT = _bounded_float("AAQTS_RISK_PERCENT", 1.0, 0.05, 5.0)
 
-MIN_ADX = float(os.getenv("AAQTS_MIN_ADX", "20"))
-SIGNAL_SCORE_THRESHOLD = int(os.getenv("AAQTS_SIGNAL_SCORE_THRESHOLD", "55"))
-MIN_SIGNAL_CONFIRMATIONS = int(os.getenv("AAQTS_MIN_SIGNAL_CONFIRMATIONS", "2"))
-MIN_TRADE_QUALITY = int(os.getenv("AAQTS_MIN_TRADE_QUALITY", "55"))
+MIN_ADX = _bounded_float("AAQTS_MIN_ADX", 20.0, 0.0, 100.0)
+SIGNAL_SCORE_THRESHOLD = _bounded_int("AAQTS_SIGNAL_SCORE_THRESHOLD", 55, -100, 100)
+MIN_SIGNAL_CONFIRMATIONS = _bounded_int("AAQTS_MIN_SIGNAL_CONFIRMATIONS", 2, 1, 10)
+MIN_TRADE_QUALITY = _bounded_int("AAQTS_MIN_TRADE_QUALITY", 55, 0, 100)
 
 # ==========================
 # EXECUTION SETTINGS
 # ==========================
 
 EXECUTION_MODE = os.getenv("AAQTS_EXECUTION_MODE", "PAPER").upper().strip()
+if EXECUTION_MODE not in {"PAPER", "MT5_DEMO", "MT5_LIVE"}:
+    raise ValueError("AAQTS_EXECUTION_MODE must be PAPER, MT5_DEMO, or MT5_LIVE")
 SYMBOLS = active_symbols(include_paper_only=EXECUTION_MODE == "PAPER")
 MT5_TERMINAL_PATH = os.getenv("AAQTS_MT5_TERMINAL_PATH", _default_mt5_terminal_path())
 MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
 MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip()
 MT5_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
 MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
-MT5_FIXED_LOT = float(os.getenv("AAQTS_MT5_FIXED_LOT", "0.01"))
-MT5_MAX_OPEN_POSITIONS = int(os.getenv("AAQTS_MT5_MAX_OPEN_POSITIONS", "5"))
-BOT_INTERVAL_SECONDS = int(os.getenv("AAQTS_BOT_INTERVAL_SECONDS", "300"))
-MT5_MAX_TICK_AGE_SECONDS = _positive_float("AAQTS_MT5_MAX_TICK_AGE_SECONDS", 15.0)
+MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.01)
+MT5_MAX_OPEN_POSITIONS = _bounded_int("AAQTS_MT5_MAX_OPEN_POSITIONS", 5, 1, 20)
+BOT_INTERVAL_SECONDS = _bounded_int("AAQTS_BOT_INTERVAL_SECONDS", 300, 15, 86400)
+MT5_MAX_TICK_AGE_SECONDS = _bounded_float("AAQTS_MT5_MAX_TICK_AGE_SECONDS", 15.0, 1.0, 300.0)
 MT5_MAX_SPREAD_STOP_RATIO = _bounded_float(
     "AAQTS_MT5_MAX_SPREAD_STOP_RATIO", 0.25, 0.01, 1.0
 )
