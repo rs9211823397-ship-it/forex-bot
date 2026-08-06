@@ -1,5 +1,15 @@
 from types import SimpleNamespace
 
+from strategy.contextual_integration import ContextualGateResult
+from strategy.decision import (
+    MarketRegimeResult,
+    MarketStructureResult,
+    MomentumResult,
+    SetupResult,
+    TradeQualityResult,
+    TriggerResult,
+    VolumeResult,
+)
 from strategy.signal_engine import ProductionSignalPipeline, SignalEngine
 from strategy.pipeline import SignalPipeline
 
@@ -54,6 +64,71 @@ def test_production_policy_keeps_structure_htf_and_contextual_fail_closed():
     assert "Market structure conflicts with setup" in failures
     assert "Higher timeframe conflicts with setup" in failures
     assert "Contextual trigger rejected setup" in failures
+
+
+def _high_conviction_decision(reason_codes):
+    pipeline = ProductionSignalPipeline.__new__(ProductionSignalPipeline)
+    setup = SetupResult(trend_score=30, reasons=("Bullish EMA alignment",))
+    trigger = TriggerResult(candle_score=0, reasons=("No candle confirmation",))
+    momentum = MomentumResult(score=20, reasons=("Bullish momentum confirmed",))
+    volume = VolumeResult(score=15, reasons=("Volume confirms BUY",))
+    structure = MarketStructureResult(
+        score=10,
+        trend="BULLISH",
+        reasons=("Market structure bullish",),
+    )
+    regime = MarketRegimeResult(
+        mtf_confirmed=True,
+        regime="BULLISH",
+        higher_timeframe_available=True,
+        confirmation="BUY",
+        reasons=("Multi timeframe BUY confirmation",),
+    )
+    quality = TradeQualityResult(quality=70, approved=True)
+    contextual = ContextualGateResult(
+        enabled=True,
+        approved=False,
+        direction="BUY",
+        trigger="NONE",
+        reasons=tuple(f"Contextual {code}" for code in reason_codes),
+        output=SimpleNamespace(reason_codes=tuple(reason_codes)),
+    )
+    return pipeline._final_decision(
+        setup=setup,
+        trigger=trigger,
+        momentum=momentum,
+        volume=volume,
+        structure=structure,
+        regime=regime,
+        quality=quality,
+        contextual_gate=contextual,
+        strict_direction=True,
+    )
+
+
+def test_missing_exact_context_trigger_is_soft_for_high_conviction_aligned_setup():
+    decision = _high_conviction_decision(
+        (
+            "SETUP_VALID",
+            "HTF_ALIGNED",
+            "STRUCTURE_ALIGNED",
+            "LOCATION_VALID",
+            "NO_CONTEXTUAL_TRIGGER",
+        )
+    )
+    assert decision.signal == "BUY"
+
+
+def test_invalid_location_remains_hard_block_even_when_quality_is_high():
+    decision = _high_conviction_decision(
+        (
+            "SETUP_VALID",
+            "HTF_ALIGNED",
+            "STRUCTURE_ALIGNED",
+            "INVALID_LOCATION",
+        )
+    )
+    assert decision.signal == "HOLD"
 
 
 def test_legacy_engine_keeps_legacy_pipeline_and_production_uses_new_policy(monkeypatch):
