@@ -70,7 +70,13 @@ class FakeMT5:
         return True
 
     def symbol_info_tick(self, symbol):
-        return SimpleNamespace(bid=1.10000, ask=1.10002)
+        now = datetime.now(timezone.utc).timestamp()
+        return SimpleNamespace(
+            bid=1.10000,
+            ask=1.10002,
+            time=now,
+            time_msc=int(now * 1000),
+        )
 
     def positions_get(self, symbol=None):
         if symbol:
