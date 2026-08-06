@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from config.settings import MT5_RISK_BASELINE_UTC
 from execution.mt5_executor import ClosedPositionResult, ExecutionError
 
 
@@ -30,6 +31,10 @@ class MT5TradeAudit:
 
     Broker exit deals may have magic=0. Ownership is therefore discovered from
     the opening deal's magic and retained by MT5 position_id for all exits.
+
+    When an explicit demo risk baseline is configured, realized-risk queries
+    ignore closes before that timestamp. This starts a fresh protection epoch
+    without disabling daily/weekly loss, drawdown, or consecutive-loss guards.
     """
 
     HEADER = (
@@ -77,6 +82,15 @@ class MT5TradeAudit:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ExecutionError(f"{field_name} must be timezone-aware")
         return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _apply_risk_baseline(start: datetime, end: datetime) -> tuple[datetime, datetime] | None:
+        baseline = MT5_RISK_BASELINE_UTC
+        if baseline is None:
+            return start, end
+        if end < baseline:
+            return None
+        return max(start, baseline), end
 
     def _existing_keys(self) -> set[tuple[str, str, str]]:
         keys: set[tuple[str, str, str]] = set()
@@ -140,6 +154,13 @@ class MT5TradeAudit:
         end = self._as_utc(end_time, "end_time")
         if end < start:
             raise ExecutionError("MT5 history end_time cannot precede start_time")
+        bounded = self._apply_risk_baseline(start, end)
+        if bounded is None:
+            return []
+        start, end = bounded
+        # Discovery deliberately reaches before the baseline so an AAQTS
+        # position opened earlier but closed after the baseline is still owned
+        # correctly and its post-baseline realized PnL is counted.
         discovery_start = start - timedelta(days=30)
         deals = self._history(discovery_start, end)
         entry_values = {getattr(self.executor.mt5, "DEAL_ENTRY_IN", 0), getattr(self.executor.mt5, "DEAL_ENTRY_INOUT", 2)}
