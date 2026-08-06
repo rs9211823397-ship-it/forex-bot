@@ -216,7 +216,7 @@ def test_range_hold_does_not_report_regime_confidence_as_trade_confidence(caplog
     assert "trade_confidence=0" in caplog.text
 
 
-def test_range_trade_is_blocked_by_directional_higher_timeframe():
+def test_range_buy_is_allowed_when_higher_timeframe_is_bullish():
     result = router(
         StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
         htf="BULLISH",
@@ -226,10 +226,42 @@ def test_range_trade_is_blocked_by_directional_higher_timeframe():
         higher_tf=pd.DataFrame({"close": [1.0]}),
     )
 
+    assert result["signal"] == "BUY"
+    assert result["risk_multiplier"] == 0.5
+    assert result["confidence"] == 70
+    assert result["higher_timeframe_regime"] == "BULLISH"
+
+
+def test_range_sell_is_blocked_when_higher_timeframe_is_bullish():
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        htf="BULLISH",
+    ).generate_analysis(
+        range_reentry_frame("SELL"),
+        "EURUSD=X",
+        higher_tf=pd.DataFrame({"close": [1.0]}),
+    )
+
     assert result["signal"] == "HOLD"
     assert result["risk_multiplier"] == 0.0
     assert result["confidence"] == 0
-    assert result["regime_confidence"] == 70.0
+    assert "Range SELL conflicts with BULLISH higher timeframe" in result["reasons"]
+
+
+def test_range_sell_is_allowed_when_higher_timeframe_is_bearish():
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        htf="BEARISH",
+    ).generate_analysis(
+        range_reentry_frame("SELL"),
+        "EURUSD=X",
+        higher_tf=pd.DataFrame({"close": [1.0]}),
+    )
+
+    assert result["signal"] == "SELL"
+    assert result["risk_multiplier"] == 0.5
+    assert result["confidence"] == 70
+    assert result["higher_timeframe_regime"] == "BEARISH"
 
 
 def test_breakout_requires_range_close_atr_adx_and_htf_compatibility():
