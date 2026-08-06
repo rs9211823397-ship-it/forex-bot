@@ -88,6 +88,29 @@ MIN_SIGNAL_CONFIRMATIONS = _bounded_int("AAQTS_MIN_SIGNAL_CONFIRMATIONS", 2, 1, 
 MIN_TRADE_QUALITY = _bounded_int("AAQTS_MIN_TRADE_QUALITY", 55, 0, 100)
 
 # ==========================
+# PORTFOLIO PROTECTION
+# ==========================
+# Defaults preserve the pre-existing production policy while removing hidden
+# hardcoding from main.py. Every value can now be explicitly reviewed and
+# overridden at deployment time.
+
+MAX_DAILY_LOSS_PERCENT = _bounded_float(
+    "AAQTS_MAX_DAILY_LOSS_PERCENT", 2.0, 0.1, 100.0
+)
+MAX_WEEKLY_LOSS_PERCENT = _bounded_float(
+    "AAQTS_MAX_WEEKLY_LOSS_PERCENT", 5.0, 0.1, 100.0
+)
+MAX_EQUITY_DRAWDOWN_PERCENT = _bounded_float(
+    "AAQTS_MAX_EQUITY_DRAWDOWN_PERCENT", 10.0, 0.1, 100.0
+)
+MAX_CONSECUTIVE_LOSSES = _bounded_int(
+    "AAQTS_MAX_CONSECUTIVE_LOSSES", 3, 1, 20
+)
+MAX_PORTFOLIO_RISK_PERCENT = _bounded_float(
+    "AAQTS_MAX_PORTFOLIO_RISK_PERCENT", 3.0, 0.1, 100.0
+)
+
+# ==========================
 # EXECUTION SETTINGS
 # ==========================
 
@@ -95,9 +118,6 @@ EXECUTION_MODE = os.getenv("AAQTS_EXECUTION_MODE", "PAPER").upper().strip()
 if EXECUTION_MODE not in {"PAPER", "MT5_DEMO", "MT5_LIVE"}:
     raise ValueError("AAQTS_EXECUTION_MODE must be PAPER, MT5_DEMO, or MT5_LIVE")
 
-# Small-account safety: temporarily remove high-minimum-risk metals from both
-# scanning and execution. Set AAQTS_DISABLED_BROKER_SYMBOLS to an empty string
-# later to re-enable the catalog defaults, or provide a different comma list.
 DISABLED_BROKER_SYMBOLS = parse_disabled_broker_symbols(
     os.getenv("AAQTS_DISABLED_BROKER_SYMBOLS")
 )
@@ -125,7 +145,6 @@ PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = _bounded_float(
     "AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT", 2.0, 0.1, 100.0
 )
 
-# Production demo trading defaults to a fail-closed high-impact news filter.
 NEWS_FILTER_ENABLED = _env_flag(
     "AAQTS_NEWS_FILTER_ENABLED",
     EXECUTION_MODE == "MT5_DEMO",
@@ -158,7 +177,6 @@ if not NEWS_BLOCKED_IMPACTS or not set(NEWS_BLOCKED_IMPACTS).issubset(
 SINGLE_ACCOUNT_MODE = _env_flag("AAQTS_SINGLE_ACCOUNT_MODE", True)
 PRIMARY_ACCOUNT_ID = os.getenv("AAQTS_PRIMARY_ACCOUNT_ID", "").strip().lower()
 
-# Market-data provider symbol -> broker/MT5 symbol for approved new entries.
 MT5_SYMBOL_SUFFIX = os.getenv("AAQTS_MT5_SYMBOL_SUFFIX", "").strip()
 _BASE_MT5_SYMBOL_MAP = filter_executable_map(
     executable_symbol_map(),
