@@ -207,7 +207,7 @@ def test_pause_resume_and_emergency_are_forwarded():
     assert result == ["closed"]
 
 
-def test_management_cycle_maps_data_symbols_to_broker_symbols():
+def test_management_cycle_maps_only_currently_enabled_data_symbols():
     positions = FakePositionManager()
     router = ExecutionRouter(
         paper_trader=FakePaperTrader(),
@@ -217,9 +217,9 @@ def test_management_cycle_maps_data_symbols_to_broker_symbols():
     )
     result = router.manage_positions({"EURUSD=X": 0.0012, "GC=F": 2.5})
     assert result["managed"] is True
-    assert positions.management_calls == [
-        ({"EURUSD": 0.0012, "XAUUSD": 2.5}, False)
-    ]
+    # XAUUSD/GC=F is intentionally outside the small-account executable map,
+    # so no stale/disabled ATR is forwarded into active position management.
+    assert positions.management_calls == [({"EURUSD": 0.0012}, False)]
 
 
 def test_paper_management_cycle_is_an_explicit_noop():
