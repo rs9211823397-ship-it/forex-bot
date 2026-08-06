@@ -122,9 +122,10 @@ class BotController:
     def status(self) -> str:
         if not self.running:
             return "STOPPED"
+        # The worker thread is the source of truth for loop liveness. Checking
+        # BotLoop.active here creates a startup race before the new thread gets
+        # its first scheduling slice.
         if self._thread is not None and not self._thread.is_alive():
-            return "STOPPED"
-        if self.bot_loop is not None and not self.bot_loop.is_running and self._thread is not None:
             return "STOPPED"
         if self.paused:
             return "PAUSED"
