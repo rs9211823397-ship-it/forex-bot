@@ -18,6 +18,9 @@ class FakeMT5:
     ORDER_FILLING_IOC = 1
     ORDER_FILLING_RETURN = 2
     TRADE_RETCODE_DONE = 10009
+    TRADE_RETCODE_REQUOTE = 10004
+    TRADE_RETCODE_PRICE_CHANGED = 10020
+    TRADE_RETCODE_PRICE_OFF = 10021
     ACCOUNT_TRADE_MODE_DEMO = 0
     ACCOUNT_TRADE_MODE_REAL = 2
     DEAL_ENTRY_IN = 0
@@ -30,6 +33,10 @@ class FakeMT5:
         self.sent = []
         self.account_trade_mode = self.ACCOUNT_TRADE_MODE_DEMO
         self.account_login = 12345678
+        self.margin_free = 5_000.0
+        self.margin_required = 10.0
+        self.positions_available = True
+        self.send_results = []
 
     def initialize(self, **kwargs):
         return True
@@ -51,6 +58,7 @@ class FakeMT5:
             trade_mode=self.account_trade_mode,
             balance=10_000.0,
             equity=9_975.0,
+            margin_free=self.margin_free,
         )
 
     def symbol_info(self, symbol):
@@ -79,6 +87,8 @@ class FakeMT5:
         )
 
     def positions_get(self, symbol=None):
+        if not self.positions_available:
+            return None
         if symbol:
             return tuple(p for p in self._positions if p.symbol == symbol)
         return tuple(self._positions)
@@ -90,22 +100,30 @@ class FakeMT5:
         direction = 1 if order_type == self.ORDER_TYPE_BUY else -1
         return (close_price - open_price) * direction * volume * 100_000
 
+    def order_calc_margin(self, order_type, symbol, volume, price):
+        return self.margin_required
+
     def order_check(self, request):
         return SimpleNamespace(retcode=0, comment="Done")
 
     def order_send(self, request):
-        self.sent.append(request)
+        self.sent.append(dict(request))
+        if self.send_results:
+            return self.send_results.pop(0)
         return SimpleNamespace(
-            retcode=10009,
+            retcode=self.TRADE_RETCODE_DONE,
             comment="Request executed",
             order=123,
             deal=456,
         )
 
 
-def connected_executor(adapter=None):
+def connected_executor(adapter=None, **config_kwargs):
     adapter = adapter or FakeMT5()
-    executor = MT5Executor(ExecutionConfig(max_open_positions=3), adapter=adapter)
+    executor = MT5Executor(
+        ExecutionConfig(max_open_positions=3, **config_kwargs),
+        adapter=adapter,
+    )
     executor.connect()
     return executor, adapter
 
@@ -114,28 +132,18 @@ def test_connect_rejects_non_demo_account():
     adapter = FakeMT5()
     adapter.account_trade_mode = adapter.ACCOUNT_TRADE_MODE_REAL
     executor = MT5Executor(ExecutionConfig(), adapter=adapter)
-
     with pytest.raises(ExecutionError, match="requires a broker demo account"):
         executor.connect()
-
     assert executor.connected is False
 
 
 def test_preauthenticated_connect_validates_expected_login():
     adapter = FakeMT5()
-    executor = MT5Executor(
-        ExecutionConfig(expected_login=12345678),
-        adapter=adapter,
-    )
-
+    executor = MT5Executor(ExecutionConfig(expected_login=12345678), adapter=adapter)
     assert executor.connect() is True
-
     adapter = FakeMT5()
     adapter.account_login = 87654321
-    executor = MT5Executor(
-        ExecutionConfig(expected_login=12345678),
-        adapter=adapter,
-    )
+    executor = MT5Executor(ExecutionConfig(expected_login=12345678), adapter=adapter)
     with pytest.raises(ExecutionError, match="unexpected account login"):
         executor.connect()
 
@@ -155,6 +163,13 @@ def managed_position(adapter, *, ticket=10, volume=0.05):
         profit=10.0,
         comment="AAQTS",
     )
+
+
+def test_positions_api_error_is_not_treated_as_empty_account():
+    executor, adapter = connected_executor()
+    adapter.positions_available = False
+    with pytest.raises(ExecutionError, match="positions are unavailable"):
+        executor.positions()
 
 
 def test_buy_requires_stop_loss_and_take_profit():
@@ -179,7 +194,6 @@ def test_buy_request_contains_broker_side_protection():
 
 def test_reference_distances_are_translated_to_current_broker_quote():
     executor, adapter = connected_executor()
-
     executor.place_market_order(
         "EURUSD",
         "BUY",
@@ -188,16 +202,47 @@ def test_reference_distances_are_translated_to_current_broker_quote():
         take_profit=1.20400,
         reference_entry=1.20000,
     )
-
     request = adapter.sent[-1]
     assert request["price"] == 1.10002
     assert request["sl"] == 1.09802
     assert request["tp"] == 1.10402
 
 
+def test_margin_is_validated_before_order_send():
+    executor, adapter = connected_executor()
+    adapter.margin_required = 6_000.0
+    with pytest.raises(ExecutionError, match="Insufficient free margin"):
+        executor.place_market_order(
+            "EURUSD", "BUY", 0.01, stop_loss=1.09800, take_profit=1.10400
+        )
+    assert adapter.sent == []
+
+
+def test_explicit_requote_is_retried_once_without_blind_timeout_retry():
+    executor, adapter = connected_executor(order_send_price_retries=1)
+    adapter.send_results = [
+        SimpleNamespace(retcode=adapter.TRADE_RETCODE_REQUOTE, comment="Requote", order=0, deal=0),
+        SimpleNamespace(retcode=adapter.TRADE_RETCODE_DONE, comment="Done", order=123, deal=456),
+    ]
+    result = executor.place_market_order(
+        "EURUSD", "BUY", 0.01, stop_loss=1.09800, take_profit=1.10400
+    )
+    assert result.success is True
+    assert len(adapter.sent) == 2
+
+
+def test_ambiguous_no_response_is_not_retried():
+    executor, adapter = connected_executor(order_send_price_retries=3)
+    adapter.send_results = [None]
+    with pytest.raises(ExecutionError, match="ambiguous and was not retried"):
+        executor.place_market_order(
+            "EURUSD", "BUY", 0.01, stop_loss=1.09800, take_profit=1.10400
+        )
+    assert len(adapter.sent) == 1
+
+
 def test_broker_contract_risk_sizes_volume_without_rounding_up():
     executor, adapter = connected_executor()
-
     executor.place_market_order(
         "EURUSD",
         "BUY",
@@ -206,13 +251,11 @@ def test_broker_contract_risk_sizes_volume_without_rounding_up():
         take_profit=1.10400,
         risk_amount=4.0,
     )
-
     assert adapter.sent[-1]["volume"] == 0.01
 
 
 def test_broker_minimum_volume_cannot_exceed_approved_risk():
     executor, _ = connected_executor()
-
     with pytest.raises(ExecutionError, match="minimum volume would exceed"):
         executor.place_market_order(
             "EURUSD",
@@ -226,11 +269,9 @@ def test_broker_minimum_volume_cannot_exceed_approved_risk():
 
 def test_volume_normalization_never_rounds_risk_up():
     executor, adapter = connected_executor()
-
     executor.place_market_order(
         "EURUSD", "BUY", 0.019, stop_loss=1.09800, take_profit=1.10400
     )
-
     assert adapter.sent[-1]["volume"] == 0.01
 
 
@@ -285,16 +326,13 @@ def test_emergency_stop_closes_only_managed_positions():
 
 def test_position_management_market_data_contract_is_exposed():
     executor, _ = connected_executor()
-
     assert executor.symbol_info("EURUSD").digits == 5
     assert executor.symbol_tick("EURUSD").bid == 1.10000
 
 
 def test_account_snapshot_uses_broker_balance_and_equity():
     executor, _ = connected_executor()
-
     snapshot = executor.account_snapshot()
-
     assert snapshot.balance == 10_000.0
     assert snapshot.equity == 9_975.0
 
@@ -327,12 +365,10 @@ def test_closed_results_include_only_managed_exit_deals():
             ),
         ]
     )
-
     results = executor.closed_position_results(
         now - timedelta(days=1),
         now + timedelta(seconds=1),
     )
-
     assert len(results) == 1
     assert results[0].profit_loss == -23.5
     assert results[0].closed_at == now
@@ -341,18 +377,14 @@ def test_closed_results_include_only_managed_exit_deals():
 def test_remaining_loss_at_stop_uses_current_broker_price():
     executor, adapter = connected_executor()
     position = managed_position(adapter)
-
     risk = executor.remaining_loss_at_stop(position)
-
     assert risk == pytest.approx(20.0)
 
 
 def test_move_to_break_even_updates_broker_side_protection():
     executor, adapter = connected_executor()
     adapter._positions.append(managed_position(adapter))
-
     result = executor.move_to_break_even(10)
-
     assert result.success is True
     assert adapter.sent[-1]["action"] == adapter.TRADE_ACTION_SLTP
     assert adapter.sent[-1]["position"] == 10
@@ -363,9 +395,7 @@ def test_move_to_break_even_updates_broker_side_protection():
 def test_trailing_stop_update_preserves_existing_take_profit():
     executor, adapter = connected_executor()
     adapter._positions.append(managed_position(adapter))
-
     result = executor.update_trailing_stop(10, 1.09900)
-
     assert result.success is True
     assert adapter.sent[-1]["sl"] == 1.099
     assert adapter.sent[-1]["tp"] == 1.104
@@ -374,9 +404,7 @@ def test_trailing_stop_update_preserves_existing_take_profit():
 def test_partial_close_uses_requested_volume_and_preserves_remainder():
     executor, adapter = connected_executor()
     adapter._positions.append(managed_position(adapter, volume=0.05))
-
     result = executor.partial_close(10, 0.02, "AAQTS TP1")
-
     assert result.success is True
     assert adapter.sent[-1]["position"] == 10
     assert adapter.sent[-1]["volume"] == 0.02
@@ -386,6 +414,5 @@ def test_partial_close_uses_requested_volume_and_preserves_remainder():
 def test_partial_close_rejects_full_position_volume():
     executor, adapter = connected_executor()
     adapter._positions.append(managed_position(adapter, volume=0.05))
-
     with pytest.raises(ExecutionError, match="smaller than"):
         executor.partial_close(10, 0.05)
