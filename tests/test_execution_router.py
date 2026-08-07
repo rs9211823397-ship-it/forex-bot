@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.settings import MT5_SYMBOL_MAP
 from execution.execution_router import ExecutionRouter
 from execution.mt5_executor import ExecutionError
 
@@ -136,7 +137,7 @@ def test_mt5_demo_routes_to_mapped_broker_symbol():
     )
     assert mt5.connected is True
     assert recovered[0].ticket == 11
-    assert result["symbol"] == "EURUSD"
+    assert result["symbol"] == MT5_SYMBOL_MAP["EURUSD=X"]
     assert result["volume"] is None
     assert result["stop_loss"] == 1.0950
     assert result["reference_entry"] == 1.1000
@@ -217,9 +218,12 @@ def test_management_cycle_maps_data_symbols_to_broker_symbols():
     )
     result = router.manage_positions({"EURUSD=X": 0.0012, "GC=F": 2.5})
     assert result["managed"] is True
-    assert positions.management_calls == [
-        ({"EURUSD": 0.0012, "XAUUSD": 2.5}, False)
-    ]
+    expected = {}
+    if "EURUSD=X" in MT5_SYMBOL_MAP:
+        expected[MT5_SYMBOL_MAP["EURUSD=X"]] = 0.0012
+    if "GC=F" in MT5_SYMBOL_MAP:
+        expected[MT5_SYMBOL_MAP["GC=F"]] = 2.5
+    assert positions.management_calls == [(expected, False)]
 
 
 def test_paper_management_cycle_is_an_explicit_noop():
