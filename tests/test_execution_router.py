@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from config.settings import MT5_SYMBOL_MAP
+from config.settings import MT5_SYMBOL_MAP, MT5_SYMBOL_SUFFIX
+from config.symbols import executable_symbol_map
 from execution.execution_router import ExecutionRouter
 from execution.mt5_executor import ExecutionError
 
@@ -218,11 +219,15 @@ def test_management_cycle_maps_data_symbols_to_broker_symbols():
     )
     result = router.manage_positions({"EURUSD=X": 0.0012, "GC=F": 2.5})
     assert result["managed"] is True
-    expected = {}
-    if "EURUSD=X" in MT5_SYMBOL_MAP:
-        expected[MT5_SYMBOL_MAP["EURUSD=X"]] = 0.0012
-    if "GC=F" in MT5_SYMBOL_MAP:
-        expected[MT5_SYMBOL_MAP["GC=F"]] = 2.5
+    full_management_map = {
+        source: f"{broker}{MT5_SYMBOL_SUFFIX}"
+        for source, broker in executable_symbol_map().items()
+    }
+    expected = {
+        full_management_map[source]: atr
+        for source, atr in {"EURUSD=X": 0.0012, "GC=F": 2.5}.items()
+        if source in full_management_map
+    }
     assert positions.management_calls == [(expected, False)]
 
 
