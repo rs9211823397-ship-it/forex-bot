@@ -1,7 +1,16 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
+import execution.mt5_trade_audit as audit_module
 from execution.mt5_trade_audit import MT5TradeAudit
+
+
+@pytest.fixture(autouse=True)
+def isolate_local_risk_baseline(monkeypatch):
+    """Unit fixtures must not inherit the operator's local demo risk epoch."""
+    monkeypatch.setattr(audit_module, "MT5_RISK_BASELINE_UTC", None)
 
 
 class FakeMT5:
