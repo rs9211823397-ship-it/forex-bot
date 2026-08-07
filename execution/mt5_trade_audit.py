@@ -19,6 +19,7 @@ class ManagedClosedDeal:
     position_id: int
     deal_ticket: int
     symbol: str
+    side: str
     volume: float
     exit_price: float
     exit_reason: str
@@ -63,8 +64,6 @@ class MT5TradeAudit:
             return
         if fieldnames == self.HEADER:
             return
-        # Older builds created a paper-style header but never wrote MT5 rows.
-        # Replace that empty legacy schema; preserve any non-empty legacy data.
         if rows:
             legacy = self.path.with_suffix(self.path.suffix + ".legacy")
             counter = 1
@@ -158,20 +157,21 @@ class MT5TradeAudit:
         if bounded is None:
             return []
         start, end = bounded
-        # Discovery deliberately reaches before the baseline so an AAQTS
-        # position opened earlier but closed after the baseline is still owned
-        # correctly and its post-baseline realized PnL is counted.
         discovery_start = start - timedelta(days=30)
         deals = self._history(discovery_start, end)
-        entry_values = {getattr(self.executor.mt5, "DEAL_ENTRY_IN", 0), getattr(self.executor.mt5, "DEAL_ENTRY_INOUT", 2)}
-        exit_values = {getattr(self.executor.mt5, "DEAL_ENTRY_OUT", 1), getattr(self.executor.mt5, "DEAL_ENTRY_OUT_BY", 3)}
-        managed_positions = {
-            int(getattr(deal, "position_id", 0) or 0)
+        mt5 = self.executor.mt5
+        entry_values = {getattr(mt5, "DEAL_ENTRY_IN", 0), getattr(mt5, "DEAL_ENTRY_INOUT", 2)}
+        exit_values = {getattr(mt5, "DEAL_ENTRY_OUT", 1), getattr(mt5, "DEAL_ENTRY_OUT_BY", 3)}
+        buy_type = getattr(mt5, "DEAL_TYPE_BUY", 0)
+        sell_type = getattr(mt5, "DEAL_TYPE_SELL", 1)
+        opening_deals = {
+            int(getattr(deal, "position_id", 0) or 0): deal
             for deal in deals
             if getattr(deal, "entry", None) in entry_values
             and getattr(deal, "magic", None) == self.executor.config.magic
             and int(getattr(deal, "position_id", 0) or 0) > 0
         }
+        managed_positions = set(opening_deals)
         results: list[ManagedClosedDeal] = []
         for deal in deals:
             position_id = int(getattr(deal, "position_id", 0) or 0)
@@ -185,10 +185,12 @@ class MT5TradeAudit:
                 continue
             pnl = sum(float(getattr(deal, field_name, 0.0) or 0.0) for field_name in ("profit", "swap", "commission", "fee"))
             reason = getattr(deal, "reason", None)
+            opening_type = getattr(opening_deals[position_id], "type", None)
+            side = "BUY" if opening_type == buy_type else "SELL" if opening_type == sell_type else "UNKNOWN"
             results.append(ManagedClosedDeal(
                 closed_at=closed_at, profit_loss=pnl, position_id=position_id,
                 deal_ticket=int(getattr(deal, "ticket", 0) or 0),
-                symbol=str(getattr(deal, "symbol", "") or ""),
+                symbol=str(getattr(deal, "symbol", "") or ""), side=side,
                 volume=float(getattr(deal, "volume", 0.0) or 0.0),
                 exit_price=float(getattr(deal, "price", 0.0) or 0.0),
                 exit_reason=self._reason_name(reason),
@@ -208,7 +210,7 @@ class MT5TradeAudit:
             self._append({
                 "Event": "EXIT", "TimeUTC": item.closed_at.isoformat(),
                 "PositionID": item.position_id, "DealTicket": item.deal_ticket,
-                "Symbol": item.symbol, "Side": "", "Volume": item.volume,
+                "Symbol": item.symbol, "Side": item.side, "Volume": item.volume,
                 "Price": item.exit_price, "StopLoss": "", "TakeProfit": "",
                 "PnL": item.profit_loss, "ExitReason": item.exit_reason,
                 "BrokerReason": item.broker_reason if item.broker_reason is not None else "",
