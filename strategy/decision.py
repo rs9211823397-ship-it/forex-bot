@@ -19,15 +19,28 @@ class MarketRegimeResult:
     confirmation: str = "HOLD"
 
     def allows(self, direction):
-        """Return whether the confirmed HTF state permits ``direction``."""
+        """Return whether the HTF state permits ``direction``.
+
+        A directional HTF remains a hard safety gate: BUY requires BULLISH and
+        SELL requires BEARISH.  A genuinely NEUTRAL HTF is treated as soft
+        evidence instead of an opposite-direction veto; lower-timeframe
+        structure, trade quality, contextual location/trigger, and risk gates
+        still have to approve the trade.
+        """
+
+        if direction not in {"BUY", "SELL"}:
+            return False
 
         if not self.higher_timeframe_available:
             return True
 
+        if self.regime == "NEUTRAL":
+            return True
+
+        expected_regime = "BULLISH" if direction == "BUY" else "BEARISH"
         return (
             self.mtf_confirmed
-            and self.regime
-            == ("BULLISH" if direction == "BUY" else "BEARISH")
+            and self.regime == expected_regime
             and self.confirmation == direction
         )
 
