@@ -238,8 +238,13 @@ class ContextualTriggerEngine:
             if setup.direction == "BUY"
             else "BEARISH"
         )
+        htf_state = context.htf_regime.regime
 
-        if context.htf_regime.regime != expected_state:
+        # Opposite directional HTF is still a hard veto.  NEUTRAL is not an
+        # opposite direction: it may proceed to structure/location/trigger
+        # checks, but it is tagged separately so production policy can demand
+        # stronger lower-timeframe evidence than for an aligned HTF.
+        if htf_state not in {expected_state, "NEUTRAL"}:
             return self._output(
                 context,
                 setup,
@@ -247,6 +252,12 @@ class ContextualTriggerEngine:
                 candle_quality="NONE",
                 reason_codes=("HTF_DIRECTION_MISMATCH",)
             )
+
+        htf_reason_code = (
+            "HTF_ALIGNED"
+            if htf_state == expected_state
+            else "HTF_NEUTRAL"
+        )
 
         if context.structure.trend != expected_state:
             return self._output(
@@ -308,7 +319,7 @@ class ContextualTriggerEngine:
                 candle_quality="NONE",
                 reason_codes=(
                     "SETUP_VALID",
-                    "HTF_ALIGNED",
+                    htf_reason_code,
                     "STRUCTURE_ALIGNED",
                     "LOCATION_VALID",
                     "NO_CONTEXTUAL_TRIGGER"
@@ -331,7 +342,7 @@ class ContextualTriggerEngine:
             candle_quality=candle_quality,
             reason_codes=(
                 "SETUP_VALID",
-                "HTF_ALIGNED",
+                htf_reason_code,
                 "STRUCTURE_ALIGNED",
                 "LOCATION_VALID",
                 f"{trigger}_CONFIRMED"
