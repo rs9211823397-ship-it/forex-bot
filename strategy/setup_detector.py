@@ -52,20 +52,28 @@ class SetupDetector:
         structure_trend,
         symbol="__default__"
     ):
-        """Create direction only when setup, HTF, and structure agree."""
+        """Create a contextual direction without treating neutral HTF as opposite.
+
+        Directional higher-timeframe states remain hard gates.  A NEUTRAL HTF
+        may carry a lower-timeframe setup forward only when market structure
+        agrees with that setup; contextual location/trigger and quality checks
+        still decide whether the trade is ultimately eligible.
+        """
 
         direction = None
+        buy_htf_ok = htf_regime in {"BULLISH", "NEUTRAL"}
+        sell_htf_ok = htf_regime in {"BEARISH", "NEUTRAL"}
 
         if (
             setup.trend_score > 0
-            and htf_regime == "BULLISH"
+            and buy_htf_ok
             and structure_trend == "BULLISH"
         ):
             direction = "BUY"
 
         elif (
             setup.trend_score < 0
-            and htf_regime == "BEARISH"
+            and sell_htf_ok
             and structure_trend == "BEARISH"
         ):
             direction = "SELL"
