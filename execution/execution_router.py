@@ -58,6 +58,24 @@ def _stop_loss_cooldown_minutes() -> int:
     return value
 
 
+def _strategy_risk_isolation_enabled(mode: str) -> bool:
+    """Return whether AAQTS should use strategy-only risk equity.
+
+    Demo defaults to isolated risk accounting so another EA on the same MT5
+    account cannot change AAQTS sizing/drawdown merely through its PnL. Live
+    keeps broker account equity unless the operator explicitly opts in.
+    """
+    raw = os.getenv("AAQTS_ISOLATE_STRATEGY_RISK")
+    if raw is None:
+        return mode == "MT5_DEMO"
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("AAQTS_ISOLATE_STRATEGY_RISK must be true or false")
+
+
 def _position_management_symbol_map() -> dict[str, str]:
     """Return the full broker map used only for already-open position care."""
     return {
@@ -79,6 +97,10 @@ class ExecutionRouter:
         self.mode = mode.upper().strip()
         if self.mode not in VALID_MODES:
             raise ValueError(f"Unsupported execution mode: {self.mode}")
+
+        self._isolate_strategy_risk = _strategy_risk_isolation_enabled(self.mode)
+        self._strategy_risk_anchor_time: datetime | None = None
+        self._strategy_risk_anchor_balance: float | None = None
 
         if self.mode == "MT5_LIVE":
             acknowledgement = os.getenv("AAQTS_LIVE_TRADING_ACK", "").strip()
@@ -121,12 +143,29 @@ class ExecutionRouter:
             if mt5_api is not None and config is not None and hasattr(mt5_api, "history_deals_get"):
                 self.trade_audit = MT5TradeAudit(self.mt5_executor)
 
+    def _capture_strategy_risk_anchor(self) -> None:
+        if (
+            self.mode not in BROKER_MODES
+            or not self._isolate_strategy_risk
+            or self._strategy_risk_anchor_time is not None
+        ):
+            return
+        assert self.mt5_executor is not None
+        actual = self.mt5_executor.account_snapshot()
+        self._strategy_risk_anchor_time = datetime.now(timezone.utc)
+        self._strategy_risk_anchor_balance = float(actual.balance)
+        logger.info(
+            "AAQTS strategy-risk isolation anchored at %.2f; non-AAQTS PnL will not affect risk sizing",
+            self._strategy_risk_anchor_balance,
+        )
+
     def start(self) -> list[Any]:
         if self.mode not in BROKER_MODES:
             return []
         assert self.mt5_executor is not None
         assert self.position_manager is not None
         self.mt5_executor.connect()
+        self._capture_strategy_risk_anchor()
         recovered = self.position_manager.recover_positions(reset_registry=True)
         if self.trade_audit is not None:
             self.trade_audit.sync_closed()
@@ -296,7 +335,33 @@ class ExecutionRouter:
         if self.mode == "PAPER":
             return AccountSnapshot(balance=float(self.paper_trader.balance), equity=float(self.paper_trader.equity))
         assert self.mt5_executor is not None
-        return self.mt5_executor.account_snapshot()
+        actual = self.mt5_executor.account_snapshot()
+        if not self._isolate_strategy_risk:
+            return actual
+
+        self._capture_strategy_risk_anchor()
+        assert self._strategy_risk_anchor_time is not None
+        assert self._strategy_risk_anchor_balance is not None
+        end = datetime.now(timezone.utc)
+        if self.trade_audit is not None:
+            closed = self.trade_audit.closed_position_results(
+                self._strategy_risk_anchor_time,
+                end,
+            )
+        else:
+            closed = self.mt5_executor.closed_position_results(
+                self._strategy_risk_anchor_time,
+                end,
+            )
+        realized = sum(float(item.profit_loss) for item in closed)
+        floating = sum(
+            float(getattr(position, "profit", 0.0) or 0.0)
+            + float(getattr(position, "swap", 0.0) or 0.0)
+            for position in self.mt5_executor.positions(managed_only=True)
+        )
+        isolated_balance = self._strategy_risk_anchor_balance + realized
+        isolated_equity = isolated_balance + floating
+        return AccountSnapshot(balance=isolated_balance, equity=isolated_equity)
 
     def closed_position_results(self, start_time: datetime, end_time: datetime) -> list[ClosedPositionResult]:
         if self.mode not in BROKER_MODES or self.mt5_executor is None:
