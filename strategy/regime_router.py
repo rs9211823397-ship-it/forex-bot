@@ -43,7 +43,7 @@ class RegimeStrategyRouter:
         detector: MarketRegimeDetector | None = None,
         mtf_analyzer: MultiTimeframeAnalyzer | None = None,
         decision_analyzer: AIDecisionAnalyzer | None = None,
-        minimum_regime_confidence: float = 45.0,
+        minimum_regime_confidence: float = 35.0,
     ) -> None:
         self.trend_engine = trend_engine
         self.detector = detector or MarketRegimeDetector()
