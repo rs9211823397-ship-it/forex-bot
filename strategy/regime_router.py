@@ -209,17 +209,18 @@ class RegimeStrategyRouter:
         previous_lower = float(previous["BB_LOWER"])
         previous_upper = float(previous["BB_UPPER"])
 
+        # The completed close back inside the band plus RSI recovery already
+        # confirms a range re-entry. Candle colour measures the same recovery
+        # again and used to reject otherwise valid reversions.
         bullish_reentry = (
             previous_close < previous_lower
             and close >= lower
-            and close > open_price
             and rsi <= 40.0
             and rsi > previous_rsi
         )
         bearish_reentry = (
             previous_close > previous_upper
             and close <= upper
-            and close < open_price
             and rsi >= 60.0
             and rsi < previous_rsi
         )
@@ -231,7 +232,6 @@ class RegimeStrategyRouter:
                 [
                     "Price re-entered the lower Bollinger Band",
                     "RSI recovered from range exhaustion",
-                    "Bullish completed candle confirms reversion",
                 ],
             )
         if bearish_reentry:
@@ -240,7 +240,6 @@ class RegimeStrategyRouter:
                 [
                     "Price re-entered the upper Bollinger Band",
                     "RSI fell from range exhaustion",
-                    "Bearish completed candle confirms reversion",
                 ],
             )
         return self._base_decision(
