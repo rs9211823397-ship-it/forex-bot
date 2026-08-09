@@ -321,3 +321,25 @@ def test_low_volatility_fails_closed():
     assert result["risk_multiplier"] == 0.0
     assert result["confidence"] == 0
     assert result["regime_confidence"] == 90.0
+
+
+def test_range_buy_does_not_require_bullish_candle_colour():
+    frame = range_reentry_frame("BUY")
+    frame.loc[frame.index[-1], "open"] = frame.iloc[-1]["close"] + 0.2
+
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+    ).generate_analysis(frame, "EURUSD=X")
+
+    assert result["signal"] == "BUY"
+
+
+def test_range_sell_does_not_require_bearish_candle_colour():
+    frame = range_reentry_frame("SELL")
+    frame.loc[frame.index[-1], "open"] = frame.iloc[-1]["close"] - 0.2
+
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+    ).generate_analysis(frame, "EURUSD=X")
+
+    assert result["signal"] == "SELL"
