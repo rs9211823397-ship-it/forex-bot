@@ -9,6 +9,7 @@ from ai.decision_analyzer import AIDecisionAnalyzer
 from strategy.pipeline import SignalPipeline
 from strategy.setup_detector import SetupDetector
 from strategy.trigger_detector import TriggerDetector
+from config.settings import MIN_TRADE_QUALITY
 
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,11 @@ class ProductionSignalPipeline(SignalPipeline):
     micro-trigger while still refusing premium BUYs / discount SELLs.
     """
 
-    HIGH_CONVICTION_QUALITY = 65
-    HIGH_CONVICTION_SCORE_BUFFER = 10
+    # Do not demand a second, stricter score after the configured quality gate
+    # has already approved the same aligned evidence. Exact candle patterns are
+    # useful ranking evidence, but they are not an additional mandatory veto.
+    HIGH_CONVICTION_QUALITY = MIN_TRADE_QUALITY
+    HIGH_CONVICTION_SCORE_BUFFER = 0
 
     @staticmethod
     def _eligibility_failures(
@@ -75,7 +79,7 @@ class ProductionSignalPipeline(SignalPipeline):
         contextual_gate,
         strict_direction=False,
     ):
-        """Apply a narrowly-scoped soft-trigger policy for strong aligned setups."""
+        """Soften only a duplicated micro-trigger veto on approved aligned setups."""
 
         direction = setup.direction
         directional_score = (
