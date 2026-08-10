@@ -16,12 +16,25 @@ class SetupDetector:
         self._last_decision_times = {}
 
     def detect(self, latest):
-        """Identify the existing EMA/Supertrend trend setup."""
+        """Identify mature or developing EMA/Supertrend trend setups.
+
+        A fully stacked EMA20/50/200 trend with matching Supertrend keeps the
+        legacy +/-30 score.  A developing trend can now establish direction
+        with a smaller +/-15 score when EMA20/50 and Supertrend agree while
+        EMA50/200 have not fully stacked yet.  The reduced score intentionally
+        does not bypass downstream structure, momentum, price-action, HTF,
+        contextual, quality, or risk gates.
+        """
+
+        ema20 = latest["EMA_20"]
+        ema50 = latest["EMA_50"]
+        ema200 = latest["EMA_200"]
+        supertrend_bullish = bool(latest["SUPERTREND"])
 
         if (
-            latest["EMA_20"] > latest["EMA_50"]
-            and latest["EMA_50"] > latest["EMA_200"]
-            and latest["SUPERTREND"]
+            ema20 > ema50
+            and ema50 > ema200
+            and supertrend_bullish
         ):
             return SetupResult(
                 trend_score=30,
@@ -29,13 +42,29 @@ class SetupDetector:
             )
 
         if (
-            latest["EMA_20"] < latest["EMA_50"]
-            and latest["EMA_50"] < latest["EMA_200"]
-            and not latest["SUPERTREND"]
+            ema20 < ema50
+            and ema50 < ema200
+            and not supertrend_bullish
         ):
             return SetupResult(
                 trend_score=-30,
                 reasons=("Bearish EMA alignment",)
+            )
+
+        if ema20 > ema50 and supertrend_bullish:
+            return SetupResult(
+                trend_score=15,
+                reasons=(
+                    "Developing bullish trend (EMA20 > EMA50 + Supertrend)",
+                )
+            )
+
+        if ema20 < ema50 and not supertrend_bullish:
+            return SetupResult(
+                trend_score=-15,
+                reasons=(
+                    "Developing bearish trend (EMA20 < EMA50 + Supertrend)",
+                )
             )
 
         return SetupResult(
