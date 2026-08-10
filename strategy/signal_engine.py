@@ -10,7 +10,11 @@ from strategy.pipeline import SignalPipeline
 from strategy.decision import MomentumResult
 from strategy.setup_detector import SetupDetector
 from strategy.trigger_detector import TriggerDetector
-from config.settings import MIN_TRADE_QUALITY
+from config.settings import (
+    MIN_TRADE_QUALITY,
+    RSI_BAND_VETO_OVERBOUGHT,
+    RSI_BAND_VETO_OVERSOLD,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -34,21 +38,13 @@ class ProductionSignalPipeline(SignalPipeline):
     HIGH_CONVICTION_SCORE_BUFFER = 0
 
     def _confirm_momentum(self, latest):
-        """Use RSI only as an extreme veto; MACD already votes in the setup."""
+        """Do not double-count RSI; the final gate checks true exhaustion."""
         rsi = float(latest["RSI"])
-        if rsi >= 75.0:
-            return MomentumResult(
-                score=-20,
-                reasons=("RSI extreme overbought: blocks new BUY entries",),
-            )
-        if rsi <= 25.0:
-            return MomentumResult(
-                score=20,
-                reasons=("RSI extreme oversold: blocks new SELL entries",),
-            )
         return MomentumResult(
             score=0,
-            reasons=("RSI is not at an opposing extreme",),
+            reasons=(
+                f"RSI {rsi:.1f} is advisory unless BB extreme and reversal agree",
+            ),
         )
 
     @staticmethod
@@ -115,9 +111,8 @@ class ProductionSignalPipeline(SignalPipeline):
 
         output = getattr(contextual_gate, "output", None)
         reason_codes = set(getattr(output, "reason_codes", ()) or ())
-        contextual_caution_only = (
-            "HTF_ALIGNED" in reason_codes
-            and "STRUCTURE_ALIGNED" in reason_codes
+        contextual_soft_evidence = (
+            "STRUCTURE_ALIGNED" in reason_codes
             and {
                 "NO_CONTEXTUAL_TRIGGER",
                 "INVALID_LOCATION",
@@ -129,6 +124,8 @@ class ProductionSignalPipeline(SignalPipeline):
                 "SETUP_NOT_ACTIVE",
             }.intersection(reason_codes)
         )
+        htf_aligned = "HTF_ALIGNED" in reason_codes
+        htf_neutral = "HTF_NEUTRAL" in reason_codes
         high_conviction = (
             direction in {"BUY", "SELL"}
             and quality.approved
@@ -163,8 +160,11 @@ class ProductionSignalPipeline(SignalPipeline):
             contextual_gate.enabled
             and not contextual_gate.approved
             and contextual_gate.direction == direction
-            and contextual_caution_only
-            and (high_conviction or aligned_majority)
+            and contextual_soft_evidence
+            and (
+                (htf_aligned and (high_conviction or aligned_majority))
+                or (htf_neutral and high_conviction)
+            )
         ):
             effective_contextual_gate = replace(
                 contextual_gate,
@@ -173,7 +173,7 @@ class ProductionSignalPipeline(SignalPipeline):
                 reasons=contextual_gate.reasons
                 + (
                     "Contextual trigger/location is soft evidence because the "
-                    "majority setup already has aligned HTF and structure",
+                    "setup has aligned structure and no opposing HTF direction",
                     "Contextual trigger is soft evidence; location is a caution",
                 ),
             )
@@ -214,15 +214,24 @@ class ProductionSignalPipeline(SignalPipeline):
             return decision
 
         rsi = float(latest["RSI"])
+        open_price = float(latest["open"])
         close = float(latest["close"])
         upper = float(latest["BB_UPPER"])
         lower = float(latest["BB_LOWER"])
         extreme_against = (
             decision.signal == "BUY"
-            and (rsi >= 75.0 or (close >= upper and rsi >= 70.0))
+            and (
+                close < open_price
+                and close >= upper
+                and rsi >= RSI_BAND_VETO_OVERBOUGHT
+            )
         ) or (
             decision.signal == "SELL"
-            and (rsi <= 25.0 or (close <= lower and rsi <= 30.0))
+            and (
+                close > open_price
+                and close <= lower
+                and rsi <= RSI_BAND_VETO_OVERSOLD
+            )
         )
         if not extreme_against:
             return decision
@@ -231,7 +240,7 @@ class ProductionSignalPipeline(SignalPipeline):
             decision,
             signal="HOLD",
             reasons=decision.reasons
-            + ("Rejected: RSI/Bollinger extreme conflicts with entry",),
+            + ("Rejected: RSI/Bollinger extreme has an opposing reversal candle",),
         )
 
 

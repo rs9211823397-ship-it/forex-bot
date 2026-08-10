@@ -106,7 +106,12 @@ def test_neutral_htf_still_requires_structure_and_contextual_location():
 
     # The neutral HTF got past the HTF gate, but contextual location still
     # blocks the trade.  This is the intended soft-neutral behavior.
-    assert output.reason_codes == ("INVALID_LOCATION",)
+    assert output.reason_codes == (
+        "SETUP_VALID",
+        "HTF_NEUTRAL",
+        "STRUCTURE_ALIGNED",
+        "INVALID_LOCATION",
+    )
 
 
 def test_opposite_htf_is_rejected_before_contextual_location():

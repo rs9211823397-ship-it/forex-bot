@@ -3,13 +3,13 @@
 ## Scope
 
 This foundation defines safe process boundaries for a future production
-deployment without enabling live trading. It does not change signals,
-indicators, market structure, sizing, backtesting, paper trading, or the
-existing `BotController` API.
+deployment. It does not declare a strategy profitable or approve live capital.
 
-Live MT5 and exchange connectivity remains deliberately unavailable. The
-provided adapters fail closed on both execution and account reads so a missing
-connector cannot be mistaken for an empty or healthy account.
+The modern AAQTS execution path has guarded MT5 demo/live executors in
+`execution/`; the generic adapters in `broker/adapters.py` remain deliberate
+fail-closed placeholders and must not be confused with that path. Live mode
+requires explicit acknowledgement, account/server pins, and its dedicated
+preflight, but remains an owner-reviewed deployment blocker.
 
 ## Architecture
 
@@ -67,8 +67,10 @@ The Telegram-facing `AccountRegistry` adds public MT4/MT5/Exness metadata,
 stable compact callback identifiers, account groups, and atomic persistence.
 Passwords and bridge tokens are resolved only from per-account environment
 variables. `account_supervisor.py` launches isolated paper and MT5-demo worker
-processes and rejects duplicate MT5 terminal paths. Registered live accounts
-remain read-only and are never launched.
+processes and rejects duplicate MT5 terminal paths. Supervisor-launched
+registered live accounts remain read-only. A separately configured
+single-account live worker is guarded by the requirements above and is not
+approved by this document.
 
 The application-facing default is `AAQTS_SINGLE_ACCOUNT_MODE=true`. Telegram
 and `account_supervisor.py` select exactly one registry record, or the explicit

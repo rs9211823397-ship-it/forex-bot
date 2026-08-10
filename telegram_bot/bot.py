@@ -1,1597 +1,357 @@
-import asyncio
-import logging
-import os
-import re
-import secrets
-import sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
-
-from dotenv import load_dotenv
-from telegram import (
-    BotCommand,
-    ForceReply,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update,
-)
-from telegram.constants import ChatType
-from telegram.error import BadRequest, TelegramError
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
-
-# Ensure project root is importable when this file is run directly.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from accounts.credentials import EnvironmentCredentialProvider, account_env_prefix
-from accounts.registry import (
-    AccountEnvironment,
-    AccountPlatform,
-    AccountRegistry,
-    TradingAccount,
-    select_accounts_for_mode,
-)
-from accounts.snapshots import MultiAccountSnapshotReader, aggregate_views
-from config.settings import (
-    EXECUTION_MODE,
-    MT5_MAX_OPEN_POSITIONS,
-    MT5_TERMINAL_PATH,
-    PRIMARY_ACCOUNT_ID,
-    RISK_PERCENT,
-    SINGLE_ACCOUNT_MODE,
-    SYMBOLS,
-)
-from control_plane import ControlAction, ControlCommandStore
-from execution.mt5_executor import AAQTS_MAGIC
-from paper.paper_trader import PaperTrader
-from runtime_state import RUNTIME_DIR as SHARED_RUNTIME_DIR
-from runtime_state import (
-    heartbeat_is_fresh,
-    read_all_runtime_states,
-    read_runtime_state,
-    runtime_state_file,
-)
-from telegram_bot.alert_monitor import (
-    TradeAlertMonitor,
-    is_subscribed,
-    paper_closed_position_details,
-    paper_daily_summary_snapshot,
-    read_paper_positions,
-    subscribe,
-    unsubscribe,
-)
-from telegram_bot.audit import TelegramAuditLog
-from telegram_bot.dashboard import format_dashboard, mt5_dashboard_snapshot
-from telegram_bot.menus import (
-    account_keyboard,
-    accounts_keyboard,
-    add_broker_keyboard,
-    add_environment_keyboard,
-    add_platform_keyboard,
-    back_home_keyboard,
-    confirmation_keyboard,
-    home_keyboard,
-    safety_keyboard,
-    single_account_home_keyboard,
-)
-from telegram_bot.security import (
-    CONTROL_ROLE,
-    OWNER_ROLE,
-    READ_ROLE,
-    TelegramAccessPolicy,
-    TelegramRole,
-)
-from telegram_bot.totp import TotpVerifier
-
-load_dotenv(PROJECT_ROOT / ".env")
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    level=logging.INFO,
-)
-# HTTP request URLs contain the Bot API token; never emit them at INFO level.
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logger = logging.getLogger("aaqts.telegram")
-paper_trader = PaperTrader()
-RUNTIME_DIR = SHARED_RUNTIME_DIR
-ACCOUNT_REGISTRY = AccountRegistry(
-    RUNTIME_DIR / "accounts_registry.json",
-    max_accounts=1 if SINGLE_ACCOUNT_MODE else 100,
-)
-CREDENTIALS = EnvironmentCredentialProvider()
-ACCOUNT_READER = MultiAccountSnapshotReader(CREDENTIALS)
-CONTROL_COMMANDS = ControlCommandStore(RUNTIME_DIR / "control")
-ACCESS_POLICY = TelegramAccessPolicy.from_env()
-AUDIT_LOG = TelegramAuditLog(RUNTIME_DIR / "telegram_audit.jsonl")
-TOTP = TotpVerifier.from_env()
-
-(
-    ADD_LABEL,
-    ADD_PLATFORM,
-    ADD_BROKER,
-    ADD_BROKER_NAME,
-    ADD_ENV,
-    ADD_LOGIN,
-    ADD_SERVER,
-    ADD_CONNECTION,
-) = range(8)
-
-
-def _role(update: Update) -> TelegramRole | None:
-    user_id = update.effective_user.id if update.effective_user else None
-    return ACCESS_POLICY.role_for(user_id)
-
-
-def _managed_accounts(*, enabled_only: bool = False) -> tuple[TradingAccount, ...]:
-    """Return only the configured account scope; ambiguous scopes fail closed."""
-
-    try:
-        return select_accounts_for_mode(
-            ACCOUNT_REGISTRY.list_accounts(),
-            single_account_mode=SINGLE_ACCOUNT_MODE,
-            primary_account_id=PRIMARY_ACCOUNT_ID,
-            enabled_only=enabled_only,
-        )
-    except RuntimeError as exc:
-        logger.error("Account scope is not configured safely: %s", exc)
-        return ()
-
-
-def _resolve_managed_token(token: str) -> TradingAccount:
-    account = ACCOUNT_REGISTRY.resolve_token(token)
-    allowed = {item.account_id for item in _managed_accounts()}
-    if account.account_id not in allowed:
-        raise KeyError("Account is outside the configured Telegram scope")
-    return account
-
-
-def _account_menu(
-    account: TradingAccount, role: TelegramRole
-) -> InlineKeyboardMarkup:
-    return account_keyboard(
-        account,
-        role,
-        single_account_mode=SINGLE_ACCOUNT_MODE,
-    )
-
-
-def _home_menu(role: TelegramRole) -> InlineKeyboardMarkup:
-    if SINGLE_ACCOUNT_MODE:
-        account = next(iter(_managed_accounts()), None)
-        return single_account_home_keyboard(role, account)
-    return home_keyboard(role)
-
-
-async def ensure_access(
-    update: Update,
-    minimum: TelegramRole = READ_ROLE,
-    *,
-    private_for_control: bool = False,
-) -> TelegramRole | None:
-    user_id = update.effective_user.id if update.effective_user else None
-    role = ACCESS_POLICY.role_for(user_id)
-    if role is None or role < minimum:
-        message = (
-            "â›” Telegram access is not configured for this user.\n\n"
-            f"Your Telegram user ID: {user_id}\n"
-            "The owner must add this numeric ID to the server allowlist."
-        )
-        if update.callback_query:
-            await update.callback_query.answer(
-                f"Access denied. User ID: {user_id}", show_alert=True
-            )
-        elif update.effective_message:
-            await update.effective_message.reply_text(message)
-        return None
-    if private_for_control and (
-        not update.effective_chat or update.effective_chat.type != ChatType.PRIVATE
-    ):
-        if update.callback_query:
-            await update.callback_query.answer(
-                "Controls are allowed only in a private chat", show_alert=True
-            )
-        elif update.effective_message:
-            await update.effective_message.reply_text(
-                "â›” Trading controls are allowed only in a private chat."
-            )
-        return None
-    return role
-
-
-def _home_text(role: TelegramRole) -> str:
-    all_accounts = ACCOUNT_REGISTRY.list_accounts()
-    accounts = _managed_accounts()
-    enabled = sum(account.enabled for account in accounts)
-    live = sum(account.is_live for account in accounts)
-    status, state = runtime_status()
-    worker_states = read_all_runtime_states()
-    fresh_workers = sum(heartbeat_is_fresh(item) for item in worker_states)
-    if SINGLE_ACCOUNT_MODE:
-        if accounts:
-            account_line = (
-                f"Account: {accounts[0].label} Â· {accounts[0].platform.value} "
-                f"{accounts[0].environment.value}"
-            )
-        elif len(all_accounts) > 1 and not PRIMARY_ACCOUNT_ID:
-            account_line = (
-                "Account: SELECTION REQUIRED\n"
-                "Set AAQTS_PRIMARY_ACCOUNT_ID to one registered account."
-            )
-        elif PRIMARY_ACCOUNT_ID and not accounts:
-            account_line = "Account: CONFIGURATION ERROR"
-        else:
-            account_line = "Account: NOT SET UP"
-        return (
-            "ðŸ¤– AAQTS MY ACCOUNT\n\n"
-            f"{account_line}\n"
-            f"Engine: {status}\n"
-            f"Worker: {'CONNECTED' if fresh_workers else 'OFFLINE'}\n"
-            f"Execution mode: {state.get('execution_mode', EXECUTION_MODE)}\n"
-            "Live execution: LOCKED ðŸ”’\n"
-            f"Role: {role.name.replace('_', ' ')}"
-        )
-    return (
-        "ðŸ¤– AAQTS PARENT CONTROL\n\n"
-        f"Engine: {status}\n"
-        f"Registered accounts: {len(accounts)} ({enabled} enabled)\n"
-        f"Fresh workers: {fresh_workers}/{len(worker_states)}\n"
-        f"Live accounts: {live} ðŸ”’\n"
-        f"Execution mode: {state.get('execution_mode', EXECUTION_MODE)}\n"
-        f"Role: {role.name.replace('_', ' ')}\n\n"
-        "Scope: ALL ACCOUNTS"
-    )
-
-
-async def _edit_or_reply(
-    update: Update, text: str, reply_markup: InlineKeyboardMarkup
-) -> None:
-    if update.callback_query:
-        try:
-            await update.callback_query.edit_message_text(
-                text=text, reply_markup=reply_markup
-            )
-        except BadRequest as exc:
-            if "message is not modified" not in str(exc).lower():
-                raise
-    elif update.effective_message:
-        await update.effective_message.reply_text(text=text, reply_markup=reply_markup)
-
-
-def money(value: Any) -> str:
-    try:
-        return f"${float(value):,.2f}"
-    except (TypeError, ValueError):
-        return "$0.00"
-
-
-def runtime_status() -> tuple[str, dict[str, Any]]:
-    state = read_runtime_state()
-    if heartbeat_is_fresh(state):
-        return str(state.get("status", "RUNNING")), state
-    if state.get("status") == "STOPPED":
-        return "STOPPED", state
-    return "STOPPED (no recent heartbeat)", state
-
-
-def mt5_snapshot() -> dict[str, Any]:
-    """Read live account and AAQTS-managed positions directly from MT5."""
-    try:
-        import MetaTrader5 as mt5
-    except ImportError as exc:
-        raise RuntimeError("MetaTrader5 package is not installed.") from exc
-
-    if not mt5.initialize(path=MT5_TERMINAL_PATH):
-        raise RuntimeError(f"MT5 initialization failed: {mt5.last_error()}")
-
-    try:
-        account = mt5.account_info()
-        if account is None:
-            raise RuntimeError("MT5 account information is unavailable.")
-
-        positions = [
-            position
-            for position in list(mt5.positions_get() or [])
-            if getattr(position, "magic", None) == AAQTS_MAGIC
-        ]
-        return {
-            "login": getattr(account, "login", None),
-            "server": getattr(account, "server", "Unknown"),
-            "balance": float(getattr(account, "balance", 0.0)),
-            "equity": float(getattr(account, "equity", 0.0)),
-            "profit": float(getattr(account, "profit", 0.0)),
-            "margin": float(getattr(account, "margin", 0.0)),
-            "margin_free": float(getattr(account, "margin_free", 0.0)),
-            "positions": positions,
-        }
-    finally:
-        mt5.shutdown()
-
-
-def paper_snapshot() -> dict[str, Any]:
-    paper_trader.load_trades()
-    stats = paper_trader.get_stats()
-    return {
-        "balance": stats["balance"],
-        "equity": stats["equity"],
-        "profit": stats["floating_pnl"],
-        "positions": paper_trader.open_trades,
-        "stats": stats,
-    }
-
-
-def account_snapshot() -> dict[str, Any]:
-    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
-        return mt5_snapshot()
-    return paper_snapshot()
-
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    role = await ensure_access(update)
-    if role is None:
-        return
-    if update.effective_chat:
-        subscribe(update.effective_chat.id)
-    await _edit_or_reply(update, _home_text(role), _home_menu(role))
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    role = await ensure_access(update)
-    if role is None or not update.effective_message:
-        return
-    await update.effective_message.reply_text(
-        "ðŸ¤– AAQTS COMMANDS\n\n"
-        "/menu - Account control buttons\n"
-        "/status - Engine status\n"
-        "/dashboard - Current primary account dashboard\n"
-        "/balance - Primary account balance\n"
-        "/equity - Primary account equity\n"
-        "/positions - AAQTS-managed positions\n"
-        "/profit - Trading performance\n"
-        "/analysis - Market analysis\n"
-        "/alerts - Alert subscription\n"
-        "/cancel - Cancel account setup"
-    )
-
-
-async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message or not update.effective_chat:
-        return
-    enabled = is_subscribed(update.effective_chat.id)
-    state = "ENABLED âœ…" if enabled else "DISABLED âŒ"
-    await update.message.reply_text(
-        "ðŸ”” AAQTS AUTOMATIC ALERTS\n\n"
-        f"Status: {state}\n"
-        "Includes: trade opened, trade closed, SL/TP reason and daily UTC summary."
-    )
-
-
-async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message or not update.effective_chat:
-        return
-    subscribe(update.effective_chat.id)
-    await update.message.reply_text(
-        "ðŸ”” Automatic AAQTS alerts enabled.\n\n"
-        "You will receive trade-open, trade-close and daily-summary notifications."
-    )
-
-
-async def alerts_off_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message or not update.effective_chat:
-        return
-    unsubscribe(update.effective_chat.id)
-    await update.message.reply_text("ðŸ”• Automatic AAQTS alerts disabled for this chat.")
-
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-
-    status, state = runtime_status()
-    phase = state.get("phase", "Unknown")
-    mode = state.get("execution_mode", EXECUTION_MODE)
-    scanned = state.get("scanned_symbols", 0)
-    total = state.get("total_symbols", 0)
-    current_symbol = state.get("current_symbol") or "None"
-    heartbeat = state.get("heartbeat_utc", "No heartbeat")
-
-    text = (
-        "âš™ï¸ AAQTS LIVE STATUS\n\n"
-        f"Bot status: {status}\n"
-        f"Execution mode: {mode}\n"
-        f"Phase: {phase}\n"
-        f"Scan progress: {scanned}/{total}\n"
-        f"Current symbol: {current_symbol}\n"
-        f"Heartbeat (UTC): {heartbeat}"
-    )
-    await update.message.reply_text(text)
-
-
-async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-    try:
-        snapshot = await asyncio.to_thread(mt5_dashboard_snapshot)
-        await update.message.reply_text(format_dashboard(snapshot))
-    except Exception as exc:
-        logger.exception("Dashboard command failed")
-        await update.message.reply_text(f"âŒ Could not build live dashboard.\n\n{exc}")
-
-
-async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-    try:
-        snapshot = await asyncio.to_thread(account_snapshot)
-        label = (
-            f"{EXECUTION_MODE.replace('_', ' ')} ACCOUNT"
-            if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}
-            else "PAPER ACCOUNT"
-        )
-        await update.message.reply_text(
-            f"ðŸ’° {label}\n\n"
-            f"Balance: {money(snapshot['balance'])}\n"
-            f"Mode: {EXECUTION_MODE}"
-        )
-    except Exception as exc:
-        logger.exception("Balance command failed")
-        await update.message.reply_text(f"âŒ Could not read account balance.\n\n{exc}")
-
-
-async def equity_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-    try:
-        snapshot = await asyncio.to_thread(account_snapshot)
-        await update.message.reply_text(
-            "ðŸ“Š LIVE ACCOUNT EQUITY\n\n"
-            f"Balance: {money(snapshot['balance'])}\n"
-            f"Floating P/L: {money(snapshot['profit'])}\n"
-            f"Equity: {money(snapshot['equity'])}"
-        )
-    except Exception as exc:
-        logger.exception("Equity command failed")
-        await update.message.reply_text(f"âŒ Could not read account equity.\n\n{exc}")
-
-
-async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-    try:
-        snapshot = await asyncio.to_thread(account_snapshot)
-        positions = snapshot["positions"]
-    except Exception as exc:
-        logger.exception("Positions command failed")
-        await update.message.reply_text(f"âŒ Could not read positions.\n\n{exc}")
-        return
-
-    if not positions:
-        await update.message.reply_text(
-            "ðŸ“­ OPEN POSITIONS\n\nNo AAQTS positions are open."
-        )
-        return
-
-    lines = ["ðŸ“ˆ AAQTS OPEN POSITIONS", ""]
-    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
-        for index, position in enumerate(positions, start=1):
-            side = "BUY" if getattr(position, "type", 0) == 0 else "SELL"
-            lines.extend(
-                [
-                    f"{index}. {getattr(position, 'symbol', 'Unknown')} | {side}",
-                    f"Ticket: {getattr(position, 'ticket', 'N/A')}",
-                    f"Volume: {getattr(position, 'volume', 'N/A')}",
-                    f"Entry: {getattr(position, 'price_open', 'N/A')}",
-                    f"Current: {getattr(position, 'price_current', 'N/A')}",
-                    f"P/L: {money(getattr(position, 'profit', 0.0))}",
-                    f"SL: {getattr(position, 'sl', 'N/A')}",
-                    f"TP: {getattr(position, 'tp', 'N/A')}",
-                    "",
-                ]
-            )
-    else:
-        for index, trade in enumerate(positions, start=1):
-            lines.extend(
-                [
-                    f"{index}. {trade.get('symbol', 'Unknown')} | {trade.get('signal', 'Unknown')}",
-                    f"Entry: {trade.get('entry', 'N/A')}",
-                    f"SL: {trade.get('stop_loss', 'N/A')}",
-                    f"TP: {trade.get('take_profit', 'N/A')}",
-                    "",
-                ]
-            )
-
-    text = "\n".join(lines)
-    for start in range(0, len(text), 3900):
-        await update.message.reply_text(text[start : start + 3900])
-
-
-async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-    try:
-        snapshot = await asyncio.to_thread(account_snapshot)
-        positions = snapshot["positions"]
-        if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
-            managed_profit = sum(float(getattr(p, "profit", 0.0)) for p in positions)
-            text = (
-                "ðŸ“ˆ LIVE MT5 PERFORMANCE\n\n"
-                f"AAQTS open positions: {len(positions)}\n"
-                f"AAQTS floating P/L: {money(managed_profit)}\n"
-                f"Account floating P/L: {money(snapshot['profit'])}\n"
-                f"Equity: {money(snapshot['equity'])}"
-            )
-        else:
-            stats = snapshot["stats"]
-            text = (
-                "ðŸ“ˆ PAPER PERFORMANCE\n\n"
-                f"Closed trades: {stats['total_trades']}\n"
-                f"Wins: {stats['wins']}\n"
-                f"Win rate: {stats['win_rate']}%\n"
-                f"Net P/L: {money(stats['total_pnl'])}"
-            )
-        await update.message.reply_text(text)
-    except Exception as exc:
-        logger.exception("Profit command failed")
-        await update.message.reply_text(f"âŒ Could not read performance.\n\n{exc}")
-
-
-def run_analysis_sync() -> str:
-    from config.settings import HIGHER_TIMEFRAME, TRADING_TIMEFRAME
-    from data.market_data import MarketData
-    from indicators.technical import TechnicalIndicators
-    from strategy.signal_engine import SignalEngine
-
-    market = MarketData()
-    indicator = TechnicalIndicators()
-    signal_engine = SignalEngine()
-    all_data = market.download_all_data(interval=TRADING_TIMEFRAME)
-    higher_tf_data = market.download_all_data(interval=HIGHER_TIMEFRAME)
-    results = []
-
-    for symbol, data in all_data.items():
-        try:
-            analyzed_data = indicator.add_indicators(data)
-            signal = signal_engine.generate_analysis(
-                analyzed_data, symbol, higher_tf_data.get(symbol)
-            )
-            results.append(
-                {
-                    "symbol": symbol,
-                    "signal": signal.get("signal", "HOLD"),
-                    "confidence": signal.get("confidence", 0),
-                    "reasons": signal.get("reasons", []),
-                    "decision_report": signal.get("decision_report", {}),
-                }
-            )
-        except Exception as exc:
-            logger.exception("Analysis failed for %s", symbol)
-            results.append(
-                {
-                    "symbol": symbol,
-                    "signal": "ERROR",
-                    "confidence": 0,
-                    "reasons": [str(exc)],
-                    "decision_report": {
-                        "decision": "ERROR",
-                        "status": "REJECTED",
-                        "approved": False,
-                        "confidence": 0,
-                        "score": 0,
-                        "reasons": [str(exc)],
-                        "decision_summary": {"positive": [], "warnings": [str(exc)]},
-                        "rejection_reasons": [str(exc)],
-                        "report_text": f"Decision: ERROR\nStatus: REJECTED\nConfidence: 0%\nScore: 0\nRejection reasons:\n- {exc}",
-                    },
-                }
-            )
-
-    if not results:
-        return "No market data was returned."
-
-    lines = ["ðŸ§  AAQTS MARKET ANALYSIS", ""]
-    for result in results:
-        lines.append(
-            f"{result['symbol']} | {result['signal']} | {result['confidence']}%"
-        )
-        decision_report = result.get("decision_report") or {}
-        if decision_report.get("report_text"):
-            lines.append(decision_report["report_text"])
-        for reason in result["reasons"][:2]:
-            lines.append(f"â€¢ {reason}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-async def analysis_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await ensure_access(update) is None:
-        return
-    if not update.message:
-        return
-    await update.message.reply_text("ðŸ” Running AAQTS market analysis. Please wait...")
-    try:
-        result = await asyncio.to_thread(run_analysis_sync)
-        for start in range(0, len(result), 3900):
-            await update.message.reply_text(result[start : start + 3900])
-    except Exception as exc:
-        logger.exception("Market analysis command failed")
-        await update.message.reply_text(f"âŒ Analysis failed.\n\nError: {exc}")
-
-
-def _account_status_icon(status: str) -> str:
-    if status == "CONNECTED":
-        return "ðŸŸ¢"
-    if status in {"DISABLED", "SETUP_REQUIRED"}:
-        return "âš«" if status == "DISABLED" else "ðŸŸ¡"
-    return "ðŸ”´"
-
-
-async def _show_accounts(update: Update, role: TelegramRole, page: int = 0) -> None:
-    accounts = _managed_accounts()
-    enabled = sum(account.enabled for account in accounts)
-    text = (
-        "ðŸ¦ MANAGED ACCOUNTS\n\n"
-        f"Registered: {len(accounts)}\n"
-        f"Enabled: {enabled}\n"
-        f"Disabled: {len(accounts) - enabled}\n\n"
-        "ðŸ”’ means a registered live account; live execution remains locked."
-    )
-    if not accounts:
-        text += "\n\nNo accounts registered yet."
-    await _edit_or_reply(update, text, accounts_keyboard(accounts, page, role))
-
-
-async def _show_portfolio(update: Update) -> None:
-    accounts = _managed_accounts(enabled_only=True)
-    views = await asyncio.to_thread(ACCOUNT_READER.read_many, accounts)
-    totals = aggregate_views(views)
-    issues = [
-        f"â€¢ {view.account_id}: {view.status}"
-        for view in views
-        if view.status != "CONNECTED"
-    ]
-    text = (
-        "ðŸ“Š PARENT PORTFOLIO\n\n"
-        f"Connected: {totals['connected']}/{totals['accounts']}\n"
-        f"Balance: {money(totals['balance'])}\n"
-        f"Equity: {money(totals['equity'])}\n"
-        f"Floating P/L: {money(totals['floating_pnl'])}\n"
-        f"AAQTS positions: {totals['open_positions']}\n"
-        f"Accounts needing attention: {totals['issues']}"
-    )
-    if issues:
-        text += "\n\n" + "\n".join(issues[:8])
-    await _edit_or_reply(update, text, back_home_keyboard())
-
-
-async def _show_positions_overview(update: Update) -> None:
-    accounts = _managed_accounts(enabled_only=True)
-    views = await asyncio.to_thread(ACCOUNT_READER.read_many, accounts)
-    lines = ["ðŸ“ˆ AAQTS POSITIONS BY ACCOUNT", ""]
-    for account, view in zip(accounts, views):
-        lines.append(
-            f"{_account_status_icon(view.status)} {account.label}: "
-            f"{view.open_positions} positions Â· {money(view.floating_pnl)}"
-        )
-    if not accounts:
-        lines.append("No enabled accounts are registered.")
-    await _edit_or_reply(update, "\n".join(lines), back_home_keyboard())
-
-
-async def _show_account(update: Update, role: TelegramRole, token: str) -> None:
-    try:
-        account = _resolve_managed_token(token)
-    except KeyError:
-        await _edit_or_reply(
-            update, "âŒ Account no longer exists.", back_home_keyboard()
-        )
-        return
-    view = await asyncio.to_thread(ACCOUNT_READER.read, account)
-    missing = CREDENTIALS.readiness(account).missing
-    setup = ""
-    if missing:
-        setup = "\nSetup required: " + ", ".join(missing)
-    text = (
-        f"{_account_status_icon(view.status)} {account.label}\n\n"
-        f"Account ID: {account.account_id}\n"
-        f"Broker: {account.broker}\n"
-        f"Platform: {account.platform.value}\n"
-        f"Mode: {account.environment.value}{' ðŸ”’' if account.is_live else ''}\n"
-        f"Login: {account.masked_login}\n"
-        f"Server: {account.server}\n"
-        f"Group: {account.group}\n"
-        f"Connection: {view.status}\n\n"
-        f"Balance: {money(view.balance)}\n"
-        f"Equity: {money(view.equity)}\n"
-        f"Floating P/L: {money(view.floating_pnl)}\n"
-        f"AAQTS positions: {view.open_positions}"
-        f"{setup}"
-    )
-    if view.reason and not missing:
-        text += f"\nDetail: {view.reason}"
-    await _edit_or_reply(update, text, _account_menu(account, role))
-
-
-def _resolve_scope(scope: str) -> tuple[TradingAccount, ...]:
-    if scope == "all":
-        return tuple(
-            account
-            for account in _managed_accounts(enabled_only=True)
-            if not account.is_live
-        )
-    return (_resolve_managed_token(scope),)
-
-
-def _queue_action(
-    accounts: tuple[TradingAccount, ...],
-    action: ControlAction,
-    *,
-    user_id: int,
-    reason: str,
-) -> tuple[str, ...]:
-    request_ids = []
-    for account in accounts:
-        if account.is_live:
-            raise RuntimeError(
-                f"Live control is locked for account {account.account_id}"
-            )
-        if action is ControlAction.RESUME_ENTRIES:
-            CONTROL_COMMANDS.clear_restart_block(account.account_id)
-        request = CONTROL_COMMANDS.submit(
-            account.account_id,
-            action,
-            requested_by=user_id,
-            reason=reason,
-        )
-        request_ids.append(request.request_id)
-    return tuple(request_ids)
-
-
-async def _submit_control(
-    update: Update,
-    role: TelegramRole,
-    accounts: tuple[TradingAccount, ...],
-    action: ControlAction,
-) -> None:
-    user_id = update.effective_user.id
-    if not accounts:
-        await _edit_or_reply(
-            update, "No enabled accounts match this scope.", back_home_keyboard()
-        )
-        return
-    try:
-        request_ids = _queue_action(
-            accounts,
-            action,
-            user_id=user_id,
-            reason=f"Telegram {action.value.lower()}",
-        )
-        AUDIT_LOG.write(
-            action.value,
-            user_id=user_id,
-            role=role.name,
-            account_ids=tuple(item.account_id for item in accounts),
-            detail={"request_ids": list(request_ids)},
-        )
-        text = (
-            f"âœ… {action.value.replace('_', ' ')} queued\n\n"
-            f"Accounts: {len(accounts)}\n"
-            "The target engine worker will execute and record the result."
-        )
-    except Exception as exc:
-        logger.exception("Could not queue Telegram control")
-        AUDIT_LOG.write(
-            action.value,
-            user_id=user_id,
-            role=role.name,
-            account_ids=tuple(item.account_id for item in accounts),
-            outcome="FAILED",
-            detail={"error": str(exc)},
-        )
-        text = f"âŒ Control request rejected.\n\n{exc}"
-    await _edit_or_reply(update, text, back_home_keyboard())
-
-
-async def _request_dangerous_confirmation(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    role: TelegramRole,
-    accounts: tuple[TradingAccount, ...],
-    action: ControlAction,
-) -> None:
-    if not TOTP.configured:
-        await _edit_or_reply(
-            update,
-            "ðŸ”’ Dangerous controls are locked.\n\n"
-            "Configure TELEGRAM_CONTROL_TOTP_SECRET on the host first.",
-            back_home_keyboard(),
-        )
-        return
-    nonce = secrets.token_hex(4)
-    expires = datetime.now(timezone.utc) + timedelta(seconds=30)
-    # Kept only in memory and bound to both the Telegram user and nonce.
-    context.bot_data.setdefault("confirmations", {})[
-        (update.effective_user.id, nonce)
-    ] = {
-        "action": action.value,
-        "account_ids": [account.account_id for account in accounts],
-        "expires": expires.isoformat(),
-        "role": role.name,
-    }
-    text = (
-        f"âš ï¸ CONFIRM {action.value.replace('_', ' ')}\n\n"
-        f"Scope: {len(accounts)} account(s)\n"
-        f"Accounts: {', '.join(account.label for account in accounts[:8])}\n"
-        "Only AAQTS-managed positions are eligible for emergency closure.\n"
-        "Manual/unmanaged positions will not be touched.\n\n"
-        "Confirmation expires in 30 seconds."
-    )
-    await _edit_or_reply(update, text, confirmation_keyboard(nonce))
-
-
-async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    if query is None:
-        return
-    role = await ensure_access(update)
-    if role is None:
-        return
-    await query.answer()
-    data = query.data or ""
-
-    if data == "noop":
-        return
-    if data == "nav:h":
-        await _edit_or_reply(update, _home_text(role), _home_menu(role))
-        return
-    if data.startswith("nav:a:"):
-        try:
-            page = int(data.rsplit(":", 1)[1])
-        except ValueError:
-            page = 0
-        await _show_accounts(update, role, page)
-        return
-    if data == "nav:p":
-        await _show_portfolio(update)
-        return
-    if data == "nav:pos":
-        await _show_positions_overview(update)
-        return
-    if data == "nav:sig":
-        await _edit_or_reply(
-            update,
-            "ðŸ§  SIGNALS\n\nUse /analysis for the current causal market analysis. "
-            "Trade execution remains automatic and risk-gated.",
-            back_home_keyboard(),
-        )
-        return
-    if data == "nav:risk":
-        scope_text = (
-            "Your configured limits remain the hard ceiling for this account."
-            if SINGLE_ACCOUNT_MODE
-            else "Parent limits remain the hard ceiling for every child account."
-        )
-        await _edit_or_reply(
-            update,
-            "ðŸ›¡ RISK CENTER\n\n"
-            f"{scope_text}\n"
-            "â€¢ Daily loss protection\n"
-            "â€¢ Weekly loss protection\n"
-            "â€¢ Equity drawdown protection\n"
-            "â€¢ Portfolio/open-position limits\n"
-            "â€¢ News and correlated-exposure gates\n\n"
-            "Risk editing is intentionally locked until persistent per-account "
-            "risk profiles are connected to the engine workers.",
-            back_home_keyboard(),
-        )
-        return
-    if data == "nav:alerts":
-        chat_id = update.effective_chat.id
-        enabled = is_subscribed(chat_id)
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Enable", callback_data="alerts:on"),
-                    InlineKeyboardButton("Disable", callback_data="alerts:off"),
-                ],
-                [InlineKeyboardButton("â€¹ Home", callback_data="nav:h")],
-            ]
-        )
-        await _edit_or_reply(
-            update,
-            "ðŸ”” ALERTS\n\nStatus: " + ("ENABLED âœ…" if enabled else "DISABLED âŒ"),
-            keyboard,
-        )
-        return
-    if data in {"alerts:on", "alerts:off"}:
-        if data.endswith("on"):
-            subscribe(update.effective_chat.id)
-        else:
-            unsubscribe(update.effective_chat.id)
-        await query.edit_message_text(
-            "ðŸ”” Alerts " + ("enabled." if data.endswith("on") else "disabled."),
-            reply_markup=back_home_keyboard(),
-        )
-        return
-    if data == "nav:audit":
-        if role < TelegramRole.RISK_MANAGER:
-            await query.edit_message_text(
-                "â›” Risk Manager or Owner role required.",
-                reply_markup=back_home_keyboard(),
-            )
-            return
-        records = AUDIT_LOG.recent(8)
-        lines = ["ðŸ“œ RECENT AUDIT EVENTS", ""]
-        for record in records:
-            lines.append(
-                f"â€¢ {record.get('event')} Â· {record.get('outcome')} Â· "
-                f"{len(record.get('account_ids', []))} account(s)"
-            )
-        if not records:
-            lines.append("No control events recorded yet.")
-        await _edit_or_reply(update, "\n".join(lines), back_home_keyboard())
-        return
-    if data == "nav:settings":
-        accounts = _managed_accounts()
-        ready = sum(CREDENTIALS.readiness(item).ready for item in accounts)
-        await _edit_or_reply(
-            update,
-            "âš™ï¸ SETTINGS\n\n"
-            f"Role: {role.name.replace('_', ' ')}\n"
-            f"Mode: {'SINGLE ACCOUNT' if SINGLE_ACCOUNT_MODE else 'MULTI ACCOUNT'}\n"
-            f"Account capacity: {len(accounts)}/{ACCOUNT_REGISTRY.max_accounts}\n"
-            f"Host-ready accounts: {ready}/{len(accounts)}\n"
-            f"TOTP safety: {'CONFIGURED' if TOTP.configured else 'NOT CONFIGURED'}\n"
-            "Credentials: host environment only; never stored in Telegram.",
-            back_home_keyboard(),
-        )
-        return
-    if data == "nav:safety":
-        if role < CONTROL_ROLE:
-            await query.edit_message_text(
-                "â›” Operator role required.", reply_markup=back_home_keyboard()
-            )
-            return
-        await _edit_or_reply(
-            update,
-            "ðŸ†˜ SAFETY CONTROLS\n\n"
-            "Pause Entries blocks new trades while existing positions remain managed.\n"
-            "Stop Engine stops automation; broker SL/TP remain active.\n"
-            "Emergency Close closes AAQTS-managed positions and stops the engine.",
-            safety_keyboard(role, single_account_mode=SINGLE_ACCOUNT_MODE),
-        )
-        return
-    if data.startswith("acc:"):
-        await _show_account(update, role, data.split(":", 1)[1])
-        return
-    if data.startswith("av:"):
-        _, section, token = data.split(":", 2)
-        account = _resolve_managed_token(token)
-        view = await asyncio.to_thread(ACCOUNT_READER.read, account)
-        active_symbols = [symbol for group in SYMBOLS.values() for symbol in group]
-        control_records = CONTROL_COMMANDS.recent(account.account_id, limit=5)
-        control_text = "No control requests for this account."
-        if control_records:
-            control_text = "\n".join(
-                f"â€¢ {record.get('action')} Â· "
-                f"{record.get('status', record.get('queue_state', 'PENDING'))}"
-                for record in control_records
-            )
-        labels = {
-            "pos": (
-                f"AAQTS-managed positions: {view.open_positions}\n"
-                f"Floating P/L: {money(view.floating_pnl)}\n"
-                f"Connection: {view.status}"
-            ),
-            "perf": (
-                f"Balance: {money(view.balance)}\n"
-                f"Equity: {money(view.equity)}\n"
-                f"Floating P/L: {money(view.floating_pnl)}"
-                + (
-                    f"\nStarting balance: {money(view.starting_balance)}\n"
-                    f"Realized P/L: {money(view.total_pnl)}\n"
-                    f"Closed trades: {view.closed_trades}\n"
-                    f"Wins: {view.wins}\n"
-                    f"Win rate: {view.win_rate:.2f}%"
-                    if account.platform is AccountPlatform.PAPER
-                    else ""
-                )
-            ),
-            "str": (
-                "Strategy: causal regime router\n"
-                f"Active symbol catalog: {len(active_symbols)} symbols\n"
-                f"Symbols: {', '.join(active_symbols)}"
-            ),
-            "risk": (
-                f"Base trade risk ceiling: {RISK_PERCENT}%\n"
-                f"Maximum open positions: {MT5_MAX_OPEN_POSITIONS}\n"
-                "Daily, weekly, drawdown, correlation and news gates: ACTIVE\n"
-                + (
-                    "This account cannot exceed the configured risk ceiling."
-                    if SINGLE_ACCOUNT_MODE
-                    else "Child limits cannot exceed the parent ceiling."
-                )
-            ),
-            "ctl": control_text,
-        }
-        await query.edit_message_text(
-            f"{account.label}\n\n{labels.get(section, 'Unavailable')}",
-            reply_markup=_account_menu(account, role),
-        )
-        return
-    if data.startswith("ctl:"):
-        if role < CONTROL_ROLE or update.effective_chat.type != ChatType.PRIVATE:
-            await query.edit_message_text(
-                "â›” Operator role and private chat are required.",
-                reply_markup=back_home_keyboard(),
-            )
-            return
-        _, code, token = data.split(":", 2)
-        account = _resolve_managed_token(token)
-        if code == "b":
-            CONTROL_COMMANDS.clear_restart_block(account.account_id)
-            AUDIT_LOG.write(
-                "START_ENGINE_REQUESTED",
-                user_id=update.effective_user.id,
-                role=role.name,
-                account_ids=(account.account_id,),
-            )
-            await query.edit_message_text(
-                f"âœ… Start requested for {account.label}.\n\n"
-                "The supervisor will launch its worker.",
-                reply_markup=_account_menu(account, role),
-            )
-            return
-        action = (
-            ControlAction.PAUSE_ENTRIES if code == "p" else ControlAction.RESUME_ENTRIES
-        )
-        await _submit_control(update, role, (account,), action)
-        return
-    if data.startswith("acct:t:"):
-        if role < OWNER_ROLE or update.effective_chat.type != ChatType.PRIVATE:
-            await query.edit_message_text(
-                "â›” Owner role and private chat are required.",
-                reply_markup=back_home_keyboard(),
-            )
-            return
-        account = _resolve_managed_token(data.split(":", 2)[2])
-        if account.enabled:
-            view = await asyncio.to_thread(ACCOUNT_READER.read, account)
-            if view.status not in {"CONNECTED", "SETUP_REQUIRED"}:
-                await query.edit_message_text(
-                    "â›” Account state could not be verified, so disable failed closed.\n\n"
-                    f"Connection: {view.status}",
-                    reply_markup=_account_menu(account, role),
-                )
-                return
-            if view.open_positions:
-                await query.edit_message_text(
-                    "â›” Account worker cannot be disabled while AAQTS positions "
-                    f"are open ({view.open_positions}). Pause entries or use the "
-                    "confirmed emergency workflow.",
-                    reply_markup=_account_menu(account, role),
-                )
-                return
-        updated = ACCOUNT_REGISTRY.set_enabled(account.account_id, not account.enabled)
-        if not updated.enabled and not updated.is_live:
-            _queue_action(
-                (updated,),
-                ControlAction.PAUSE_ENTRIES,
-                user_id=update.effective_user.id,
-                reason="Account disabled by owner",
-            )
-        AUDIT_LOG.write(
-            "ACCOUNT_ENABLED" if updated.enabled else "ACCOUNT_DISABLED",
-            user_id=update.effective_user.id,
-            role=role.name,
-            account_ids=(updated.account_id,),
-        )
-        await _show_account(update, role, updated.callback_token)
-        return
-    if data.startswith("safe:"):
-        _, code, scope = data.split(":", 2)
-        minimum = OWNER_ROLE if code in {"s", "e"} else CONTROL_ROLE
-        if role < minimum or update.effective_chat.type != ChatType.PRIVATE:
-            await query.edit_message_text(
-                "â›” Required role and private chat are missing.",
-                reply_markup=back_home_keyboard(),
-            )
-            return
-        checked_role = role
-        accounts = _resolve_scope(scope)
-        actions = {
-            "p": ControlAction.PAUSE_ENTRIES,
-            "r": ControlAction.RESUME_ENTRIES,
-            "s": ControlAction.STOP_ENGINE,
-            "e": ControlAction.EMERGENCY_CLOSE,
-        }
-        action = actions[code]
-        if action in {ControlAction.STOP_ENGINE, ControlAction.EMERGENCY_CLOSE}:
-            await _request_dangerous_confirmation(
-                update, context, checked_role, accounts, action
-            )
-        else:
-            await _submit_control(update, checked_role, accounts, action)
-        return
-    if data.startswith("confirm:"):
-        if data == "confirm:cancel":
-            await query.edit_message_text(
-                "Cancelled.", reply_markup=back_home_keyboard()
-            )
-            return
-        if role < OWNER_ROLE or update.effective_chat.type != ChatType.PRIVATE:
-            await query.edit_message_text(
-                "â›” Owner role and private chat are required.",
-                reply_markup=back_home_keyboard(),
-            )
-            return
-        nonce = data.split(":", 1)[1]
-        pending = context.bot_data.get("confirmations", {}).get(
-            (update.effective_user.id, nonce)
-        )
-        if not pending:
-            await query.edit_message_text(
-                "Confirmation is invalid or expired.",
-                reply_markup=back_home_keyboard(),
-            )
-            return
-        expires = datetime.fromisoformat(pending["expires"])
-        if datetime.now(timezone.utc) > expires:
-            context.bot_data["confirmations"].pop(
-                (update.effective_user.id, nonce), None
-            )
-            await query.edit_message_text(
-                "Confirmation expired.", reply_markup=back_home_keyboard()
-            )
-            return
-        context.user_data["awaiting_totp"] = {"nonce": nonce, **pending}
-        await query.message.reply_text(
-            "Send the current 6-digit owner TOTP code. The message will be deleted.",
-            reply_markup=ForceReply(
-                selective=True, input_field_placeholder="6-digit code"
-            ),
-        )
-        return
-
-
-async def totp_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    pending = context.user_data.get("awaiting_totp")
-    if not pending or not update.message:
-        return
-    role = await ensure_access(update, OWNER_ROLE, private_for_control=True)
-    if role is None:
-        return
-    code = update.message.text or ""
-    try:
-        await update.message.delete()
-    except TelegramError:
-        logger.warning("Could not delete TOTP reply from Telegram")
-    expires = datetime.fromisoformat(pending["expires"])
-    if datetime.now(timezone.utc) > expires:
-        context.user_data.pop("awaiting_totp", None)
-        await update.effective_chat.send_message("âŒ Confirmation expired.")
-        return
-    if not TOTP.verify(code):
-        await update.effective_chat.send_message("âŒ Invalid TOTP code.")
-        return
-    accounts = tuple(
-        ACCOUNT_REGISTRY.get(account_id) for account_id in pending["account_ids"]
-    )
-    action = ControlAction(pending["action"])
-    nonce = pending["nonce"]
-    context.user_data.pop("awaiting_totp", None)
-    context.bot_data.get("confirmations", {}).pop(
-        (update.effective_user.id, nonce), None
-    )
-    await _submit_control(update, role, accounts, action)
-
-
-def _slug(value: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_")
-    return slug[:48].lower()
-
-
-async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    role = await ensure_access(update, OWNER_ROLE, private_for_control=True)
-    if role is None:
-        return ConversationHandler.END
-    await update.callback_query.answer()
-    if SINGLE_ACCOUNT_MODE and ACCOUNT_REGISTRY.list_accounts():
-        await update.callback_query.edit_message_text(
-            "Your account is already configured. Single-account mode blocks "
-            "additional account registration.",
-            reply_markup=back_home_keyboard(),
-        )
-        return ConversationHandler.END
-    context.user_data["new_account"] = {}
-    await update.callback_query.message.reply_text(
-        "Send a short account alias, for example DEMO-01 or EXNESS-MT5-02.",
-        reply_markup=ForceReply(
-            selective=True, input_field_placeholder="Account alias"
-        ),
-    )
-    return ADD_LABEL
-
-
-async def add_label_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if await ensure_access(update, OWNER_ROLE, private_for_control=True) is None:
-        return ConversationHandler.END
-    label = (update.message.text or "").strip()
-    account_id = _slug(label)
-    if not account_id:
-        await update.message.reply_text("Invalid alias. Send letters/numbers only.")
-        return ADD_LABEL
-    context.user_data["new_account"].update(
-        {"label": label[:48], "account_id": account_id}
-    )
-    await update.message.reply_text(
-        "Select the account platform.", reply_markup=add_platform_keyboard()
-    )
-    return ADD_PLATFORM
-
-
-async def add_platform_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    await update.callback_query.answer()
-    platform = update.callback_query.data.rsplit(":", 1)[1]
-    context.user_data["new_account"]["platform"] = platform
-    await update.callback_query.edit_message_text(
-        "Select the broker.", reply_markup=add_broker_keyboard()
-    )
-    return ADD_BROKER
-
-
-async def add_broker_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    await update.callback_query.answer()
-    broker = update.callback_query.data.rsplit(":", 1)[1]
-    if broker == "OTHER":
-        await update.callback_query.message.reply_text(
-            "Send the broker name.",
-            reply_markup=ForceReply(
-                selective=True, input_field_placeholder="Broker name"
-            ),
-        )
-        return ADD_BROKER_NAME
-    context.user_data["new_account"]["broker"] = "Exness"
-    await update.callback_query.edit_message_text(
-        "Select demo or live.", reply_markup=add_environment_keyboard()
-    )
-    return ADD_ENV
-
-
-async def add_broker_name_message(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    broker = (update.message.text or "").strip()
-    if not broker or len(broker) > 48:
-        await update.message.reply_text("Broker name must contain 1-48 characters.")
-        return ADD_BROKER_NAME
-    context.user_data["new_account"]["broker"] = broker
-    await update.message.reply_text(
-        "Select demo or live.", reply_markup=add_environment_keyboard()
-    )
-    return ADD_ENV
-
-
-async def add_environment_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    await update.callback_query.answer()
-    environment = update.callback_query.data.rsplit(":", 1)[1]
-    context.user_data["new_account"]["environment"] = environment
-    await update.callback_query.message.reply_text(
-        "Send the MT4/MT5 trading account login number. Do not send a password.",
-        reply_markup=ForceReply(
-            selective=True, input_field_placeholder="Trading login"
-        ),
-    )
-    return ADD_LOGIN
-
-
-async def add_login_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    login = (update.message.text or "").strip()
-    if not login.isdigit() or len(login) > 64:
-        await update.message.reply_text("Trading login must be numeric.")
-        return ADD_LOGIN
-    context.user_data["new_account"]["login"] = login
-    await update.message.reply_text(
-        "Send the exact trading server shown in Exness/MetaTrader.",
-        reply_markup=ForceReply(
-            selective=True, input_field_placeholder="Example: Exness-MT5Trial"
-        ),
-    )
-    return ADD_SERVER
-
-
-async def add_server_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    server = (update.message.text or "").strip()
-    if not server or len(server) > 128:
-        await update.message.reply_text("Server must contain 1-128 characters.")
-        return ADD_SERVER
-    values = context.user_data["new_account"]
-    values["server"] = server
-    if values["platform"] == "MT5":
-        prompt = (
-            "Send the MT5 terminal64.exe path for this account, or send DEFAULT "
-            "to use the configured terminal path."
-        )
-        placeholder = "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
-    else:
-        prompt = (
-            "Send the HTTPS/localhost URL of this account's MT4 bridge, or SKIP "
-            "to register it as setup-required."
-        )
-        placeholder = "http://127.0.0.1:9001"
-    await update.message.reply_text(
-        prompt,
-        reply_markup=ForceReply(
-            selective=True, input_field_placeholder=placeholder[:64]
-        ),
-    )
-    return ADD_CONNECTION
-
-
-async def add_connection_message(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    connection = (update.message.text or "").strip()
-    values = dict(context.user_data["new_account"])
-    account_id = values["account_id"]
-    try:
-        ACCOUNT_REGISTRY.get(account_id)
-    except KeyError:
-        pass
-    else:
-        account_id = f"{account_id}_{values['login'][-4:]}"
-    platform = AccountPlatform(values["platform"])
-    terminal_path = ""
-    bridge_url = ""
-    if platform is AccountPlatform.MT5:
-        terminal_path = (
-            MT5_TERMINAL_PATH if connection.upper() == "DEFAULT" else connection
-        )
-    elif connection.upper() != "SKIP":
-        bridge_url = connection
-    try:
-        account = TradingAccount(
-            account_id=account_id,
-            label=values["label"],
-            broker=values["broker"],
-            platform=platform,
-            environment=AccountEnvironment(values["environment"]),
-            login=values["login"],
-            server=values["server"],
-            enabled=True,
-            terminal_path=terminal_path,
-            bridge_url=bridge_url,
-        )
-        ACCOUNT_REGISTRY.add(account)
-    except (KeyError, RuntimeError, TypeError, ValueError) as exc:
-        await update.message.reply_text(f"âŒ Account was not added.\n\n{exc}")
-        return ADD_CONNECTION
-    context.user_data.pop("new_account", None)
-    prefix = account_env_prefix(account.account_id)
-    setup = (
-        f"Set {prefix}_PASSWORD on the host."
-        if platform is AccountPlatform.MT5
-        else f"Set {prefix}_BRIDGE_TOKEN on the host."
-    )
-    live_note = (
-        "\nLive account is read-only; live execution remains locked."
-        if account.is_live
-        else ""
-    )
-    AUDIT_LOG.write(
-        "ACCOUNT_REGISTERED",
-        user_id=update.effective_user.id,
-        role=TelegramRole.OWNER.name,
-        account_ids=(account.account_id,),
-    )
-    await update.message.reply_text(
-        f"âœ… {account.label} registered.\n\n{setup}{live_note}",
-        reply_markup=_account_menu(account, TelegramRole.OWNER),
-    )
-    return ConversationHandler.END
-
-
-async def cancel_conversation(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    context.user_data.pop("new_account", None)
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            "Account setup cancelled.", reply_markup=back_home_keyboard()
-        )
-    elif update.effective_message:
-        await update.effective_message.reply_text("Account setup cancelled.")
-    return ConversationHandler.END
-
-
-async def post_init(application: Application) -> None:
-    try:
-        await application.bot.set_my_commands(
-            [
-                BotCommand("menu", "Open account control buttons"),
-                BotCommand("status", "Show engine status"),
-                BotCommand("dashboard", "Show primary account dashboard"),
-                BotCommand("positions", "Show AAQTS positions"),
-                BotCommand("analysis", "Run market analysis"),
-                BotCommand("alerts", "Show alert status"),
-                BotCommand("help", "Show commands"),
-                BotCommand("cancel", "Cancel account setup"),
-            ]
-        )
-    except TelegramError:
-        logger.warning("Could not update Telegram command menu")
-    enabled_accounts = _managed_accounts(enabled_only=True)
-    paper_accounts = tuple(
-        account
-        for account in enabled_accounts
-        if account.platform is AccountPlatform.PAPER
-    )
-    if len(enabled_accounts) == 1 and len(paper_accounts) == 1:
-        account = paper_accounts[0]
-        paper_state_dir = RUNTIME_DIR / "accounts" / account.account_id
-        heartbeat_path = runtime_state_file(account.account_id, RUNTIME_DIR)
-        monitor = TradeAlertMonitor(
-            application.bot,
-            read_positions_fn=lambda: read_paper_positions(paper_state_dir),
-            closed_position_details_fn=lambda position: paper_closed_position_details(
-                paper_state_dir, position
-            ),
-            daily_summary_snapshot_fn=lambda: paper_daily_summary_snapshot(
-                paper_state_dir, heartbeat_path
-            ),
-        )
-    else:
-        monitor = TradeAlertMonitor(application.bot)
-    application.bot_data["trade_alert_monitor"] = monitor
-    application.bot_data["trade_alert_task"] = asyncio.create_task(
-        monitor.run(), name="aaqts-trade-alert-monitor"
-    )
-
-
-async def post_shutdown(application: Application) -> None:
-    monitor = application.bot_data.get("trade_alert_monitor")
-    if monitor:
-        await monitor.stop()
-    task = application.bot_data.get("trade_alert_task")
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    error = context.error
-    if isinstance(error, BadRequest) and "message is not modified" in str(error).lower():
-        logger.debug("Ignored duplicate Telegram message edit")
-        return
-    logger.exception("Unhandled Telegram bot error", exc_info=error)
-
-
-def main() -> None:
-    if not TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is missing from the .env file.")
-    if not ACCESS_POLICY.configured:
-        raise RuntimeError(
-            "Telegram owner allowlist is missing. Set TELEGRAM_OWNER_IDS or "
-            "the backward-compatible TELEGRAM_CHAT_ID."
-        )
-
-    application = (
-        Application.builder()
-        .token(TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
-    add_account_conversation = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_account_start, pattern=r"^add:start$")],
-        states={
-            ADD_LABEL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_label_message)
-            ],
-            ADD_PLATFORM: [
-                CallbackQueryHandler(
-                    add_platform_callback, pattern=r"^add:platform:(MT4|MT5)$"
-                )
-            ],
-            ADD_BROKER: [
-                CallbackQueryHandler(
-                    add_broker_callback, pattern=r"^add:broker:(EXNESS|OTHER)$"
-                )
-            ],
-            ADD_BROKER_NAME: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    add_broker_name_message,
-                )
-            ],
-            ADD_ENV: [
-                CallbackQueryHandler(
-                    add_environment_callback, pattern=r"^add:env:(DEMO|LIVE)$"
-                )
-            ],
-            ADD_LOGIN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_login_message)
-            ],
-            ADD_SERVER: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_server_message)
-            ],
-            ADD_CONNECTION: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    add_connection_message,
-                )
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel_conversation),
-            CallbackQueryHandler(cancel_conversation, pattern=r"^add:cancel$"),
-        ],
-        allow_reentry=True,
-    )
-    application.add_handler(add_account_conversation)
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("menu", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("dashboard", dashboard_command))
-    application.add_handler(CommandHandler("balance", balance_command))
-    application.add_handler(CommandHandler("equity", equity_command))
-    application.add_handler(CommandHandler("positions", positions_command))
-    application.add_handler(CommandHandler("profit", profit_command))
-    application.add_handler(CommandHandler("analysis", analysis_command))
-    application.add_handler(CommandHandler("alerts", alerts_command))
-    application.add_handler(CommandHandler("alerts_on", alerts_on_command))
-    application.add_handler(CommandHandler("alerts_off", alerts_off_command))
-    application.add_handler(CommandHandler("cancel", cancel_conversation))
-    application.add_handler(CallbackQueryHandler(callback_router))
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, totp_message)
-    )
-    application.add_error_handler(error_handler)
-
-    logger.info("AAQTS Telegram Manager is starting...")
-    application.run_polling(drop_pending_updates=True)
-
-
-if __name__ == "__main__":
-    main()
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛM6å:-jZ.¶›­–)Þ³V–×÷'B7–æ6–ð¦–×÷'BÆövv–æp¦–×÷'B÷0¦–×÷'B&P¦–×÷'B6V7&WG0¦–×÷'B7—0¦g&öÒFFWF–ÖR–×÷'BFFWF–ÖRÂF–ÖVFVÇFÂF–ÖW¦öæP¦g&öÒF†Æ–"–×÷'BF€¦g&öÒG—–ær–×÷'Bç ¦g&öÒF÷FVçb–×÷'BÆöEöF÷FVç`¦g&öÒFVÆVw&Ò–×÷'B€¢&÷D6öÖÖæBÀ¢f÷&6U&WÇ’À¢–æÆ–æT¶W–&ö&D'WGFöâÀ¢–æÆ–æT¶W–&ö&DÖ&·WÀ¢WFFRÀ¢¦g&öÒFVÆVw&Òæ6öç7FçG2–×÷'B6†EG—P¦g&öÒFVÆVw&ÒæW'&÷"–×÷'B&E&WVW7BÂFVÆVw&ÔW'&÷ ¦g&öÒFVÆVw&ÒæW‡B–×÷'B€¢Æ–6F–öâÀ¢6ÆÆ&6µVW'”†æFÆW"À¢6öÖÖæD†æFÆW"À¢6öçFW‡EG—W2À¢6öçfW'6F–öä†æFÆW"À¢ÖW76vT†æFÆW"À¢f–ÇFW'2À¢ ¢2Vç7W&R&ö¦V7B&ö÷B—2–×÷'F&ÆRv†VâF†—2f–ÆR—2'VâF—&V7FÇ’à¥$ô¤T5Eõ$ôõBÒF‚…õöf–ÆUõò’ç&W6öÇfR‚’ç&VçBç&Vç@¦–b7G"…$ô¤T5Eõ$ôõB’æ÷B–â7—2çFƒ ¢7—2çF‚æ–ç6W'BƒÂ7G"…$ô¤T5Eõ$ôõB’ ¦g&öÒ66÷VçG2æ7&VFVçF–Ç2–×÷'BVçf—&öæÖVçD7&VFVçF–Å&÷f–FW"Â66÷VçEöVçe÷&Vf—€¦g&öÒ66÷VçG2ç&Vv—7G'’–×÷'B€¢66÷VçDVçf—&öæÖVçBÀ¢66÷VçEÆFf÷&ÒÀ¢66÷VçE&Vv—7G'’À¢G&F–æt66÷VçBÀ¢6VÆV7Eö66÷VçG5öf÷%öÖöFRÀ¢¦g&öÒ66÷VçG2ç6æ6†÷G2–×÷'B×VÇF”66÷VçE6æ6†÷E&VFW"Âvw&VvFU÷f–Ww0¦g&öÒ6öæf–rç6WGF–æw2–×÷'B€¢U„T5UD”ôåôÔôDRÀ¢ÕCUôÔ…ôõTåõõ4•D”ôå2À¢ÕCUõDU$Ô”äÅõD‚À¢$”Ô%•ô44õTåEô”BÀ¢$•4µõU$4TåBÀ¢4”ätÄUô44õTåEôÔôDRÀ¢5”Ô$ôÅ2À¢¦g&öÒ6öçG&öÅ÷ÆæR–×÷'B6öçG&öÄ7F–öâÂ6öçG&öÄ6öÖÖæE7F÷&P¦g&öÒW†V7WF–öâæ×CUöW†V7WF÷"–×÷'BE5ôÔt”0¦g&öÒW"çW%÷G&FW"–×÷'BW%G&FW ¦g&öÒ'VçF–ÖU÷7FFR–×÷'B%TåD”ÔUôD•"24„$TEõ%TåD”ÔUôD• ¦g&öÒ'VçF–ÖU÷7FFR–×÷'B€¢†V'F&VEö—5ög&W6‚À¢&VEöÆÅ÷'VçF–ÖU÷7FFW2À¢&VE÷'VçF–ÖU÷7FFRÀ¢'VçF–ÖU÷7FFUöf–ÆRÀ¢¦g&öÒ×CUö—2–×÷'B6W&–Æ—¦VEö×CUö6ÆÀ¦g&öÒFVÆVw&Õö&÷BæÆW'EöÖöæ—F÷"–×÷'B€¢G&FTÆW'DÖöæ—F÷"À¢—5÷7V'67&–&VBÀ¢W%ö6Æ÷6VE÷÷6—F–öåöFWF–Ç2À¢W%öF–Ç•÷7VÖÖ'•÷6æ6†÷BÀ¢&VE÷W%÷÷6—F–öç2À¢7V'67&–&RÀ¢Vç7V'67&–&RÀ¢¦g&öÒFVÆVw&Õö&÷BæVF—B–×÷'BFVÆVw&ÔVF—DÆöp¦g&öÒFVÆVw&Õö&÷BæF6†&ö&B–×÷'Bf÷&ÖEöF6†&ö&BÂ×CUöF6†&ö&E÷6æ6†÷@¦g&öÒFVÆVw&Õö&÷BæÖVçW2–×÷'B€¢66÷VçEö¶W–&ö&BÀ¢66÷VçG5ö¶W–&ö&BÀ¢FEö'&ö¶W%ö¶W–&ö&BÀ¢FEöVçf—&öæÖVçEö¶W–&ö&BÀ¢FE÷ÆFf÷&Õö¶W–&ö&BÀ¢&6µö†öÖUö¶W–&ö&BÀ¢6öæf—&ÖF–öåö¶W–&ö&BÀ¢†öÖUö¶W–&ö&BÀ¢6fWG•ö¶W–&ö&BÀ¢6–ævÆUö66÷VçEö†öÖUö¶W–&ö&BÀ¢¦g&öÒFVÆVw&Õö&÷Bç6V7W&—G’–×÷'B€¢4ôåE$ôÅõ$ôÄRÀ¢õtäU%õ$ôÄRÀ¢$TEõ$ôÄRÀ¢FVÆVw&Ô66W75öÆ–7’À¢FVÆVw&Õ&öÆRÀ¢¦g&öÒFVÆVw&Õö&÷BçF÷G–×÷'BF÷GfW&–f–W  ¦ÆöEöF÷FVçb…$ô¤T5Eõ$ôõBò"æVçb"¥Dô´TâÒ÷2ævWFVçb‚%DTÄTu$Õô$õEõDô´Tâ" ¦Æövv–æræ&6–46öæf–r€¢f÷&ÖCÒ"R†67F–ÖR—2ÂR†ÆWfVÆæÖR—2ÂR†æÖR—2ÂR†ÖW76vR—2"À¢ÆWfVÃÖÆövv–ærä”ädòÀ¢¢2…EE&WVW7BU$Ç26öçF–âF†R&÷B’Fö¶Vã²æWfW"VÖ—BF†VÒB”ädòÆWfVÂà¦Æövv–ærævWDÆövvW"‚&‡GG‚"’ç6WDÆWfVÂ†Æövv–æråt$ä”är¦Æövv–ærævWDÆövvW"‚&‡GG6÷&R"’ç6WDÆWfVÂ†Æövv–æråt$ä”är¦ÆövvW"ÒÆövv–ærævWDÆövvW"‚&G2çFVÆVw&Ò"§W%÷G&FW"ÒW%G&FW"‚¥%TåD”ÔUôD•"Ò4„$TEõ%TåD”ÔUôD• ¤44õTåEõ$Tt•5E%’Ò66÷VçE&Vv—7G'’€¢%TåD”ÔUôD•"ò&66÷VçG5÷&Vv—7G'’æ§6öâ"À¢Ö…ö66÷VçG3Ó–b4”ätÄUô44õTåEôÔôDRVÇ6RÀ¢¤5$TDTåD”Å2ÒVçf—&öæÖVçD7&VFVçF–Å&÷f–FW"‚¤44õTåEõ$TDU"Ò×VÇF”66÷VçE6æ6†÷E&VFW"„5$TDTåD”Å2¤4ôåE$ôÅô4ôÔÔäE2Ò6öçG&öÄ6öÖÖæE7F÷&R…%TåD”ÔUôD•"ò&6öçG&öÂ"¤44U55õôÄ”5’ÒFVÆVw&Ô66W75öÆ–7’æg&öÕöVçb‚¤TD•EôÄôrÒFVÆVw&ÔVF—DÆör…%TåD”ÔUôD•"ò'FVÆVw&ÕöVF—Bæ§6öæÂ"¥DõEÒF÷GfW&–f–W"æg&öÕöVçb‚ ¢€¢DEôÄ$TÂÀ¢DEõÄDdõ$ÒÀ¢DEô%$ô´U"À¢DEô%$ô´U%ôäÔRÀ¢DEôTåbÀ¢DEôÄôt”âÀ¢DEõ4U%dU"À¢DEô4ôääT5D”ôâÀ¢’Ò&ævRƒ‚  ¦FVb÷&öÆR‡WFFS¢WFFR’ÓâFVÆVw&Õ&öÆRÂæöæS ¢W6W%ö–BÒWFFRæVffV7F—fU÷W6W"æ–B–bWFFRæVffV7F—fU÷W6W"VÇ6RæöæP¢&WGW&â44U55õôÄ”5’ç&öÆUöf÷"‡W6W%ö–B  ¦FVböÖævVEö66÷VçG2‚¢ÂVæ&ÆVEööæÇ“¢&ööÂÒfÇ6R’ÓâGWÆUµG&F–æt66÷VçBÂââåÓ ¢""%&WGW&âöæÇ’F†R6öæf–wW&VB66÷VçB66÷S²Ö&–wV÷W266÷W2f–Â6Æ÷6VBâ""  ¢G'“ ¢&WGW&â6VÆV7Eö66÷VçG5öf÷%öÖöFR€¢44õTåEõ$Tt•5E%’æÆ—7Eö66÷VçG2‚’À¢6–ævÆUö66÷VçEöÖöFSÕ4”ätÄUô44õTåEôÔôDRÀ¢&–Ö'•ö66÷VçEö–CÕ$”Ô%•ô44õTåEô”BÀ¢Væ&ÆVEööæÇ“ÖVæ&ÆVEööæÇ’À¢¢W†6WB'VçF–ÖTW'&÷"2W†3 ¢ÆövvW"æW'&÷"‚$66÷VçB66÷R—2æ÷B6öæf–wW&VB6fVÇ“¢W2"ÂW†2¢&WGW&â‚  ¦FVb÷&W6öÇfUöÖævVE÷Fö¶Vâ‡Fö¶Vã¢7G"’ÓâG&F–æt66÷VçC ¢66÷VçBÒ44õTåEõ$Tt•5E%’ç&W6öÇfU÷Fö¶Vâ‡Fö¶Vâ¢ÆÆ÷vVBÒ¶—FVÒæ66÷VçEö–Bf÷"—FVÒ–âöÖævVEö66÷VçG2‚—Ð¢–b66÷VçBæ66÷VçEö–Bæ÷B–âÆÆ÷vVC ¢&—6R¶W”W'&÷"‚$66÷VçB—2÷WG6–FRF†R6öæf–wW&VBFVÆVw&Ò66÷R"¢&WGW&â66÷Vç@  ¦FVbö66÷VçEöÖVçR€¢66÷VçC¢G&F–æt66÷VçBÂ&öÆS¢FVÆVw&Õ&öÆP¢’Óâ–æÆ–æT¶W–&ö&DÖ&·W ¢&WGW&â66÷VçEö¶W–&ö&B€¢66÷VçBÀ¢&öÆRÀ¢6–ævÆUö66÷VçEöÖöFSÕ4”ätÄUô44õTåEôÔôDRÀ¢  ¦FVbö†öÖUöÖVçR‡&öÆS¢FVÆVw&Õ&öÆR’Óâ–æÆ–æT¶W–&ö&DÖ&·W ¢–b4”ätÄUô44õTåEôÔôDS ¢66÷VçBÒæW‡B†—FW"…öÖævVEö66÷VçG2‚’’ÂæöæR¢&WGW&â6–ævÆUö66÷VçEö†öÖUö¶W–&ö&B‡&öÆRÂ66÷VçB¢&WGW&â†öÖUö¶W–&ö&B‡&öÆR  ¦7–æ2FVbVç7W&Uö66W72€¢WFFS¢WFFRÀ¢Ö–æ–×VÓ¢FVÆVw&Õ&öÆRÒ$TEõ$ôÄRÀ¢¢À¢&—fFUöf÷%ö6öçG&öÃ¢&ööÂÒfÇ6RÀ¢’ÓâFVÆVw&Õ&öÆRÂæöæS ¢W6W%ö–BÒWFFRæVffV7F—fU÷W6W"æ–B–bWFFRæVffV7F—fU÷W6W"VÇ6RæöæP¢&öÆRÒ44U55õôÄ”5’ç&öÆUöf÷"‡W6W%ö–B¢–b&öÆR—2æöæR÷"&öÆRÂÖ–æ–×VÓ ¢ÖW76vRÒ€¢.)¹BFVÆVw&Ò66W72—2æ÷B6öæf–wW&VBf÷"F†—2W6W"åÆåÆâ ¢b%–÷W"FVÆVw&ÒW6W"”C¢·W6W%ö–GÕÆâ ¢%F†R÷væW"×W7BFBF†—2çVÖW&–2”BFòF†R6W'fW"ÆÆ÷vÆ—7Bâ ¢¢–bWFFRæ6ÆÆ&6µ÷VW'“ ¢v—BWFFRæ6ÆÆ&6µ÷VW'’æç7vW"€¢b$66W72FVæ–VBâW6W"”C¢·W6W%ö–GÒ"Â6†÷uöÆW'CÕG'VP¢¢VÆ–bWFFRæVffV7F—fUöÖW76vS ¢v—BWFFRæVffV7F—fUöÖW76vRç&WÇ•÷FW‡B†ÖW76vR¢&WGW&âæöæP¢–b&—fFUöf÷%ö6öçG&öÂæB€¢æ÷BWFFRæVffV7F—fUö6†B÷"WFFRæVffV7F—fUö6†BçG—RÒ6†EG—Rå$•dDP¢“ ¢–bWFFRæ6ÆÆ&6µ÷VW'“ ¢v—BWFFRæ6ÆÆ&6µ÷VW'’æç7vW"€¢$6öçG&öÇ2&RÆÆ÷vVBöæÇ’–â&—fFR6†B"Â6†÷uöÆW'CÕG'VP¢¢VÆ–bWFFRæVffV7F—fUöÖW76vS ¢v—BWFFRæVffV7F—fUöÖW76vRç&WÇ•÷FW‡B€¢.)¹BG&F–ær6öçG&öÇ2&RÆÆ÷vVBöæÇ’–â&—fFR6†Bâ ¢¢&WGW&âæöæP¢&WGW&â&öÆP  ¦FVbö†öÖU÷FW‡B‡&öÆS¢FVÆVw&Õ&öÆR’Óâ7G# ¢ÆÅö66÷VçG2Ò44õTåEõ$Tt•5E%’æÆ—7Eö66÷VçG2‚¢66÷VçG2ÒöÖævVEö66÷VçG2‚¢Væ&ÆVBÒ7VÒ†66÷VçBæVæ&ÆVBf÷"66÷VçB–â66÷VçG2¢Æ—fRÒ7VÒ†66÷VçBæ—5öÆ—fRf÷"66÷VçB–â66÷VçG2¢7FGW2Â7FFRÒ'VçF–ÖU÷7FGW2‚¢v÷&¶W%÷7FFW2Ò&VEöÆÅ÷'VçF–ÖU÷7FFW2‚¢g&W6…÷v÷&¶W'2Ò7VÒ††V'F&VEö—5ög&W6‚†—FVÒ’f÷"—FVÒ–âv÷&¶W%÷7FFW2¢FVÆVÖWG'’Ò7FFRævWB‚&FV6—6–öå÷FVÆVÖWG'’"’÷"·Ð¢7–6ÆU÷7FvW2ÒFVÆVÖWG'’ævWB‚&7–6ÆU÷7FvW2"’÷"·Ð¢7–6ÆU÷&V6öç2ÒFVÆVÖWG'’ævWB‚&7–6ÆU÷&V6öç2"’÷"·Ð¢F–væ÷7F–5öÆ–æW2ÒµÐ¢–b7–6ÆU÷7FvW3 ¢F–væ÷7F–5öÆ–æW2æVæB€¢$Æ7B66ã¢ ¢b'¶–çB†7–6ÆU÷7FvW2ævWB‚u5E$DTu•ô5D”ôä$ÄRrÂ’—Ò7F–öæ&ÆR+r ¢b'¶–çB†7–6ÆU÷7FvW2ævWB‚u5E$DTu•ô„ôÄBrÂ’—Ò†VÆB+r ¢b'¶–çB†7–6ÆU÷7FvW2ævWB‚uõ%DdôÄ”õõ$•4µô$Äô4´TBrÂ’—Ò&—6²Ö&Æö6¶VB+r ¢b'¶–çB†7–6ÆU÷7FvW2ævWB‚tU„T5UDTBrÂ’—ÒW†V7WFVB ¢¢–b7–6ÆU÷&V6öç3 ¢F÷÷&V6öâÒæW‡B†—FW"†7–6ÆU÷&V6öç2’¢F–væ÷7F–5öÆ–æW2æVæB€¢b%F÷vFS¢·F÷÷&V6öâç7Æ—B‚s¢rÂ•²Ó×Ò ¢¢F–væ÷7F–5÷FW‡BÒ€¢%Æâ"²%Æâ"æ¦ö–â†F–væ÷7F–5öÆ–æW2’²%Æâ ¢–bF–væ÷7F–5öÆ–æW0¢VÇ6R" ¢¢–b4”ätÄUô44õTåEôÔôDS ¢–b66÷VçG3 ¢66÷VçEöÆ–æRÒ€¢b$66÷VçC¢¶66÷VçG5³ÒæÆ&VÇÒ+r¶66÷VçG5³ÒçÆFf÷&ÒçfÇVWÒ ¢b'¶66÷VçG5³ÒæVçf—&öæÖVçBçfÇVWÒ ¢¢VÆ–bÆVâ†ÆÅö66÷VçG2’âæBæ÷B$”Ô%•ô44õTåEô”C ¢66÷VçEöÆ–æRÒ€¢$66÷VçC¢4TÄT5D”ôâ$UT•$TEÆâ ¢%6WBE5õ$”Ô%•ô44õTåEô”BFòöæR&Vv—7FW&VB66÷VçBâ ¢¢VÆ–b$”Ô%•ô44õTåEô”BæBæ÷B66÷VçG3 ¢66÷VçEöÆ–æRÒ$66÷VçC¢4ôäd”uU$D”ôâU%$õ" ¢VÇ6S ¢66÷VçEöÆ–æRÒ$66÷VçC¢äõB4UBU ¢&WGW&â€¢/	úIbE2Õ’44õTåEÆåÆâ ¢b'¶66÷VçEöÆ–æWÕÆâ ¢b$Væv–æS¢·7FGW7ÕÆâ ¢b%v÷&¶W#¢²t4ôääT5DTBr–bg&W6…÷v÷&¶W'2VÇ6RtôddÄ”äRwÕÆâ ¢b$W†V7WF–öâÖöFS¢·7FFRævWB‚vW†V7WF–öåöÖöFRrÂU„T5UD”ôåôÔôDR—ÕÆâ ¢b'¶F–væ÷7F–5÷FW‡GÒ ¢$Æ—fRW†V7WF–öã¢Äô4´TB	ùI%Æâ ¢b%&öÆS¢·&öÆRææÖRç&WÆ6R‚uòrÂrr—Ò ¢¢&WGW&â€¢/	úIbE2$TåB4ôåE$ôÅÆåÆâ ¢b$Væv–æS¢·7FGW7ÕÆâ ¢b%&Vv—7FW&VB66÷VçG3¢¶ÆVâ†66÷VçG2—Ò‡¶Væ&ÆVGÒVæ&ÆVB•Æâ ¢b$g&W6‚v÷&¶W'3¢¶g&W6…÷v÷&¶W'7Ò÷¶ÆVâ‡v÷&¶W%÷7FFW2—ÕÆâ ¢b$Æ—fR66÷VçG3¢¶Æ—fWÒ	ùI%Æâ ¢b$W†V7WF–öâÖöFS¢·7FFRævWB‚vW†V7WF–öåöÖöFRrÂU„T5UD”ôåôÔôDR—ÕÆâ ¢b%&öÆS¢·&öÆRææÖRç&WÆ6R‚uòrÂrr—ÕÆåÆâ ¢%66÷S¢ÄÂ44õTåE2 ¢  ¦7–æ2FVböVF—Eö÷%÷&WÇ’€¢WFFS¢WFFRÂFW‡C¢7G"Â&WÇ•öÖ&·W¢–æÆ–æT¶W–&ö&DÖ&·W ¢’ÓâæöæS ¢–bWFFRæ6ÆÆ&6µ÷VW'“ ¢G'“ ¢v—BWFFRæ6ÆÆ&6µ÷VW'’æVF—EöÖW76vU÷FW‡B€¢FW‡C×FW‡BÂ&WÇ•öÖ&·W×&WÇ•öÖ&·W ¢¢W†6WB&E&WVW7B2W†3 ¢–b&ÖW76vR—2æ÷BÖöF–f–VB"æ÷B–â7G"†W†2’æÆ÷vW"‚“ ¢&—6P¢VÆ–bWFFRæVffV7F—fUöÖW76vS ¢v—BWFFRæVffV7F—fUöÖW76vRç&WÇ•÷FW‡B‡FW‡C×FW‡BÂ&WÇ•öÖ&·W×&WÇ•öÖ&·W  ¦FVbÖöæW’‡fÇVS¢ç’’Óâ7G# ¢G'“ ¢&WGW&âb"G¶fÆöB‡fÇVR“¢Âã&gÒ ¢W†6WB…G—TW'&÷"ÂfÇVTW'&÷"“ ¢&WGW&â"Cã   ¦FVb'VçF–ÖU÷7FGW2‚’ÓâGWÆU·7G"ÂF–7E·7G"Âç•ÕÓ ¢7FFRÒ&VE÷'VçF–ÖU÷7FFR‚¢–b†V'F&VEö—5ög&W6‚‡7FFR“ ¢&WGW&â7G"‡7FFRævWB‚'7FGW2"Â%%Tää”är"’’Â7FFP¢–b7FFRævWB‚'7FGW2"’ÓÒ%5DõTB# ¢&WGW&â%5DõTB"Â7FFP¢&WGW&â%5DõTB†æò&V6VçB†V'F&VB’"Â7FFP  ¤6W&–Æ—¦VEö×CUö6ÆÀ¦FVb×CU÷6æ6†÷B‚’ÓâF–7E·7G"Âç•Ó ¢""%&VBÆ—fR66÷VçBæBE2ÖÖævVB÷6—F–öç2F—&V7FÇ’g&öÒÕCRâ"" ¢G'“ ¢–×÷'BÖWFG&FW#R2×CP¢W†6WB–×÷'DW'&÷"2W†3 ¢&—6R'VçF–ÖTW'&÷"‚$ÖWFG&FW#R6¶vR—2æ÷B–ç7FÆÆVBâ"’g&öÒW†0 ¢–bæ÷B×CRæ–æ—F–Æ—¦R‡FƒÔÕCUõDU$Ô”äÅõD‚“ ¢&—6R'VçF–ÖTW'&÷"†b$ÕCR–æ—F–Æ—¦F–öâf–ÆVC¢¶×CRæÆ7EöW'&÷"‚—Ò" ¢G'“ ¢66÷VçBÒ×CRæ66÷VçEö–æfò‚¢–b66÷VçB—2æöæS ¢&—6R'VçF–ÖTW'&÷"‚$ÕCR66÷VçB–æf÷&ÖF–öâ—2Væf–Æ&ÆRâ" ¢÷6—F–öç2Ò°¢÷6—F–öà¢f÷"÷6—F–öâ–âÆ—7B†×CRç÷6—F–öç5övWB‚’÷"µÒ¢–bvWFGG"‡÷6—F–öâÂ&Öv–2"ÂæöæR’ÓÒE5ôÔt”0¢Ð¢&WGW&â°¢&Æöv–â#¢vWFGG"†66÷VçBÂ&Æöv–â"ÂæöæR’À¢'6W'fW"#¢vWFGG"†66÷VçBÂ'6W'fW""Â%Væ¶æ÷vâ"’À¢&&Ææ6R#¢fÆöB†vWFGG"†66÷VçBÂ&&Ææ6R"Âã’’À¢&WV—G’#¢fÆöB†vWFGG"†66÷VçBÂ&WV—G’"Âã’’À¢'&öf—B#¢fÆöB†vWFGG"†66÷VçBÂ'&öf—B"Âã’’À¢&Ö&v–â#¢fÆöB†vWFGG"†66÷VçBÂ&Ö&v–â"Âã’’À¢&Ö&v–åög&VR#¢fÆöB†vWFGG"†66÷VçBÂ&Ö&v–åög&VR"Âã’’À¢'÷6—F–öç2#¢÷6—F–öç2À¢Ð¢f–æÆÇ“ ¢×CRç6‡WFF÷vâ‚  ¦FVbW%÷6æ6†÷B‚’ÓâF–7E·7G"Âç•Ó ¢W%÷G&FW"æÆöE÷G&FW2‚¢7FG2ÒW%÷G&FW"ævWE÷7FG2‚¢&WGW&â°¢&&Ææ6R#¢7FG5²&&Ææ6R%ÒÀ¢&WV—G’#¢7FG5²&WV—G’%ÒÀ¢'&öf—B#¢7FG5²&fÆöF–æu÷æÂ%ÒÀ¢'÷6—F–öç2#¢W%÷G&FW"æ÷Vå÷G&FW2À¢'7FG2#¢7FG2À¢Ð  ¦FVb66÷VçE÷6æ6†÷B‚’ÓâF–7E·7G"Âç•Ó ¢–bU„T5UD”ôåôÔôDR–â²$ÕCUôDTÔò"Â$ÕCUôÄ•dR'Ó ¢&WGW&â×CU÷6æ6†÷B‚¢&WGW&âW%÷6æ6†÷B‚  ¦7–æ2FVb7F'Eö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢&öÆRÒv—BVç7W&Uö66W72‡WFFR¢–b&öÆR—2æöæS ¢&WGW&à¢–bWFFRæVffV7F—fUö6†C ¢7V'67&–&R‡WFFRæVffV7F—fUö6†Bæ–B¢v—BöVF—Eö÷%÷&WÇ’‡WFFRÂö†öÖU÷FW‡B‡&öÆR’Âö†öÖUöÖVçR‡&öÆR’  ¦7–æ2FVb†VÇö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢&öÆRÒv—BVç7W&Uö66W72‡WFFR¢–b&öÆR—2æöæR÷"æ÷BWFFRæVffV7F—fUöÖW76vS ¢&WGW&à¢v—BWFFRæVffV7F—fUöÖW76vRç&WÇ•÷FW‡B€¢/	úIbE24ôÔÔäE5ÆåÆâ ¢"öÖVçRÒ66÷VçB6öçG&öÂ'WGFöç5Æâ ¢"÷7FGW2ÒVæv–æR7FGW5Æâ ¢"öF6†&ö&BÒ7W'&VçB&–Ö'’66÷VçBF6†&ö&EÆâ ¢"ö&Ææ6RÒ&–Ö'’66÷VçB&Ææ6UÆâ ¢"öWV—G’Ò&–Ö'’66÷VçBWV—G•Æâ ¢"÷÷6—F–öç2ÒE2ÖÖævVB÷6—F–öç5Æâ ¢"÷&öf—BÒG&F–ærW&f÷&Öæ6UÆâ ¢"öæÇ—6—2ÒÖ&¶WBæÇ—6—5Æâ ¢"öÆW'G2ÒÆW'B7V'67&—F–öåÆâ ¢"ö6æ6VÂÒ6æ6VÂ66÷VçB6WGW ¢  ¦7–æ2FVbÆW'G5ö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vR÷"æ÷BWFFRæVffV7F—fUö6†C ¢&WGW&à¢Væ&ÆVBÒ—5÷7V'67&–&VB‡WFFRæVffV7F—fUö6†Bæ–B¢7FFRÒ$Tä$ÄTB)ÈR"–bVæ&ÆVBVÇ6R$D•4$ÄTB)ØÂ ¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B€¢/	ùIBE2UDôÔD”2ÄU%E5ÆåÆâ ¢b%7FGW3¢·7FFWÕÆâ ¢$–æ6ÇVFW3¢G&FR÷VæVBÂG&FR6Æ÷6VBÂ4ÂõE&V6öâæBF–Ç’UD27VÖÖ'’â ¢  ¦7–æ2FVbÆW'G5ööåö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vR÷"æ÷BWFFRæVffV7F—fUö6†C ¢&WGW&à¢7V'67&–&R‡WFFRæVffV7F—fUö6†Bæ–B¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B€¢/	ùIBWFöÖF–2E2ÆW'G2Væ&ÆVBåÆåÆâ ¢%–÷Rv–ÆÂ&V6V—fRG&FRÖ÷VâÂG&FRÖ6Æ÷6RæBF–Ç’×7VÖÖ'’æ÷F–f–6F–öç2â ¢  ¦7–æ2FVbÆW'G5ööfeö6öÖÖæB€¢WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•P¢’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vR÷"æ÷BWFFRæVffV7F—fUö6†C ¢&WGW&à¢Vç7V'67&–&R‡WFFRæVffV7F—fUö6†Bæ–B¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B‚/	ùIRWFöÖF–2E2ÆW'G2F—6&ÆVBf÷"F†—26†Bâ"  ¦7–æ2FVb7FGW5ö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à ¢7FGW2Â7FFRÒ'VçF–ÖU÷7FGW2‚¢†6RÒ7FFRævWB‚'†6R"Â%Væ¶æ÷vâ"¢ÖöFRÒ7FFRævWB‚&W†V7WF–öåöÖöFR"ÂU„T5UD”ôåôÔôDR¢66ææVBÒ7FFRævWB‚'66ææVE÷7–Ö&öÇ2"Â¢F÷FÂÒ7FFRævWB‚'F÷FÅ÷7–Ö&öÇ2"Â¢7W'&VçE÷7–Ö&öÂÒ7FFRævWB‚&7W'&VçE÷7–Ö&öÂ"’÷"$æöæR ¢†V'F&VBÒ7FFRævWB‚&†V'F&VE÷WF2"Â$æò†V'F&VB" ¢FW‡BÒ€¢.)©žûˆòE2Ä•dR5DEU5ÆåÆâ ¢b$&÷B7FGW3¢·7FGW7ÕÆâ ¢b$W†V7WF–öâÖöFS¢¶ÖöFWÕÆâ ¢b%†6S¢·†6WÕÆâ ¢b%66â&öw&W73¢·66ææVGÒ÷·F÷FÇÕÆâ ¢b$7W'&VçB7–Ö&öÃ¢¶7W'&VçE÷7–Ö&öÇÕÆâ ¢b$†V'F&VB…UD2“¢¶†V'F&VGÒ ¢¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B‡FW‡B  ¦7–æ2FVbF6†&ö&Eö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à¢G'“ ¢6æ6†÷BÒv—B7–æ6–òçFõ÷F‡&VB†×CUöF6†&ö&E÷6æ6†÷B¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†f÷&ÖEöF6†&ö&B‡6æ6†÷B’¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚$F6†&ö&B6öÖÖæBf–ÆVB"¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†b.)ØÂ6÷VÆBæ÷B'V–ÆBÆ—fRF6†&ö&BåÆåÆç¶W†7Ò"  ¦7–æ2FVb&Ææ6Uö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à¢G'“ ¢6æ6†÷BÒv—B7–æ6–òçFõ÷F‡&VB†66÷VçE÷6æ6†÷B¢Æ&VÂÒ€¢b'´U„T5UD”ôåôÔôDRç&WÆ6R‚uòrÂrr—Ò44õTåB ¢–bU„T5UD”ôåôÔôDR–â²$ÕCUôDTÔò"Â$ÕCUôÄ•dR'Ð¢VÇ6R%U"44õTåB ¢¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B€¢b/	ù+¶Æ&VÇÕÆåÆâ ¢b$&Ææ6S¢¶ÖöæW’‡6æ6†÷E²v&Ææ6RuÒ—ÕÆâ ¢b$ÖöFS¢´U„T5UD”ôåôÔôDWÒ ¢¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚$&Ææ6R6öÖÖæBf–ÆVB"¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†b.)ØÂ6÷VÆBæ÷B&VB66÷VçB&Ææ6RåÆåÆç¶W†7Ò"  ¦7–æ2FVbWV—G•ö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à¢G'“ ¢6æ6†÷BÒv—B7–æ6–òçFõ÷F‡&VB†66÷VçE÷6æ6†÷B¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B€¢/	ù8¢Ä•dR44õTåBUT•E•ÆåÆâ ¢b$&Ææ6S¢¶ÖöæW’‡6æ6†÷E²v&Ææ6RuÒ—ÕÆâ ¢b$fÆöF–ærôÃ¢¶ÖöæW’‡6æ6†÷E²w&öf—BuÒ—ÕÆâ ¢b$WV—G“¢¶ÖöæW’‡6æ6†÷E²vWV—G’uÒ—Ò ¢¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚$WV—G’6öÖÖæBf–ÆVB"¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†b.)ØÂ6÷VÆBæ÷B&VB66÷VçBWV—G’åÆåÆç¶W†7Ò"  ¦7–æ2FVb÷6—F–öç5ö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à¢G'“ ¢6æ6†÷BÒv—B7–æ6–òçFõ÷F‡&VB†66÷VçE÷6æ6†÷B¢÷6—F–öç2Ò6æ6†÷E²'÷6—F–öç2%Ð¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚%÷6—F–öç26öÖÖæBf–ÆVB"¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†b.)ØÂ6÷VÆBæ÷B&VB÷6—F–öç2åÆåÆç¶W†7Ò"¢&WGW&à ¢–bæ÷B÷6—F–öç3 ¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B€¢/	ù:ÒõTâõ4•D”ôå5ÆåÆäæòE2÷6—F–öç2&R÷Vââ ¢¢&WGW&à ¢Æ–æW2Ò²/	ù8‚E2õTâõ4•D”ôå2"Â"%Ð¢–bU„T5UD”ôåôÔôDR–â²$ÕCUôDTÔò"Â$ÕCUôÄ•dR'Ó ¢f÷"–æFW‚Â÷6—F–öâ–âVçVÖW&FR‡÷6—F–öç2Â7F'CÓ“ ¢6–FRÒ$%U’"–bvWFGG"‡÷6—F–öâÂ'G—R"Â’ÓÒVÇ6R%4TÄÂ ¢Æ–æW2æW‡FVæB€¢°¢b'¶–æFW‡Òâ¶vWFGG"‡÷6—F–öâÂw7–Ö&öÂrÂuVæ¶æ÷vâr—ÒÂ·6–FWÒ"À¢b%F–6¶WC¢¶vWFGG"‡÷6—F–öâÂwF–6¶WBrÂtâôr—Ò"À¢b%föÇVÖS¢¶vWFGG"‡÷6—F–öâÂwföÇVÖRrÂtâôr—Ò"À¢b$VçG'“¢¶vWFGG"‡÷6—F–öâÂw&–6Uö÷VârÂtâôr—Ò"À¢b$7W'&VçC¢¶vWFGG"‡÷6—F–öâÂw&–6Uö7W'&VçBrÂtâôr—Ò"À¢b%ôÃ¢¶ÖöæW’†vWFGG"‡÷6—F–öâÂw&öf—BrÂã’—Ò"À¢b%4Ã¢¶vWFGG"‡÷6—F–öâÂw6ÂrÂtâôr—Ò"À¢b%E¢¶vWFGG"‡÷6—F–öâÂwGrÂtâôr—Ò"À¢""À¢Ð¢¢VÇ6S ¢f÷"–æFW‚ÂG&FR–âVçVÖW&FR‡÷6—F–öç2Â7F'CÓ“ ¢Æ–æW2æW‡FVæB€¢°¢b'¶–æFW‡Òâ·G&FRævWB‚w7–Ö&öÂrÂuVæ¶æ÷vâr—ÒÂ·G&FRævWB‚w6–væÂrÂuVæ¶æ÷vâr—Ò"À¢b$VçG'“¢·G&FRævWB‚vVçG'’rÂtâôr—Ò"À¢b%4Ã¢·G&FRævWB‚w7F÷öÆ÷72rÂtâôr—Ò"À¢b%E¢·G&FRævWB‚wF¶U÷&öf—BrÂtâôr—Ò"À¢""À¢Ð¢ ¢FW‡BÒ%Æâ"æ¦ö–â†Æ–æW2¢f÷"7F'B–â&ævRƒÂÆVâ‡FW‡B’Â3““ ¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B‡FW‡E·7F'B¢7F'B²3“Ò  ¦7–æ2FVb&öf—Eö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à¢G'“ ¢6æ6†÷BÒv—B7–æ6–òçFõ÷F‡&VB†66÷VçE÷6æ6†÷B¢÷6—F–öç2Ò6æ6†÷E²'÷6—F–öç2%Ð¢–bU„T5UD”ôåôÔôDR–â²$ÕCUôDTÔò"Â$ÕCUôÄ•dR'Ó ¢ÖævVE÷&öf—BÒ7VÒ†fÆöB†vWFGG"‡Â'&öf—B"Âã’’f÷"–â÷6—F–öç2¢FW‡BÒ€¢/	ù8‚Ä•dRÕCRU$dõ$Ôä4UÆåÆâ ¢b$E2÷Vâ÷6—F–öç3¢¶ÆVâ‡÷6—F–öç2—ÕÆâ ¢b$E2fÆöF–ærôÃ¢¶ÖöæW’†ÖævVE÷&öf—B—ÕÆâ ¢b$66÷VçBfÆöF–ærôÃ¢¶ÖöæW’‡6æ6†÷E²w&öf—BuÒ—ÕÆâ ¢b$WV—G“¢¶ÖöæW’‡6æ6†÷E²vWV—G’uÒ—Ò ¢¢VÇ6S ¢7FG2Ò6æ6†÷E²'7FG2%Ð¢FW‡BÒ€¢/	ù8‚U"U$dõ$Ôä4UÆåÆâ ¢b$6Æ÷6VBG&FW3¢·7FG5²wF÷FÅ÷G&FW2u×ÕÆâ ¢b%v–ç3¢·7FG5²wv–ç2u×ÕÆâ ¢b%v–â&FS¢·7FG5²wv–å÷&FRu×ÒUÆâ ¢b$æWBôÃ¢¶ÖöæW’‡7FG5²wF÷FÅ÷æÂuÒ—Ò ¢¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B‡FW‡B¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚%&öf—B6öÖÖæBf–ÆVB"¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†b.)ØÂ6÷VÆBæ÷B&VBW&f÷&Öæ6RåÆåÆç¶W†7Ò"  ¦FVb'VåöæÇ—6—5÷7–æ2‚’Óâ7G# ¢g&öÒ6öæf–rç6WGF–æw2–×÷'B„”t„U%õD”ÔTe$ÔRÂE$D”äuõD”ÔTe$ÔP¢g&öÒFFæÖ&¶WEöFF–×÷'BÖ&¶WDFF¢g&öÒ–æF–6F÷'2çFV6†æ–6Â–×÷'BFV6†æ–6Ä–æF–6F÷'0¢g&öÒ7G&FVw’ç6–væÅöVæv–æR–×÷'B6–væÄVæv–æP ¢Ö&¶WBÒÖ&¶WDFF‚¢–æF–6F÷"ÒFV6†æ–6Ä–æF–6F÷'2‚¢6–væÅöVæv–æRÒ6–væÄVæv–æR‚¢ÆÅöFFÒÖ&¶WBæF÷væÆöEöÆÅöFF†–çFW'fÃÕE$D”äuõD”ÔTe$ÔR¢†–v†W%÷FeöFFÒÖ&¶WBæF÷væÆöEöÆÅöFF†–çFW'fÃÔ„”t„U%õD”ÔTe$ÔR¢&W7VÇG2ÒµÐ ¢f÷"7–Ö&öÂÂFF–âÆÅöFFæ—FV×2‚“ ¢G'“ ¢æÇ—¦VEöFFÒ–æF–6F÷"æFEö–æF–6F÷'2†FF¢6–væÂÒ6–væÅöVæv–æRævVæW&FUöæÇ—6—2€¢æÇ—¦VEöFFÂ7–Ö&öÂÂ†–v†W%÷FeöFFævWB‡7–Ö&öÂ¢¢&W7VÇG2æVæB€¢°¢'7–Ö&öÂ#¢7–Ö&öÂÀ¢'6–væÂ#¢6–væÂævWB‚'6–væÂ"Â$„ôÄB"’À¢&6öæf–FVæ6R#¢6–væÂævWB‚&6öæf–FVæ6R"Â’À¢'&V6öç2#¢6–væÂævWB‚'&V6öç2"ÂµÒ’À¢&FV6—6–öå÷&W÷'B#¢6–væÂævWB‚&FV6—6–öå÷&W÷'B"Â·Ò’À¢Ð¢¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚$æÇ—6—2f–ÆVBf÷"W2"Â7–Ö&öÂ¢&W7VÇG2æVæB€¢°¢'7–Ö&öÂ#¢7–Ö&öÂÀ¢'6–væÂ#¢$U%$õ""À¢&6öæf–FVæ6R#¢À¢'&V6öç2#¢·7G"†W†2•ÒÀ¢&FV6—6–öå÷&W÷'B#¢°¢&FV6—6–öâ#¢$U%$õ""À¢'7FGW2#¢%$T¤T5DTB"À¢&&÷fVB#¢fÇ6RÀ¢&6öæf–FVæ6R#¢À¢'66÷&R#¢À¢'&V6öç2#¢·7G"†W†2•ÒÀ¢&FV6—6–öå÷7VÖÖ'’#¢²'÷6—F—fR#¢µÒÂ'v&æ–æw2#¢·7G"†W†2•×ÒÀ¢'&V¦V7F–öå÷&V6öç2#¢·7G"†W†2•ÒÀ¢'&W÷'E÷FW‡B#¢b$FV6—6–öã¢U%$õ%Æå7FGW3¢$T¤T5DTEÆä6öæf–FVæ6S¢UÆå66÷&S¢Æå&V¦V7F–öâ&V6öç3¥ÆâÒ¶W†7Ò"À¢ÒÀ¢Ð¢ ¢–bæ÷B&W7VÇG3 ¢&WGW&â$æòÖ&¶WBFFv2&WGW&æVBâ  ¢Æ–æW2Ò²/	úzE2Ô$´UBäÅ•4•2"Â"%Ð¢f÷"&W7VÇB–â&W7VÇG3 ¢Æ–æW2æVæB€¢b'·&W7VÇE²w7–Ö&öÂu×ÒÂ·&W7VÇE²w6–væÂu×ÒÂ·&W7VÇE²v6öæf–FVæ6Ru×ÒR ¢¢FV6—6–öå÷&W÷'BÒ&W7VÇBævWB‚&FV6—6–öå÷&W÷'B"’÷"·Ð¢–bFV6—6–öå÷&W÷'BævWB‚'&W÷'E÷FW‡B"“ ¢Æ–æW2æVæB†FV6—6–öå÷&W÷'E²'&W÷'E÷FW‡B%Ò¢f÷"&V6öâ–â&W7VÇE²'&V6öç2%Õ³£%Ó ¢Æ–æW2æVæB†b.(
+"·&V6öçÒ"¢Æ–æW2æVæB‚""¢&WGW&â%Æâ"æ¦ö–â†Æ–æW2  ¦7–æ2FVbæÇ—6—5ö6öÖÖæB‡WFFS¢WFFRÂ6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•R’ÓâæöæS ¢–bv—BVç7W&Uö66W72‡WFFR’—2æöæS ¢&WGW&à¢–bæ÷BWFFRæÖW76vS ¢&WGW&à¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B‚/	ùHÒ'Vææ–ærE2Ö&¶WBæÇ—6—2âÆV6Rv—Bâââ"¢G'“ ¢&W7VÇBÒv—B7–æ6–òçFõ÷F‡&VB‡'VåöæÇ—6—5÷7–æ2¢f÷"7F'B–â&ævRƒÂÆVâ‡&W7VÇB’Â3““ ¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B‡&W7VÇE·7F'B¢7F'B²3“Ò¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚$Ö&¶WBæÇ—6—26öÖÖæBf–ÆVB"¢v—BWFFRæÖW76vRç&WÇ•÷FW‡B†b.)ØÂæÇ—6—2f–ÆVBåÆåÆäW'&÷#¢¶W†7Ò"  ¦FVbö66÷VçE÷7FGW5ö–6öâ‡7FGW3¢7G"’Óâ7G# ¢–b7FGW2ÓÒ$4ôääT5DTB# ¢&WGW&â/	ùú" ¢–b7FGW2–â²$D•4$ÄTB"Â%4UEUõ$UT•$TB'Ó ¢&WGW&â.)ª²"–b7FGW2ÓÒ$D•4$ÄTB"VÇ6R/	ùú ¢&WGW&â/	ùKB   ¦7–æ2FVb÷6†÷uö66÷VçG2‡WFFS¢WFFRÂ&öÆS¢FVÆVw&Õ&öÆRÂvS¢–çBÒ’ÓâæöæS ¢66÷VçG2ÒöÖævVEö66÷VçG2‚¢Væ&ÆVBÒ7VÒ†66÷VçBæVæ&ÆVBf÷"66÷VçB–â66÷VçG2¢FW‡BÒ€¢/	øúbÔätTB44õTåE5ÆåÆâ ¢b%&Vv—7FW&VC¢¶ÆVâ†66÷VçG2—ÕÆâ ¢b$Væ&ÆVC¢¶Væ&ÆVGÕÆâ ¢b$F—6&ÆVC¢¶ÆVâ†66÷VçG2’ÒVæ&ÆVGÕÆåÆâ ¢/	ùI"ÖVç2&Vv—7FW&VBÆ—fR66÷VçC²Æ—fRW†V7WF–öâ&VÖ–ç2Æö6¶VBâ ¢¢–bæ÷B66÷VçG3 ¢FW‡B³Ò%ÆåÆäæò66÷VçG2&Vv—7FW&VB–WBâ ¢v—BöVF—Eö÷%÷&WÇ’‡WFFRÂFW‡BÂ66÷VçG5ö¶W–&ö&B†66÷VçG2ÂvRÂ&öÆR’  ¦7–æ2FVb÷6†÷u÷÷'FföÆ–ò‡WFFS¢WFFR’ÓâæöæS ¢66÷VçG2ÒöÖævVEö66÷VçG2†Væ&ÆVEööæÇ“ÕG'VR¢f–Ww2Òv—B7–æ6–òçFõ÷F‡&VB„44õTåEõ$TDU"ç&VEöÖç’Â66÷VçG2¢F÷FÇ2Òvw&VvFU÷f–Ww2‡f–Ww2¢—77VW2Ò°¢b.(
+"·f–Wræ66÷VçEö–GÓ¢·f–Wrç7FGW7Ò ¢f÷"f–Wr–âf–Ww0¢–bf–Wrç7FGW2Ò$4ôääT5DTB ¢Ð¢FW‡BÒ€¢/	ù8¢$TåBõ%DdôÄ”õÆåÆâ ¢b$6öææV7FVC¢·F÷FÇ5²v6öææV7FVBu×Ò÷·F÷FÇ5²v66÷VçG2u×ÕÆâ ¢b$&Ææ6S¢¶ÖöæW’‡F÷FÇ5²v&Ææ6RuÒ—ÕÆâ ¢b$WV—G“¢¶ÖöæW’‡F÷FÇ5²vWV—G’uÒ—ÕÆâ ¢b$fÆöF–ærôÃ¢¶ÖöæW’‡F÷FÇ5²vfÆöF–æu÷æÂuÒ—ÕÆâ ¢b$E2÷6—F–öç3¢·F÷FÇ5²v÷Vå÷÷6—F–öç2u×ÕÆâ ¢b$66÷VçG2æVVF–ærGFVçF–öã¢·F÷FÇ5²v—77VW2u×Ò ¢¢–b—77VW3 ¢FW‡B³Ò%ÆåÆâ"²%Æâ"æ¦ö–â†—77VW5³£…Ò¢v—BöVF—Eö÷%÷&WÇ’‡WFFRÂFW‡BÂ&6µö†öÖUö¶W–&ö&B‚’  ¦7–æ2FVb÷6†÷u÷÷6—F–öç5ö÷fW'f–Wr‡WFFS¢WFFR’ÓâæöæS ¢66÷VçG2ÒöÖævVEö66÷VçG2†Væ&ÆVEööæÇ“ÕG'VR¢f–Ww2Òv—B7–æ6–òçFõ÷F‡&VB„44õTåEõ$TDU"ç&VEöÖç’Â66÷VçG2¢Æ–æW2Ò²/	ù8‚E2õ4•D”ôå2%’44õTåB"Â"%Ð¢f÷"66÷VçBÂf–Wr–â¦—†66÷VçG2Âf–Ww2“ ¢Æ–æW2æVæB€¢b'µö66÷VçE÷7FGW5ö–6öâ‡f–Wrç7FGW2—Ò¶66÷VçBæÆ&VÇÓ¢ ¢b'·f–Wræ÷Vå÷÷6—F–öç7Ò÷6—F–öç2+r¶ÖöæW’‡f–WræfÆöF–æu÷æÂ—Ò ¢¢–bæ÷B66÷VçG3 ¢Æ–æW2æVæB‚$æòVæ&ÆVB66÷VçG2&R&Vv—7FW&VBâ"¢v—BöVF—Eö÷%÷&WÇ’‡WFFRÂ%Æâ"æ¦ö–â†Æ–æW2’Â&6µö†öÖUö¶W–&ö&B‚’  ¦7–æ2FVb÷6†÷uö66÷VçB‡WFFS¢WFFRÂ&öÆS¢FVÆVw&Õ&öÆRÂFö¶Vã¢7G"’ÓâæöæS ¢G'“ ¢66÷VçBÒ÷&W6öÇfUöÖævVE÷Fö¶Vâ‡Fö¶Vâ¢W†6WB¶W”W'&÷# ¢v—BöVF—Eö÷%÷&WÇ’€¢WFFRÂ.)ØÂ66÷VçBæòÆöævW"W†—7G2â"Â&6µö†öÖUö¶W–&ö&B‚¢¢&WGW&à¢f–WrÒv—B7–æ6–òçFõ÷F‡&VB„44õTåEõ$TDU"ç&VBÂ66÷VçB¢Ö—76–ærÒ5$TDTåD”Å2ç&VF–æW72†66÷VçB’æÖ—76–æp¢6WGWÒ" ¢–bÖ—76–æs ¢6WGWÒ%Æå6WGW&WV—&VC¢"²"Â"æ¦ö–â†Ö—76–ær¢FW‡BÒ€¢b'µö66÷VçE÷7FGW5ö–6öâ‡f–Wrç7FGW2—Ò¶66÷VçBæÆ&VÇÕÆåÆâ ¢b$66÷VçB”C¢¶66÷VçBæ66÷VçEö–GÕÆâ ¢b$'&ö¶W#¢¶66÷VçBæ'&ö¶W'ÕÆâ ¢b%ÆFf÷&Ó¢¶66÷VçBçÆFf÷&ÒçfÇVWÕÆâ ¢b$ÖöFS¢¶66÷VçBæVçf—&öæÖVçBçfÇVW×²r	ùI"r–b66÷VçBæ—5öÆ—fRVÇ6RrwÕÆâ ¢b$Æöv–ã¢¶66÷VçBæÖ6¶VEöÆöv–çÕÆâ ¢b%6W'fW#¢¶66÷VçBç6W'fW'ÕÆâ ¢b$w&÷W¢¶66÷VçBæw&÷WÕÆâ ¢b$6öææV7F–öã¢·f–Wrç7FGW7ÕÆåÆâ ¢b$&Ææ6S¢¶ÖöæW’‡f–Wræ&Ææ6R—ÕÆâ ¢b$WV—G“¢¶ÖöæW’‡f–WræWV—G’—ÕÆâ ¢b$fÆöF–ærôÃ¢¶ÖöæW’‡f–WræfÆöF–æu÷æÂ—ÕÆâ ¢b$E2÷6—F–öç3¢·f–Wræ÷Vå÷÷6—F–öç7Ò ¢b'·6WGWÒ ¢¢–bf–Wrç&V6öâæBæ÷BÖ—76–æs ¢FW‡B³Òb%ÆäFWF–Ã¢·f–Wrç&V6öçÒ ¢v—BöVF—Eö÷%÷&WÇ’‡WFFRÂFW‡BÂö66÷VçEöÖVçR†66÷VçBÂ&öÆR’  ¦FVb÷&W6öÇfU÷66÷R‡66÷S¢7G"’ÓâGWÆUµG&F–æt66÷VçBÂââåÓ ¢–b66÷RÓÒ&ÆÂ# ¢&WGW&âGWÆR€¢66÷Vç@¢f÷"66÷VçB–âöÖævVEö66÷VçG2†Væ&ÆVEööæÇ“ÕG'VR¢–bæ÷B66÷VçBæ—5öÆ—fP¢¢&WGW&â…÷&W6öÇfUöÖævVE÷Fö¶Vâ‡66÷R’Â  ¦FVb÷VWVUö7F–öâ€¢66÷VçG3¢GWÆUµG&F–æt66÷VçBÂââåÒÀ¢7F–öã¢6öçG&öÄ7F–öâÀ¢¢À¢W6W%ö–C¢–çBÀ¢&V6öã¢7G"À¢’ÓâGWÆU·7G"ÂââåÓ ¢&WVW7Eö–G2ÒµÐ¢f÷"66÷VçB–â66÷VçG3 ¢–b66÷VçBæ—5öÆ—fS ¢&—6R'VçF–ÖTW'&÷"€¢b$Æ—fR6öçG&öÂ—2Æö6¶VBf÷"66÷VçB¶66÷VçBæ66÷VçEö–GÒ ¢¢–b7F–öâ—26öçG&öÄ7F–öâå$U5TÔUôTåE$”U3 ¢4ôåE$ôÅô4ôÔÔäE2æ6ÆV%÷&W7F'Eö&Æö6²†66÷VçBæ66÷VçEö–B¢&WVW7BÒ4ôåE$ôÅô4ôÔÔäE2ç7V&Ö—B€¢66÷VçBæ66÷VçEö–BÀ¢7F–öâÀ¢&WVW7FVEö'“×W6W%ö–BÀ¢&V6öã×&V6öâÀ¢¢&WVW7Eö–G2æVæB‡&WVW7Bç&WVW7Eö–B¢&WGW&âGWÆR‡&WVW7Eö–G2  ¦7–æ2FVb÷7V&Ö—Eö6öçG&öÂ€¢WFFS¢WFFRÀ¢&öÆS¢FVÆVw&Õ&öÆRÀ¢66÷VçG3¢GWÆUµG&F–æt66÷VçBÂââåÒÀ¢7F–öã¢6öçG&öÄ7F–öâÀ¢’ÓâæöæS ¢W6W%ö–BÒWFFRæVffV7F—fU÷W6W"æ–@¢–bæ÷B66÷VçG3 ¢v—BöVF—Eö÷%÷&WÇ’€¢WFFRÂ$æòVæ&ÆVB66÷VçG2ÖF6‚F†—266÷Râ"Â&6µö†öÖUö¶W–&ö&B‚¢¢&WGW&à¢G'“ ¢&WVW7Eö–G2Ò÷VWVUö7F–öâ€¢66÷VçG2À¢7F–öâÀ¢W6W%ö–C×W6W%ö–BÀ¢&V6öãÖb%FVÆVw&Ò¶7F–öâçfÇVRæÆ÷vW"‚—Ò"À¢¢TD•EôÄôrçw&—FR€¢7F–öâçfÇVRÀ¢W6W%ö–C×W6W%ö–BÀ¢&öÆS×&öÆRææÖRÀ¢66÷VçEö–G3×GWÆR†—FVÒæ66÷VçEö–Bf÷"—FVÒ–â66÷VçG2’À¢FWF–Ã×²'&WVW7Eö–G2#¢Æ—7B‡&WVW7Eö–G2—ÒÀ¢¢FW‡BÒ€¢b.)ÈR¶7F–öâçfÇVRç&WÆ6R‚uòrÂrr—ÒVWVVEÆåÆâ ¢b$66÷VçG3¢¶ÆVâ†66÷VçG2—ÕÆâ ¢%F†RF&vWBVæv–æRv÷&¶W"v–ÆÂW†V7WFRæB&V6÷&BF†R&W7VÇBâ ¢¢W†6WBW†6WF–öâ2W†3 ¢ÆövvW"æW†6WF–öâ‚$6÷VÆBæ÷BVWVRFVÆVw&Ò6öçG&öÂ"¢TD•EôÄôrçw&—FR€¢7F–öâçfÇVRÀ¢W6W%ö–C×W6W%ö–BÀ¢&öÆS×&öÆRææÖRÀ¢66÷VçEö–G3×GWÆR†—FVÒæ66÷VçEö–Bf÷"—FVÒ–â66÷VçG2’À¢÷WF6öÖSÒ$d”ÄTB"À¢FWF–Ã×²&W'&÷"#¢7G"†W†2—ÒÀ¢¢FW‡BÒb.)ØÂ6öçG&öÂ&WVW7B&V¦V7FVBåÆåÆç¶W†7Ò ¢v—BöVF—Eö÷%÷&WÇ’‡WFFRÂFW‡BÂ&6µö†öÖUö¶W–&ö&B‚’  ¦7–æ2FVb÷&WVW7EöFævW&÷W5ö6öæf—&ÖF–öâ€¢WFFS¢WFFRÀ¢6öçFW‡C¢6öçFW‡EG—W2äDTdTÅEõE•RÀ¢&öÆS¢FVÆVw&Õ&öÆRÀ¢66÷VçG3¢GWÆUµG&F–æt66÷VçBÂââåÒÀ¢7F–öã¢6öçG&öÄ7F–öâÀ¢’ÓâæöæS ¢–bæ÷BDõEæ6öæf–wW&VC ¢¹¶‰žËkºwµç[ÛÈ\™HØÚÙY——ˆ‚ˆÛÛ™šYÝ\™HSQÔSWÐÓÓ•“ÓÕÕÔÑPÔ‘UÛˆHÜÝš\œÝˆ‹ˆ˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆ›Û˜ÙHHÙXÜ™]ËÚÙ[—Ú^
+
+Bˆ^\™\ÈH]][YK››ÝÊ[Y^›Û™K]ÊH
+È[YY[JÙXÛÛ™ÏLÌ
+BˆÈÙ\Û›H[ˆY[[ÜžH[™›Ý[™È›ÝH[YÜ˜[H\Ù\ˆ[™›Û˜ÙK‚ˆÛÛ^˜›ÝÙ]KœÙ]Y˜][
+˜ÛÛ™š\›X][ÛœÈ‹ßJVÂˆ
+\]K™Y™™XÝ]™WÝ\Ù\‹šY›Û˜ÙJBˆHHÂˆ˜XÝ[ÛˆŽˆXÝ[Û‹˜[YKˆ˜XØÛÝ[ÚYÈŽˆØXØÛÝ[˜XØÛÝ[ÚY›ÜˆXØÛÝ[[ˆXØÛÝ[×Kˆ™^\™\ÈŽˆ^\™\Ëš\ÛÙ›Ü›X]
+
+Kˆœ›ÛHŽˆ›ÛK›˜[YKˆBˆ^H
+ˆˆ¸¦¨;î#ÈÓÓ‘’T“HØXÝ[Û‹˜[YKœ™\XÙJ	×ÉË	È	Ê_W—ˆ‚ˆˆ”ØÛÜNˆÛ[ŠXØÛÝ[Ê_HXØÛÝ[
+ÊWˆ‚ˆˆXØÛÝ[ÎˆÉË	Ëš›Ú[ŠXØÛÝ[›X™[›ÜˆXØÛÝ[[ˆXØÛÝ[ÖÎŽJ_Wˆ‚ˆ“Û›HPTUË[X[˜YÙYÜÚ][ÛœÈ\™H[YÚX›H›Üˆ[Y\™Ù[˜ÞHÛÜÝ\™K—ˆ‚ˆ“X[X[Ý[›X[˜YÙYÜÚ][ÛœÈÚ[›Ý™HÝXÚY——ˆ‚ˆÛÛ™š\›X][Ûˆ^\™\È[ˆÌÙXÛÛ™Ëˆ‚ˆ
+Bˆ]ØZ]ÙY]ÛÜ—Ü™\J\]K^ÛÛ™š\›X][Û—ÚÙ^X›Ø\™
+›Û˜ÙJJB‚‚˜\Þ[˜ÈYˆØ[˜XÚ×Ü›Ý]\Š\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ›Û™N‚ˆ]Y\žHH\]K˜Ø[˜XÚ×Ü]Y\žBˆYˆ]Y\žH\È›Û™N‚ˆ™]\›‚ˆ›ÛHH]ØZ][œÝ\™WØXØÙ\ÜÊ\]JBˆYˆ›ÛH\È›Û™N‚ˆ™]\›‚ˆ]ØZ]]Y\žK˜[œÝÙ\Š
+Bˆ]HH]Y\žK™]HÜˆˆ‚‚ˆYˆ]HOH››ÛÜŽ‚ˆ™]\›‚ˆYˆ]HOH›˜]ŽšŽ‚ˆ]ØZ]ÙY]ÛÜ—Ü™\J\]KÚÛYWÝ^
+›ÛJKÚÛYWÛY[J›ÛJJBˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+›˜]Ž˜NˆŠN‚ˆžN‚ˆYÙHH[
+]KœœÜ]
+Žˆ‹JVÌWJBˆ^Ù\˜[YQ\œ›ÜŽ‚ˆYÙHHˆ]ØZ]ÜÚÝ×ØXØÛÝ[Ê\]K›ÛKYÙJBˆ™]\›‚ˆYˆ]HOH›˜]ŽœŽ‚ˆ]ØZ]ÜÚÝ×ÜÜ›Û[Ê\]JBˆ™]\›‚ˆYˆ]HOH›˜]ŽœÜÈŽ‚ˆ]ØZ]ÜÚÝ×ÜÜÚ][Ûœ×ÛÝ™\šY]Ê\]JBˆ™]\›‚ˆYˆ]HOH›˜]ŽœÚYÈŽ‚ˆ]ØZ]ÙY]ÛÜ—Ü™\Jˆ\]Kˆ¼'éèÒQÓS×—•\ÙHØ[˜[\Ú\È›ÜˆHÝ\œ™[Ø]\Ø[X\šÙ][˜[\Ú\Ëˆ‚ˆ•˜YH^XÝ][Ûˆ™[XZ[œÈ]]ÛX]XÈ[™š\ÚËYØ]Yˆ‹ˆ˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆYˆ]HOH›˜]Žœš\ÚÈŽ‚ˆØÛÜWÝ^H
+ˆ–[Ý\ˆÛÛ™šYÝ\™Y[Z]È™[XZ[ˆH\™ÙZ[[™È›Üˆ\ÈXØÛÝ[ˆ‚ˆYˆÒS‘ÓWÐPÐÓÕS•ÓSÑBˆ[ÙH”\™[[Z]È™[XZ[ˆH\™ÙZ[[™È›Üˆ]™\žHÚ[XØÛÝ[ˆ‚ˆ
+Bˆ]ØZ]ÙY]ÛÜ—Ü™\Jˆ\]Kˆ¼'æèH’TÒÈÑS•T——ˆ‚ˆˆžÜØÛÜWÝ^Wˆ‚ˆ¸ (ˆZ[HÜÜÈ›ÝXÝ[Û—ˆ‚ˆ¸ (ˆÙYZÛHÜÜÈ›ÝXÝ[Û—ˆ‚ˆ¸ (ˆ\]Z]H˜]ÙÝÛˆ›ÝXÝ[Û—ˆ‚ˆ¸ (ˆÜ›Û[ËÛÜ[‹\ÜÚ][Ûˆ[Z]×ˆ‚ˆ¸ (ˆ™]ÜÈ[™ÛÜœ™[]YY^ÜÝ\™HØ]\×—ˆ‚ˆ”š\ÚÈY][™È\È[[[Û˜[HØÚÙY[[\œÚ\Ý[\‹XXØÛÝ[‚ˆœš\ÚÈ›Ùš[\È\™HÛÛ›™XÝYÈH[™Ú[™HÛÜšÙ\œËˆ‹ˆ˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆYˆ]HOH›˜]Ž˜[\ÈŽ‚ˆÚ]ÚYH\]K™Y™™XÝ]™WØÚ]šYˆ[˜X›YH\×ÜÝXœØÜšX™Y
+Ú]ÚY
+BˆÙ^X›Ø\™H[›[™RÙ^X›Ø\™X\šÝ\
+ˆÂˆÂˆ[›[™RÙ^X›Ø\™]ÛŠ‘[˜X›H‹Ø[˜XÚ×Ù]OH˜[\Î›ÛˆŠKˆ[›[™RÙ^X›Ø\™]ÛŠ‘\ØX›H‹Ø[˜XÚ×Ù]OH˜[\Î›Ù™ˆŠKˆKˆÒ[›[™RÙ^X›Ø\™]ÛŠ¸ .HÛYH‹Ø[˜XÚ×Ù]OH›˜]ŽšŠWKˆBˆ
+Bˆ]ØZ]ÙY]ÛÜ—Ü™\Jˆ\]Kˆ¼'å%ST•×—”Ý]\Îˆˆ
+È
+‘SP“Q8§!HˆYˆ[˜X›Y[ÙH‘TÐP“Q8§cŠKˆÙ^X›Ø\™ˆ
+Bˆ™]\›‚ˆYˆ]H[ˆÈ˜[\Î›Ûˆ‹˜[\Î›Ù™ˆŸN‚ˆYˆ]K™[™ÝÚ]
+›ÛˆŠN‚ˆÝXœØÜšX™J\]K™Y™™XÝ]™WØÚ]šY
+Bˆ[ÙN‚ˆ[œÝXœØÜšX™J\]K™Y™™XÝ]™WØÚ]šY
+Bˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¼'å%[\Èˆ
+È
+™[˜X›YˆˆYˆ]K™[™ÝÚ]
+›ÛˆŠH[ÙH™\ØX›YˆŠKˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆYˆ]HOH›˜]Ž˜]Y]Ž‚ˆYˆ›ÛH[YÜ˜[T›ÛK”’TÒ×ÓPSQÑTŽ‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åš\ÚÈX[˜YÙ\ˆÜˆÝÛ™\ˆ›ÛH™\]Z\™Yˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆ™XÛÜ™ÈHUQUÓÑËœ™XÙ[
+
+Bˆ[™\ÈHÈ¼'äç‘PÑS•UQUU‘S•È‹ˆ—Bˆ›Üˆ™XÛÜ™[ˆ™XÛÜ™Î‚ˆ[™\Ë˜\[™
+ˆˆ¸ (ˆÜ™XÛÜ™™Ù]
+	Ù]™[	Ê_H0­ÈÜ™XÛÜ™™Ù]
+	ÛÝ]ÛÛYIÊ_H0­È‚ˆˆžÛ[Š™XÛÜ™™Ù]
+	ØXØÛÝ[ÚYÉË×JJ_HXØÛÝ[
+ÊH‚ˆ
+BˆYˆ›Ý™XÛÜ™Î‚ˆ[™\Ë˜\[™
+“›ÈÛÛ›Û]™[È™XÛÜ™YY]ˆŠBˆ]ØZ]ÙY]ÛÜ—Ü™\J\]K—ˆ‹š›Ú[Š[™\ÊK˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+JBˆ™]\›‚ˆYˆ]HOH›˜]ŽœÙ][™ÜÈŽ‚ˆXØÛÝ[ÈHÛX[˜YÙYØXØÛÝ[Ê
+Bˆ™XYHHÝ[JÔ‘QS•PSËœ™XY[™\ÜÊ][JKœ™XYH›Üˆ][H[ˆXØÛÝ[ÊBˆ]ØZ]ÙY]ÛÜ—Ü™\Jˆ\]Kˆ¸¦¦{î#ÈÑUS‘Ô×—ˆ‚ˆˆ”›ÛNˆÜ›ÛK›˜[YKœ™\XÙJ	×ÉË	È	Ê_Wˆ‚ˆˆ“[ÙNˆÉÔÒS‘ÓHPÐÓÕS•	ÈYˆÒS‘ÓWÐPÐÓÕS•ÓSÑH[ÙH	ÓUSHPÐÓÕS•	ßWˆ‚ˆˆXØÛÝ[Ø\XÚ]NˆÛ[ŠXØÛÝ[Ê_KÞÐPÐÓÕS•Ô‘QÒTÕ–K›X^ØXØÛÝ[ßWˆ‚ˆˆ’ÜÝ\™XYHXØÛÝ[ÎˆÜ™XY_KÞÛ[ŠXØÛÝ[Ê_Wˆ‚ˆˆ•ÕØY™]NˆÉÐÓÓ‘’QÕT‘Q	ÈYˆÕ˜ÛÛ™šYÝ\™Y[ÙH	Ó“ÕÓÓ‘’QÕT‘Q	ßWˆ‚ˆÜ™Y[X[ÎˆÜÝ[š\›Û›Y[Û›NÈ™]™\ˆÝÜ™Y[ˆ[YÜ˜[Kˆ‹ˆ˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆYˆ]HOH›˜]ŽœØY™]HŽ‚ˆYˆ›ÛHÓÓ•“ÓÔ“ÓN‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åÜ\˜]Üˆ›ÛH™\]Z\™Yˆ‹™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›‚ˆ]ØZ]ÙY]ÛÜ—Ü™\Jˆ\]Kˆ¼'á¦ÐQ‘UHÓÓ•“Ó×—ˆ‚ˆ”]\ÙH[šY\È›ØÚÜÈ™]È˜Y\ÈÚ[H^\Ý[™ÈÜÚ][ÛœÈ™[XZ[ˆX[˜YÙY—ˆ‚ˆ”ÝÜ[™Ú[™HÝÜÈ]]ÛX][ÛŽÈœ›ÚÙ\ˆÓÕ™[XZ[ˆXÝ]™K—ˆ‚ˆ‘[Y\™Ù[˜ÞHÛÜÙHÛÜÙ\ÈPTUË[X[˜YÙYÜÚ][ÛœÈ[™ÝÜÈH[™Ú[™Kˆ‹ˆØY™]WÚÙ^X›Ø\™
+›ÛKÚ[™ÛWØXØÛÝ[Û[ÙOTÒS‘ÓWÐPÐÓÕS•ÓSÑJKˆ
+Bˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+˜XØÎˆŠN‚ˆ]ØZ]ÜÚÝ×ØXØÛÝ[
+\]K›ÛK]KœÜ]
+Žˆ‹JVÌWJBˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+˜]ŽˆŠN‚ˆËÙXÝ[Û‹ÚÙ[ˆH]KœÜ]
+Žˆ‹ŠBˆXØÛÝ[HÜ™\ÛÛ™WÛX[˜YÙYÝÚÙ[ŠÚÙ[ŠBˆšY]ÈH]ØZ]\Þ[˜Ú[Ë×Ý™XY
+PÐÓÕS•Ô‘PQT‹œ™XYXØÛÝ[
+BˆXÝ]™WÜÞ[X›ÛÈHÜÞ[X›Û›ÜˆÜ›Ý\[ˆÖSP“ÓË˜[Y\Ê
+H›ÜˆÞ[X›Û[ˆÜ›Ý\BˆÛÛ›ÛÜ™XÛÜ™ÈHÓÓ•“ÓÐÓÓSPS‘Ëœ™XÙ[
+XØÛÝ[˜XØÛÝ[ÚY[Z]MJBˆÛÛ›ÛÝ^H“›ÈÛÛ›Û™\]Y\ÝÈ›Üˆ\ÈXØÛÝ[ˆ‚ˆYˆÛÛ›ÛÜ™XÛÜ™Î‚ˆÛÛ›ÛÝ^H—ˆ‹š›Ú[Šˆˆ¸ (ˆÜ™XÛÜ™™Ù]
+	ØXÝ[Û‰Ê_H0­È‚ˆˆžÜ™XÛÜ™™Ù]
+	ÜÝ]\ÉË™XÛÜ™™Ù]
+	Ü]Y]YWÜÝ]IË	ÔS‘S‘ÉÊJ_H‚ˆ›Üˆ™XÛÜ™[ˆÛÛ›ÛÜ™XÛÜ™Âˆ
+BˆX™[ÈHÂˆœÜÈŽˆ
+ˆˆPTUË[X[˜YÙYÜÚ][ÛœÎˆÝšY]Ë›Ü[—ÜÜÚ][ÛœßWˆ‚ˆˆ‘›Ø][™ÈÓˆÛ[Û™^JšY]Ë™›Ø][™×Ü›
+_Wˆ‚ˆˆÛÛ›™XÝ[ÛŽˆÝšY]ËœÝ]\ßH‚ˆ
+Kˆœ\™ˆŽˆ
+ˆˆ˜[[˜ÙNˆÛ[Û™^JšY]Ë˜˜[[˜ÙJ_Wˆ‚ˆˆ‘\]Z]NˆÛ[Û™^JšY]Ë™\]Z]J_Wˆ‚ˆˆ‘›Ø][™ÈÓˆÛ[Û™^JšY]Ë™›Ø][™×Ü›
+_H‚ˆ
+È
+ˆˆ—”Ý\[™È˜[[˜ÙNˆÛ[Û™^JšY]ËœÝ\[™×Ø˜[[˜ÙJ_Wˆ‚ˆˆ”™X[^™YÓˆÛ[Û™^JšY]ËÝ[Ü›
+_Wˆ‚ˆˆÛÜÙY˜Y\ÎˆÝšY]Ë˜ÛÜÙYÝ˜Y\ßWˆ‚ˆˆ•Ú[œÎˆÝšY]ËÚ[œßWˆ‚ˆˆ•Ú[ˆ˜]NˆÝšY]ËÚ[—Ü˜]N‹Œ™ŸIH‚ˆYˆXØÛÝ[œ]›Ü›H\ÈXØÛÝ[]›Ü›K”TT‚ˆ[ÙHˆ‚ˆ
+Bˆ
+KˆœÝˆŽˆ
+ˆ”Ý˜]YÞNˆØ]\Ø[™YÚ[YH›Ý]\—ˆ‚ˆˆXÝ]™HÞ[X›ÛØ][ÙÎˆÛ[ŠXÝ]™WÜÞ[X›ÛÊ_HÞ[X›Û×ˆ‚ˆˆ”Þ[X›ÛÎˆÉË	Ëš›Ú[ŠXÝ]™WÜÞ[X›ÛÊ_H‚ˆ
+Kˆœš\ÚÈŽˆ
+ˆˆ˜\ÙH˜YHš\ÚÈÙZ[[™ÎˆÔ’TÒ×ÔTÑS•IWˆ‚ˆˆ“X^[][HÜ[ˆÜÚ][ÛœÎˆÓUWÓPVÓÔS—ÔÔÒUSÓ”ßWˆ‚ˆ‘Z[KÙYZÛK˜]ÙÝÛ‹ÛÜœ™[][Ûˆ[™™]ÜÈØ]\ÎˆPÕU‘Wˆ‚ˆ
+È
+ˆ•\ÈXØÛÝ[Ø[››Ý^ÙYYHÛÛ™šYÝ\™Yš\ÚÈÙZ[[™Ëˆ‚ˆYˆÒS‘ÓWÐPÐÓÕS•ÓSÑBˆ[ÙHÚ[[Z]ÈØ[››Ý^ÙYYH\™[ÙZ[[™Ëˆ‚ˆ
+Bˆ
+Kˆ˜ÝŽˆÛÛ›ÛÝ^ˆBˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆˆžØXØÛÝ[›X™[W—žÛX™[Ë™Ù]
+ÙXÝ[Û‹	Õ[˜]˜Z[X›IÊ_H‹ˆ™\WÛX\šÝ\WØXØÛÝ[ÛY[JXØÛÝ[›ÛJKˆ
+Bˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+˜ÝˆŠN‚ˆYˆ›ÛHÓÓ•“ÓÔ“ÓHÜˆ\]K™Y™™XÝ]™WØÚ]\HOHÚ]\K”’UUN‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åÜ\˜]Üˆ›ÛH[™š]˜]HÚ]\™H™\]Z\™Yˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆËÛÙKÚÙ[ˆH]KœÜ]
+Žˆ‹ŠBˆXØÛÝ[HÜ™\ÛÛ™WÛX[˜YÙYÝÚÙ[ŠÚÙ[ŠBˆYˆÛÙHOH˜ˆŽ‚ˆÓÓ•“ÓÐÓÓSPS‘Ë˜ÛX\—Ü™\Ý\Ø›ØÚÊXØÛÝ[˜XØÛÝ[ÚY
+BˆUQUÓÑËÜš]Jˆ”ÕT•ÑS‘ÒS‘WÔ‘TUQTÕQ‹ˆ\Ù\—ÚY]\]K™Y™™XÝ]™WÝ\Ù\‹šYˆ›ÛO\›ÛK›˜[YKˆXØÛÝ[ÚYÏJXØÛÝ[˜XØÛÝ[ÚY
+Kˆ
+Bˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆˆ¸§!HÝ\™\]Y\ÝY›ÜˆØXØÛÝ[›X™[K——ˆ‚ˆ•HÝ\\š\ÛÜˆÚ[][˜Ú]ÈÛÜšÙ\‹ˆ‹ˆ™\WÛX\šÝ\WØXØÛÝ[ÛY[JXØÛÝ[›ÛJKˆ
+Bˆ™]\›‚ˆXÝ[ÛˆH
+ˆÛÛ›ÛXÝ[Û‹”UTÑWÑS•’QTÈYˆÛÙHOHœˆ[ÙHÛÛ›ÛXÝ[Û‹”‘TÕSQWÑS•’QTÂˆ
+Bˆ]ØZ]ÜÝX›Z]ØÛÛ›Û
+\]K›ÛK
+XØÛÝ[
+KXÝ[ÛŠBˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+˜XØÝˆŠN‚ˆYˆ›ÛHÕÓ‘T—Ô“ÓHÜˆ\]K™Y™™XÝ]™WØÚ]\HOHÚ]\K”’UUN‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åÝÛ™\ˆ›ÛH[™š]˜]HÚ]\™H™\]Z\™Yˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆXØÛÝ[HÜ™\ÛÛ™WÛX[˜YÙYÝÚÙ[Š]KœÜ]
+Žˆ‹ŠVÌ—JBˆYˆXØÛÝ[™[˜X›Y‚ˆšY]ÈH]ØZ]\Þ[˜Ú[Ë×Ý™XY
+PÐÓÕS•Ô‘PQT‹œ™XYXØÛÝ[
+BˆYˆšY]ËœÝ]\È›Ý[ˆÈÓÓ“‘PÕQ‹”ÑUTÔ‘TURT‘QŸN‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åXØÛÝ[Ý]HÛÝ[›Ý™H™\šYšYYÛÈ\ØX›H˜Z[YÛÜÙY——ˆ‚ˆˆÛÛ›™XÝ[ÛŽˆÝšY]ËœÝ]\ßH‹ˆ™\WÛX\šÝ\WØXØÛÝ[ÛY[JXØÛÝ[›ÛJKˆ
+Bˆ™]\›‚ˆYˆšY]Ë›Ü[—ÜÜÚ][ÛœÎ‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åXØÛÝ[ÛÜšÙ\ˆØ[››Ý™H\ØX›YÚ[HPTUÈÜÚ][ÛœÈ‚ˆˆ˜\™HÜ[ˆ
+ÝšY]Ë›Ü[—ÜÜÚ][ÛœßJKˆ]\ÙH[šY\ÈÜˆ\ÙHH‚ˆ˜ÛÛ™š\›YY[Y\™Ù[˜ÞHÛÜšÙ›ÝËˆ‹ˆ™\WÛX\šÝ\WØXØÛÝ[ÛY[JXØÛÝ[›ÛJKˆ
+Bˆ™]\›‚ˆ\]YHPÐÓÕS•Ô‘QÒTÕ–KœÙ]Ù[˜X›Y
+XØÛÝ[˜XØÛÝ[ÚY›ÝXØÛÝ[™[˜X›Y
+BˆYˆ›Ý\]Y™[˜X›Y[™›Ý\]Yš\×Û]™N‚ˆÜ]Y]YWØXÝ[ÛŠˆ
+\]Y
+KˆÛÛ›ÛXÝ[Û‹”UTÑWÑS•’QTËˆ\Ù\—ÚY]\]K™Y™™XÝ]™WÝ\Ù\‹šYˆ™X\ÛÛHXØÛÝ[\ØX›YžHÝÛ™\ˆ‹ˆ
+BˆUQUÓÑËÜš]JˆPÐÓÕS•ÑSP“QˆYˆ\]Y™[˜X›Y[ÙHPÐÓÕS•ÑTÐP“Q‹ˆ\Ù\—ÚY]\]K™Y™™XÝ]™WÝ\Ù\‹šYˆ›ÛO\›ÛK›˜[YKˆXØÛÝ[ÚYÏJ\]Y˜XØÛÝ[ÚY
+Kˆ
+Bˆ]ØZ]ÜÚÝ×ØXØÛÝ[
+\]K›ÛK\]Y˜Ø[˜XÚ×ÝÚÙ[ŠBˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+œØY™NˆŠN‚ˆËÛÙKØÛÜHH]KœÜ]
+Žˆ‹ŠBˆZ[š[][HHÕÓ‘T—Ô“ÓHYˆÛÙH[ˆÈœÈ‹™HŸH[ÙHÓÓ•“ÓÔ“ÓBˆYˆ›ÛHZ[š[][HÜˆ\]K™Y™™XÝ]™WØÚ]\HOHÚ]\K”’UUN‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦å™\]Z\™Y›ÛH[™š]˜]HÚ]\™HZ\ÜÚ[™Ëˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆÚXÚÙYÜ›ÛHH›ÛBˆXØÛÝ[ÈHÜ™\ÛÛ™WÜØÛÜJØÛÜJBˆXÝ[ÛœÈHÂˆœŽˆÛÛ›ÛXÝ[Û‹”UTÑWÑS•’QTËˆœˆŽˆÛÛ›ÛXÝ[Û‹”‘TÕSQWÑS•’QTËˆœÈŽˆÛÛ›ÛXÝ[Û‹”ÕÔÑS‘ÒS‘Kˆ™HŽˆÛÛ›ÛXÝ[Û‹‘SQT‘ÑSÖWÐÓÔÑKˆBˆXÝ[ÛˆHXÝ[ÛœÖØÛÙWBˆYˆXÝ[Ûˆ[ˆÐÛÛ›ÛXÝ[Û‹”ÕÔÑS‘ÒS‘KÛÛ›ÛXÝ[Û‹‘SQT‘ÑSÖWÐÓÔÑ_N‚ˆ]ØZ]Ü™\]Y\ÝÙ[™Ù\›Ý\×ØÛÛ™š\›X][ÛŠˆ\]KÛÛ^ÚXÚÙYÜ›ÛKXØÛÝ[ËXÝ[Û‚ˆ
+Bˆ[ÙN‚ˆ]ØZ]ÜÝX›Z]ØÛÛ›Û
+\]KÚXÚÙYÜ›ÛKXØÛÝ[ËXÝ[ÛŠBˆ™]\›‚ˆYˆ]KœÝ\ÝÚ]
+˜ÛÛ™š\›NˆŠN‚ˆYˆ]HOH˜ÛÛ™š\›N˜Ø[˜Ù[Ž‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆØ[˜Ù[Yˆ‹™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›‚ˆYˆ›ÛHÕÓ‘T—Ô“ÓHÜˆ\]K™Y™™XÝ]™WØÚ]\HOHÚ]\K”’UUN‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ¸¦åÝÛ™\ˆ›ÛH[™š]˜]HÚ]\™H™\]Z\™Yˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆ›Û˜ÙHH]KœÜ]
+Žˆ‹JVÌWBˆ[™[™ÈHÛÛ^˜›ÝÙ]K™Ù]
+˜ÛÛ™š\›X][ÛœÈ‹ßJK™Ù]
+ˆ
+\]K™Y™™XÝ]™WÝ\Ù\‹šY›Û˜ÙJBˆ
+BˆYˆ›Ý[™[™Î‚ˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆÛÛ™š\›X][Ûˆ\È[˜[YÜˆ^\™Yˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›‚ˆ^\™\ÈH]][YK™œ›ÛZ\ÛÙ›Ü›X]
+[™[™ÖÈ™^\™\È—JBˆYˆ]][YK››ÝÊ[Y^›Û™K]ÊHˆ^\™\Î‚ˆÛÛ^˜›ÝÙ]VÈ˜ÛÛ™š\›X][ÛœÈ—KœÜ
+ˆ
+\]K™Y™™XÝ]™WÝ\Ù\‹šY›Û˜ÙJK›Û™Bˆ
+Bˆ]ØZ]]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆÛÛ™š\›X][Ûˆ^\™Yˆ‹™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›‚ˆÛÛ^\Ù\—Ù]VÈ˜]ØZ][™×ÝÝ—HHÈ››Û˜ÙHŽˆ›Û˜ÙK
+Šœ[™[™ßBˆ]ØZ]]Y\žK›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[™HÝ\œ™[‹YYÚ]ÝÛ™\ˆÕÛÙKˆHY\ÜØYÙHÚ[™H[]Yˆ‹ˆ™\WÛX\šÝ\Q›Ü˜ÙT™\JˆÙ[XÝ]™OUYK[œ]ÙšY[ÜXÙZÛ\H‹YYÚ]ÛÙH‚ˆ
+Kˆ
+Bˆ™]\›‚‚‚˜\Þ[˜ÈYˆÝÛY\ÜØYÙJ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ›Û™N‚ˆ[™[™ÈHÛÛ^\Ù\—Ù]K™Ù]
+˜]ØZ][™×ÝÝŠBˆYˆ›Ý[™[™ÈÜˆ›Ý\]K›Y\ÜØYÙN‚ˆ™]\›‚ˆ›ÛHH]ØZ][œÝ\™WØXØÙ\ÜÊ\]KÕÓ‘T—Ô“ÓKš]˜]WÙ›Ü—ØÛÛ›ÛUYJBˆYˆ›ÛH\È›Û™N‚ˆ™]\›‚ˆÛÙHH\]K›Y\ÜØYÙK^Üˆˆ‚ˆžN‚ˆ]ØZ]\]K›Y\ÜØYÙK™[]J
+Bˆ^Ù\[YÜ˜[Q\œ›ÜŽ‚ˆÙÙÙ\‹Ø\›š[™ÊÛÝ[›Ý[]HÕ™\Hœ›ÛH[YÜ˜[HŠBˆ^\™\ÈH]][YK™œ›ÛZ\ÛÙ›Ü›X]
+[™[™ÖÈ™^\™\È—JBˆYˆ]][YK››ÝÊ[Y^›Û™K]ÊHˆ^\™\Î‚ˆÛÛ^\Ù\—Ù]KœÜ
+˜]ØZ][™×ÝÝ‹›Û™JBˆ]ØZ]\]K™Y™™XÝ]™WØÚ]œÙ[™ÛY\ÜØYÙJ¸§cÛÛ™š\›X][Ûˆ^\™YˆŠBˆ™]\›‚ˆYˆ›ÝÕ™\šYžJÛÙJN‚ˆ]ØZ]\]K™Y™™XÝ]™WØÚ]œÙ[™ÛY\ÜØYÙJ¸§c[˜[YÕÛÙKˆŠBˆ™]\›‚ˆXØÛÝ[ÈH\JˆPÐÓÕS•Ô‘QÒTÕ–K™Ù]
+XØÛÝ[ÚY
+H›ÜˆXØÛÝ[ÚY[ˆ[™[™ÖÈ˜XØÛÝ[ÚYÈ—Bˆ
+BˆXÝ[ÛˆHÛÛ›ÛXÝ[ÛŠ[™[™ÖÈ˜XÝ[Ûˆ—JBˆ›Û˜ÙHH[™[™ÖÈ››Û˜ÙH—BˆÛÛ^\Ù\—Ù]KœÜ
+˜]ØZ][™×ÝÝ‹›Û™JBˆÛÛ^˜›ÝÙ]K™Ù]
+˜ÛÛ™š\›X][ÛœÈ‹ßJKœÜ
+ˆ
+\]K™Y™™XÝ]™WÝ\Ù\‹šY›Û˜ÙJK›Û™Bˆ
+Bˆ]ØZ]ÜÝX›Z]ØÛÛ›Û
+\]K›ÛKXØÛÝ[ËXÝ[ÛŠB‚‚™YˆÜÛYÊ˜[YNˆÝŠHOˆÝŽ‚ˆÛYÈH™KœÝXŠˆ–×KV˜K^ŒNWJÈ‹—È‹˜[YKœÝš\
+
+JKœÝš\
+—ÈŠBˆ™]\›ˆÛYÖÎK›ÝÙ\Š
+B‚‚˜\Þ[˜ÈYˆYØXØÛÝ[ÜÝ\
+\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ[‚ˆ›ÛHH]ØZ][œÝ\™WØXØÙ\ÜÊ\]KÕÓ‘T—Ô“ÓKš]˜]WÙ›Ü—ØÛÛ›ÛUYJBˆYˆ›ÛH\È›Û™N‚ˆ™]\›ˆÛÛ™\œØ][Û’[™\‹‘S‘ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK˜[œÝÙ\Š
+BˆYˆÒS‘ÓWÐPÐÓÕS•ÓSÑH[™PÐÓÕS•Ô‘QÒTÕ–K›\ÝØXØÛÝ[Ê
+N‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ–[Ý\ˆXØÛÝ[\È[™XYHÛÛ™šYÝ\™YˆÚ[™ÛKXXØÛÝ[[ÙH›ØÚÜÈ‚ˆ˜Y][Û˜[XØÛÝ[™YÚ\Ý˜][Û‹ˆ‹ˆ™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Kˆ
+Bˆ™]\›ˆÛÛ™\œØ][Û’[™\‹‘S‘ˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—HHßBˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[™HÚÜXØÛÝ[[X\Ë›Üˆ^[\HSSËLHÜˆV‘TÔËSUKL‹ˆ‹ˆ™\WÛX\šÝ\Q›Ü˜ÙT™\JˆÙ[XÝ]™OUYK[œ]ÙšY[ÜXÙZÛ\HXØÛÝ[[X\È‚ˆ
+Kˆ
+Bˆ™]\›ˆQÓP‘S‚‚˜\Þ[˜ÈYˆYÛX™[ÛY\ÜØYÙJ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ[‚ˆYˆ]ØZ][œÝ\™WØXØÙ\ÜÊ\]KÕÓ‘T—Ô“ÓKš]˜]WÙ›Ü—ØÛÛ›ÛUYJH\È›Û™N‚ˆ™]\›ˆÛÛ™\œØ][Û’[™\‹‘S‘ˆX™[H
+\]K›Y\ÜØYÙK^ÜˆˆŠKœÝš\
+
+BˆXØÛÝ[ÚYHÜÛYÊX™[
+BˆYˆ›ÝXØÛÝ[ÚY‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+’[˜[Y[X\ËˆÙ[™]\œËÛ[X™\œÈÛ›KˆŠBˆ™]\›ˆQÓP‘SˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—K\]JˆÈ›X™[ŽˆX™[ÎK˜XØÛÝ[ÚYŽˆXØÛÝ[ÚYBˆ
+Bˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[XÝHXØÛÝ[]›Ü›Kˆ‹™\WÛX\šÝ\XYÜ]›Ü›WÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›ˆQÔU“Ô“B‚‚˜\Þ[˜ÈYˆYÜ]›Ü›WØØ[˜XÚÊˆ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTBŠHOˆ[‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK˜[œÝÙ\Š
+Bˆ]›Ü›HH\]K˜Ø[˜XÚ×Ü]Y\žK™]KœœÜ]
+Žˆ‹JVÌWBˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—VÈœ]›Ü›H—HH]›Ü›Bˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ”Ù[XÝHœ›ÚÙ\‹ˆ‹™\WÛX\šÝ\XYØœ›ÚÙ\—ÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›ˆQÐ”“ÒÑT‚‚‚˜\Þ[˜ÈYˆYØœ›ÚÙ\—ØØ[˜XÚÊˆ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTBŠHOˆ[‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK˜[œÝÙ\Š
+Bˆœ›ÚÙ\ˆH\]K˜Ø[˜XÚ×Ü]Y\žK™]KœœÜ]
+Žˆ‹JVÌWBˆYˆœ›ÚÙ\ˆOH“ÕTˆŽ‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[™Hœ›ÚÙ\ˆ˜[YKˆ‹ˆ™\WÛX\šÝ\Q›Ü˜ÙT™\JˆÙ[XÝ]™OUYK[œ]ÙšY[ÜXÙZÛ\Hœ›ÚÙ\ˆ˜[YH‚ˆ
+Kˆ
+Bˆ™]\›ˆQÐ”“ÒÑT—ÓSQBˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—VÈ˜œ›ÚÙ\ˆ—HH‘^™\ÜÈ‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆ”Ù[XÝ[[ÈÜˆ]™Kˆ‹™\WÛX\šÝ\XYÙ[š\›Û›Y[ÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›ˆQÑS•‚‚‚˜\Þ[˜ÈYˆYØœ›ÚÙ\—Û˜[YWÛY\ÜØYÙJˆ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTBŠHOˆ[‚ˆœ›ÚÙ\ˆH
+\]K›Y\ÜØYÙK^ÜˆˆŠKœÝš\
+
+BˆYˆ›Ýœ›ÚÙ\ˆÜˆ[Šœ›ÚÙ\ŠHˆ‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+œ›ÚÙ\ˆ˜[YH]\ÝÛÛZ[ˆKMÚ\˜XÝ\œËˆŠBˆ™]\›ˆQÐ”“ÒÑT—ÓSQBˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—VÈ˜œ›ÚÙ\ˆ—HHœ›ÚÙ\‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[XÝ[[ÈÜˆ]™Kˆ‹™\WÛX\šÝ\XYÙ[š\›Û›Y[ÚÙ^X›Ø\™
+
+Bˆ
+Bˆ™]\›ˆQÑS•‚‚‚˜\Þ[˜ÈYˆYÙ[š\›Û›Y[ØØ[˜XÚÊˆ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTBŠHOˆ[‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK˜[œÝÙ\Š
+Bˆ[š\›Û›Y[H\]K˜Ø[˜XÚ×Ü]Y\žK™]KœœÜ]
+Žˆ‹JVÌWBˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—VÈ™[š\›Û›Y[—HH[š\›Û›Y[ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[™HUÓUH˜Y[™ÈXØÛÝ[ÙÚ[ˆ[X™\‹ˆÈ›ÝÙ[™H\ÜÝÛÜ™ˆ‹ˆ™\WÛX\šÝ\Q›Ü˜ÙT™\JˆÙ[XÝ]™OUYK[œ]ÙšY[ÜXÙZÛ\H•˜Y[™ÈÙÚ[ˆ‚ˆ
+Kˆ
+Bˆ™]\›ˆQÓÑÒS‚‚‚˜\Þ[˜ÈYˆYÛÙÚ[—ÛY\ÜØYÙJ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ[‚ˆÙÚ[ˆH
+\]K›Y\ÜØYÙK^ÜˆˆŠKœÝš\
+
+BˆYˆ›ÝÙÚ[‹š\ÙYÚ]
+
+HÜˆ[ŠÙÚ[ŠHˆ‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+•˜Y[™ÈÙÚ[ˆ]\Ý™H[Y\šXËˆŠBˆ™]\›ˆQÓÑÒS‚ˆÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—VÈ›ÙÚ[ˆ—HHÙÚ[‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+ˆ”Ù[™H^XÝ˜Y[™ÈÙ\™\ˆÚÝÛˆ[ˆ^™\ÜËÓY]U˜Y\‹ˆ‹ˆ™\WÛX\šÝ\Q›Ü˜ÙT™\JˆÙ[XÝ]™OUYK[œ]ÙšY[ÜXÙZÛ\H‘^[\Nˆ^™\ÜËSUUšX[‚ˆ
+Kˆ
+Bˆ™]\›ˆQÔÑT•‘T‚‚‚˜\Þ[˜ÈYˆYÜÙ\™\—ÛY\ÜØYÙJ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ[‚ˆÙ\™\ˆH
+\]K›Y\ÜØYÙK^ÜˆˆŠKœÝš\
+
+BˆYˆ›ÝÙ\™\ˆÜˆ[ŠÙ\™\ŠHˆLŽ‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+”Ù\™\ˆ]\ÝÛÛZ[ˆKLLŽÚ\˜XÝ\œËˆŠBˆ™]\›ˆQÔÑT•‘T‚ˆ˜[Y\ÈHÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—Bˆ˜[Y\ÖÈœÙ\™\ˆ—HHÙ\™\‚ˆYˆ˜[Y\ÖÈœ]›Ü›H—HOH“UHŽ‚ˆ›Û\H
+ˆ”Ù[™HUH\›Z[˜[™^H]›Üˆ\ÈXØÛÝ[ÜˆÙ[™QUS‚ˆÈ\ÙHHÛÛ™šYÝ\™Y\›Z[˜[]ˆ‚ˆ
+BˆXÙZÛ\ˆHÎ—›ÙÜ˜[Hš[\×Y]U˜Y\ˆW\›Z[˜[™^H‚ˆ[ÙN‚ˆ›Û\H
+ˆ”Ù[™HËÛØØ[ÜÝT“Ùˆ\ÈXØÛÝ[	ÜÈUœšYÙKÜˆÒÒT‚ˆÈ™YÚ\Ý\ˆ]\ÈÙ]\\™\]Z\™Yˆ‚ˆ
+BˆXÙZÛ\ˆHš‹ËÌLËŒŒŒNŽLH‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+ˆ›Û\ˆ™\WÛX\šÝ\Q›Ü˜ÙT™\JˆÙ[XÝ]™OUYK[œ]ÙšY[ÜXÙZÛ\\XÙZÛ\–ÎBˆ
+Kˆ
+Bˆ™]\›ˆQÐÓÓ“‘PÕSÓ‚‚‚˜\Þ[˜ÈYˆYØÛÛ›™XÝ[Û—ÛY\ÜØYÙJˆ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTBŠHOˆ[‚ˆÛÛ›™XÝ[ÛˆH
+\]K›Y\ÜØYÙK^ÜˆˆŠKœÝš\
+
+Bˆ˜[Y\ÈHXÝ
+ÛÛ^\Ù\—Ù]VÈ›™]×ØXØÛÝ[—JBˆXØÛÝ[ÚYH˜[Y\ÖÈ˜XØÛÝ[ÚY—BˆžN‚ˆPÐÓÕS•Ô‘QÒTÕ–K™Ù]
+XØÛÝ[ÚY
+Bˆ^Ù\Ù^Q\œ›ÜŽ‚ˆ\ÜÂˆ[ÙN‚ˆXØÛÝ[ÚYHˆžØXØÛÝ[ÚYWÞÝ˜[Y\ÖÉÛÙÚ[‰×VËM—_H‚ˆ]›Ü›HHXØÛÝ[]›Ü›J˜[Y\ÖÈœ]›Ü›H—JBˆ\›Z[˜[Ü]Hˆ‚ˆœšYÙWÝ\›Hˆ‚ˆYˆ]›Ü›H\ÈXØÛÝ[]›Ü›K“UN‚ˆ\›Z[˜[Ü]H
+ˆUWÕT“RSSÔUYˆÛÛ›™XÝ[Û‹\\Š
+HOH‘QUSˆ[ÙHÛÛ›™XÝ[Û‚ˆ
+Bˆ[YˆÛÛ›™XÝ[Û‹\\Š
+HOH”ÒÒTŽ‚ˆœšYÙWÝ\›HÛÛ›™XÝ[Û‚ˆžN‚ˆXØÛÝ[H˜Y[™ÐXØÛÝ[
+ˆXØÛÝ[ÚYXXØÛÝ[ÚYˆX™[]˜[Y\ÖÈ›X™[—Kˆœ›ÚÙ\]˜[Y\ÖÈ˜œ›ÚÙ\ˆ—Kˆ]›Ü›O\]›Ü›Kˆ[š\›Û›Y[PXØÛÝ[[š\›Û›Y[
+˜[Y\ÖÈ™[š\›Û›Y[—JKˆÙÚ[]˜[Y\ÖÈ›ÙÚ[ˆ—KˆÙ\™\]˜[Y\ÖÈœÙ\™\ˆ—Kˆ[˜X›YUYKˆ\›Z[˜[Ü]]\›Z[˜[Ü]ˆœšYÙWÝ\›XœšYÙWÝ\›ˆ
+BˆPÐÓÕS•Ô‘QÒTÕ–K˜Y
+XØÛÝ[
+Bˆ^Ù\
+Ù^Q\œ›Ü‹[[YQ\œ›Ü‹\Q\œ›Ü‹˜[YQ\œ›ÜŠH\È^Î‚ˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+ˆ¸§cXØÛÝ[Ø\È›ÝYY——žÙ^ßHŠBˆ™]\›ˆQÐÓÓ“‘PÕSÓ‚ˆÛÛ^\Ù\—Ù]KœÜ
+›™]×ØXØÛÝ[‹›Û™JBˆ™Yš^HXØÛÝ[Ù[—Ü™Yš^
+XØÛÝ[˜XØÛÝ[ÚY
+BˆÙ]\H
+ˆˆ”Ù]Ü™Yš^WÔTÔÕÓÔ‘ÛˆHÜÝˆ‚ˆYˆ]›Ü›H\ÈXØÛÝ[]›Ü›K“UBˆ[ÙHˆ”Ù]Ü™Yš^WÐ”’QÑWÕÒÑSˆÛˆHÜÝˆ‚ˆ
+Bˆ]™WÛ›ÝHH
+ˆ—“]™HXØÛÝ[\È™XY[Û›NÈ]™H^XÝ][Ûˆ™[XZ[œÈØÚÙYˆ‚ˆYˆXØÛÝ[š\×Û]™Bˆ[ÙHˆ‚ˆ
+BˆUQUÓÑËÜš]JˆPÐÓÕS•Ô‘QÒTÕT‘Q‹ˆ\Ù\—ÚY]\]K™Y™™XÝ]™WÝ\Ù\‹šYˆ›ÛOU[YÜ˜[T›ÛK“ÕÓ‘T‹›˜[YKˆXØÛÝ[ÚYÏJXØÛÝ[˜XØÛÝ[ÚY
+Kˆ
+Bˆ]ØZ]\]K›Y\ÜØYÙKœ™\WÝ^
+ˆˆ¸§!HØXØÛÝ[›X™[H™YÚ\Ý\™Y——žÜÙ]\^Û]™WÛ›Ý_H‹ˆ™\WÛX\šÝ\WØXØÛÝ[ÛY[JXØÛÝ[[YÜ˜[T›ÛK“ÕÓ‘TŠKˆ
+Bˆ™]\›ˆÛÛ™\œØ][Û’[™\‹‘S‘‚‚˜\Þ[˜ÈYˆØ[˜Ù[ØÛÛ™\œØ][ÛŠˆ\]Nˆ\]KÛÛ^ˆÛÛ^\\Ë‘QUSÕTBŠHOˆ[‚ˆÛÛ^\Ù\—Ù]KœÜ
+›™]×ØXØÛÝ[‹›Û™JBˆYˆ\]K˜Ø[˜XÚ×Ü]Y\žN‚ˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK˜[œÝÙ\Š
+Bˆ]ØZ]\]K˜Ø[˜XÚ×Ü]Y\žK™Y]ÛY\ÜØYÙWÝ^
+ˆXØÛÝ[Ù]\Ø[˜Ù[Yˆ‹™\WÛX\šÝ\X˜XÚ×ÚÛYWÚÙ^X›Ø\™
+
+Bˆ
+Bˆ[Yˆ\]K™Y™™XÝ]™WÛY\ÜØYÙN‚ˆ]ØZ]\]K™Y™™XÝ]™WÛY\ÜØYÙKœ™\WÝ^
+XØÛÝ[Ù]\Ø[˜Ù[YˆŠBˆ™]\›ˆÛÛ™\œØ][Û’[™\‹‘S‘‚‚˜\Þ[˜ÈYˆÜÝÚ[š]
+\XØ][ÛŽˆ\XØ][ÛŠHOˆ›Û™N‚ˆžN‚ˆ]ØZ]\XØ][Û‹˜›ÝœÙ]Û^WØÛÛ[X[™ÊˆÂˆ›ÝÛÛ[X[™
+›Y[H‹“Ü[ˆXØÛÝ[ÛÛ›Û]ÛœÈŠKˆ›ÝÛÛ[X[™
+œÝ]\È‹”ÚÝÈ[™Ú[™HÝ]\ÈŠKˆ›ÝÛÛ[X[™
+™\Ú›Ø\™‹”ÚÝÈš[X\žHXØÛÝ[\Ú›Ø\™ŠKˆ›ÝÛÛ[X[™
+œÜÚ][ÛœÈ‹”ÚÝÈPTUÈÜÚ][ÛœÈŠKˆ›ÝÛÛ[X[™
+˜[˜[\Ú\È‹”[ˆX\šÙ][˜[\Ú\ÈŠKˆ›ÝÛÛ[X[™
+˜[\È‹”ÚÝÈ[\Ý]\ÈŠKˆ›ÝÛÛ[X[™
+š[‹”ÚÝÈÛÛ[X[™ÈŠKˆ›ÝÛÛ[X[™
+˜Ø[˜Ù[‹Ø[˜Ù[XØÛÝ[Ù]\ŠKˆBˆ
+Bˆ^Ù\[YÜ˜[Q\œ›ÜŽ‚ˆÙÙÙ\‹Ø\›š[™ÊÛÝ[›Ý\]H[YÜ˜[HÛÛ[X[™Y[HŠBˆ[˜X›YØXØÛÝ[ÈHÛX[˜YÙYØXØÛÝ[Ê[˜X›YÛÛ›OUYJBˆ\\—ØXØÛÝ[ÈH\JˆXØÛÝ[ˆ›ÜˆXØÛÝ[[ˆ[˜X›YØXØÛÝ[ÂˆYˆXØÛÝ[œ]›Ü›H\ÈXØÛÝ[]›Ü›K”TT‚ˆ
+BˆYˆ[Š[˜X›YØXØÛÝ[ÊHOHH[™[Š\\—ØXØÛÝ[ÊHOHN‚ˆXØÛÝ[H\\—ØXØÛÝ[ÖÌBˆ\\—ÜÝ]WÙ\ˆH•S•SQWÑTˆÈ˜XØÛÝ[ÈˆÈXØÛÝ[˜XØÛÝ[ÚYˆX\™X]Ü]H[[YWÜÝ]WÙš[JXØÛÝ[˜XØÛÝ[ÚY•S•SQWÑTŠBˆ[Ûš]ÜˆH˜YP[\[Ûš]ÜŠˆ\XØ][Û‹˜›Ýˆ™XYÜÜÚ][Ûœ×Ù›[[X™Nˆ™XYÜ\\—ÜÜÚ][ÛœÊ\\—ÜÝ]WÙ\ŠKˆÛÜÙYÜÜÚ][Û—Ù]Z[×Ù›[[X™HÜÚ][ÛŽˆ\\—ØÛÜÙYÜÜÚ][Û—Ù]Z[Êˆ\\—ÜÝ]WÙ\‹ÜÚ][Û‚ˆ
+KˆZ[WÜÝ[[X\žWÜÛ˜\ÚÝÙ›[[X™Nˆ\\—ÙZ[WÜÝ[[X\žWÜÛ˜\ÚÝ
+ˆ\\—ÜÝ]WÙ\‹X\™X]Ü]ˆ
+Kˆ
+Bˆ[ÙN‚ˆ[Ûš]ÜˆH˜YP[\[Ûš]ÜŠ\XØ][Û‹˜›Ý
+Bˆ\XØ][Û‹˜›ÝÙ]VÈ˜YWØ[\Û[Ûš]Üˆ—HH[Ûš]Ü‚ˆ\XØ][Û‹˜›ÝÙ]VÈ˜YWØ[\Ý\ÚÈ—HH\Þ[˜Ú[Ë˜Ü™X]WÝ\ÚÊˆ[Ûš]Ü‹œ[Š
+K˜[YOH˜X\]Ë]˜YKX[\[[Ûš]Üˆ‚ˆ
+B‚‚˜\Þ[˜ÈYˆÜÝÜÚ]ÝÛŠ\XØ][ÛŽˆ\XØ][ÛŠHOˆ›Û™N‚ˆ[Ûš]ÜˆH\XØ][Û‹˜›ÝÙ]K™Ù]
+˜YWØ[\Û[Ûš]ÜˆŠBˆYˆ[Ûš]ÜŽ‚ˆ]ØZ][Ûš]Ü‹œÝÜ
+
+Bˆ\ÚÈH\XØ][Û‹˜›ÝÙ]K™Ù]
+˜YWØ[\Ý\ÚÈŠBˆYˆ\ÚÎ‚ˆ\ÚË˜Ø[˜Ù[
+
+BˆžN‚ˆ]ØZ]\ÚÂˆ^Ù\\Þ[˜Ú[ËØ[˜Ù[Y\œ›ÜŽ‚ˆ\ÜÂ‚‚˜\Þ[˜ÈYˆ\œ›Ü—Ú[™\Š\]NˆØš™XÝÛÛ^ˆÛÛ^\\Ë‘QUSÕTJHOˆ›Û™N‚ˆ\œ›ÜˆHÛÛ^™\œ›Ü‚ˆYˆ\Ú[œÝ[˜ÙJ\œ›Ü‹˜Y™\]Y\Ý
+H[™›Y\ÜØYÙH\È›Ý[ÙYšYYˆ[ˆÝŠ\œ›ÜŠK›ÝÙ\Š
+N‚ˆÙÙÙ\‹™XYÊ’YÛ›Ü™Y\XØ]H[YÜ˜[HY\ÜØYÙHY]ŠBˆ™]\›‚ˆÙÙÙ\‹™^Ù\[ÛŠ•[š[™Y[YÜ˜[H›Ý\œ›Üˆ‹^×Ú[™›ÏY\œ›ÜŠB‚‚™YˆXZ[Š
+HOˆ›Û™N‚ˆYˆ›ÝÒÑSŽ‚ˆ˜Z\ÙH[[YQ\œ›ÜŠ•SQÔSWÐ“ÕÕÒÑSˆ\ÈZ\ÜÚ[™Èœ›ÛHH™[ˆš[KˆŠBˆYˆ›ÝPÐÑTÔ×ÔÓPÖK˜ÛÛ™šYÝ\™Y‚ˆ˜Z\ÙH[[YQ\œ›ÜŠˆ•[YÜ˜[HÝÛ™\ˆ[ÝÛ\Ý\ÈZ\ÜÚ[™ËˆÙ]SQÔSWÓÕÓ‘T—ÒQÈÜˆ‚ˆH˜XÚÝØ\™XÛÛ\]X›HSQÔSWÐÒUÒQˆ‚ˆ
+B‚ˆ\XØ][ÛˆH
+ˆ\XØ][Û‹˜Z[\Š
+BˆÚÙ[ŠÒÑSŠBˆœÜÝÚ[š]
+ÜÝÚ[š]
+BˆœÜÝÜÚ]ÝÛŠÜÝÜÚ]ÝÛŠBˆ˜Z[
+
+Bˆ
+BˆYØXØÛÝ[ØÛÛ™\œØ][ÛˆHÛÛ™\œØ][Û’[™\Šˆ[žWÜÚ[ÏVÐØ[˜XÚÔ]Y\žR[™\ŠYØXØÛÝ[ÜÝ\]\›\ˆ—˜YœÝ\	ŠWKˆÝ]\Ï^ÂˆQÓP‘SˆÂˆY\ÜØYÙR[™\Šš[\œË•V	ˆ™š[\œËÓÓSPS‘YÛX™[ÛY\ÜØYÙJBˆKˆQÔU“Ô“NˆÂˆØ[˜XÚÔ]Y\žR[™\ŠˆYÜ]›Ü›WØØ[˜XÚË]\›\ˆ—˜Yœ]›Ü›NŠUUJI‚ˆ
+BˆKˆQÐ”“ÒÑTŽˆÂˆØ[˜XÚÔ]Y\žR[™\ŠˆYØœ›ÚÙ\—ØØ[˜XÚË]\›\ˆ—˜Y˜œ›ÚÙ\ŽŠV‘TÔßÕTŠI‚ˆ
+BˆKˆQÐ”“ÒÑT—ÓSQNˆÂˆY\ÜØYÙR[™\Šˆš[\œË•V	ˆ™š[\œËÓÓSPS‘ˆYØœ›ÚÙ\—Û˜[YWÛY\ÜØYÙKˆ
+BˆKˆQÑS•ŽˆÂˆØ[˜XÚÔ]Y\žR[™\ŠˆYÙ[š\›Û›Y[ØØ[˜XÚË]\›\ˆ—˜Y™[ŽŠSSßU‘JI‚ˆ
+BˆKˆQÓÑÒSŽˆÂˆY\ÜØYÙR[™\Šš[\œË•V	ˆ™š[\œËÓÓSPS‘YÛÙÚ[—ÛY\ÜØYÙJBˆKˆQÔÑT•‘TŽˆÂˆY\ÜØYÙR[™\Šš[\œË•V	ˆ™š[\œËÓÓSPS‘YÜÙ\™\—ÛY\ÜØYÙJBˆKˆQÐÓÓ“‘PÕSÓŽˆÂˆY\ÜØYÙR[™\Šˆš[\œË•V	ˆ™š[\œËÓÓSPS‘ˆYØÛÛ›™XÝ[Û—ÛY\ÜØYÙKˆ
+BˆKˆKˆ˜[˜XÚÜÏVÂˆÛÛ[X[™[™\Š˜Ø[˜Ù[‹Ø[˜Ù[ØÛÛ™\œØ][ÛŠKˆØ[˜XÚÔ]Y\žR[™\ŠØ[˜Ù[ØÛÛ™\œØ][Û‹]\›\ˆ—˜Y˜Ø[˜Ù[	ŠKˆKˆ[Ý×Ü™Y[žOUYKˆ
+Bˆ\XØ][Û‹˜YÚ[™\ŠYØXØÛÝ[ØÛÛ™\œØ][ÛŠBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\ŠœÝ\‹Ý\ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š›Y[H‹Ý\ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Šš[‹[ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\ŠœÝ]\È‹Ý]\×ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š™\Ú›Ø\™‹\Ú›Ø\™ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š˜˜[[˜ÙH‹˜[[˜ÙWØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š™\]Z]H‹\]Z]WØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\ŠœÜÚ][ÛœÈ‹ÜÚ][Ûœ×ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Šœ›Ùš]‹›Ùš]ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š˜[˜[\Ú\È‹[˜[\Ú\×ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š˜[\È‹[\×ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š˜[\×ÛÛˆ‹[\×ÛÛ—ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š˜[\×ÛÙ™ˆ‹[\×ÛÙ™—ØÛÛ[X[™
+JBˆ\XØ][Û‹˜YÚ[™\ŠÛÛ[X[™[™\Š˜Ø[˜Ù[‹Ø[˜Ù[ØÛÛ™\œØ][ÛŠJBˆ\XØ][Û‹˜YÚ[™\ŠØ[˜XÚÔ]Y\žR[™\ŠØ[˜XÚ×Ü›Ý]\ŠJBˆ\XØ][Û‹˜YÚ[™\ŠˆY\ÜØYÙR[™\Šš[\œË•V	ˆ™š[\œËÓÓSPS‘ÝÛY\ÜØYÙJBˆ
+Bˆ\XØ][Û‹˜YÙ\œ›Ü—Ú[™\Š\œ›Ü—Ú[™\ŠB‚ˆÙÙÙ\‹š[™›ÊPTUÈ[YÜ˜[HX[˜YÙ\ˆ\ÈÝ\[™Ë‹‹ˆŠBˆ\XØ][Û‹œ[—ÜÛ[™Ê›ÜÜ[™[™×Ý\]\ÏUYJB‚‚šYˆ×Û˜[YW×ÈOH—×ÛXZ[—×ÈŽ‚ˆXZ[Š
+B
