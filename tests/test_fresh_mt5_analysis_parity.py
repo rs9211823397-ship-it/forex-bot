@@ -20,10 +20,18 @@ def test_legacy_engine_delegates_fresh_mt5_analysis_to_production_router(monkeyp
         pipeline = ProductionSignalPipeline.__new__(ProductionSignalPipeline)
 
     class FakeRouter:
-        def __init__(self, trend_engine, *, higher_timeframe, lower_timeframe):
+        def __init__(
+            self,
+            trend_engine,
+            *,
+            higher_timeframe,
+            lower_timeframe,
+            minimum_regime_confidence,
+        ):
             assert isinstance(trend_engine, FakeProductionEngine)
             assert higher_timeframe == "1h"
             assert lower_timeframe == "15m"
+            assert minimum_regime_confidence == 35.0
 
         def generate_analysis(self, data, symbol, higher_tf):
             assert data is lower

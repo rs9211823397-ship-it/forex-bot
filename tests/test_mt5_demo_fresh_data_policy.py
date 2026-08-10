@@ -32,6 +32,31 @@ def test_mt5_demo_never_falls_back_to_cached_candles(tmp_path):
         market.download_data("EURUSD=X", "15m")
 
 
+def test_mt5_live_requires_broker_native_data_and_forbids_cache(tmp_path):
+    with pytest.raises(ValueError, match="MT5_LIVE requires"):
+        MarketData(
+            cache_dir=tmp_path,
+            execution_mode="MT5_LIVE",
+            provider="YAHOO",
+        )
+
+    with pytest.raises(ValueError, match="forbids cached"):
+        MarketData(
+            cache_dir=tmp_path,
+            execution_mode="MT5_LIVE",
+            provider="MT5",
+            allow_cache_fallback=True,
+        )
+
+    market = MarketData(
+        cache_dir=tmp_path,
+        execution_mode="MT5_LIVE",
+        provider="MT5",
+    )
+    assert market.provider == "MT5"
+    assert market.allow_cache_fallback is False
+
+
 def test_paper_mode_may_use_cached_candles_after_provider_failure(tmp_path):
     market = MarketData(
         cache_dir=tmp_path,

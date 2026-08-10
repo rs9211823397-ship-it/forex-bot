@@ -299,7 +299,11 @@ class SignalEngine:
         ``TradingApplication``.  Synthetic, cached, Yahoo and legacy research
         calls continue using the compatibility pipeline.
         """
-        from config.settings import HIGHER_TIMEFRAME, TRADING_TIMEFRAME
+        from config.settings import (
+            HIGHER_TIMEFRAME,
+            MIN_REGIME_CONFIDENCE,
+            TRADING_TIMEFRAME,
+        )
         from strategy.regime_router import RegimeStrategyRouter
 
         production_engine = SignalEngine.production(
@@ -310,6 +314,7 @@ class SignalEngine:
             production_engine,
             higher_timeframe=HIGHER_TIMEFRAME,
             lower_timeframe=TRADING_TIMEFRAME,
+            minimum_regime_confidence=MIN_REGIME_CONFIDENCE,
         )
         return router.generate_analysis(data, symbol, higher_tf)
 

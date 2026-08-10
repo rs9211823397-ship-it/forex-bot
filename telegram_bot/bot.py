@@ -332,7 +332,7 @@ def paper_snapshot() -> dict[str, Any]:
 
 
 def account_snapshot() -> dict[str, Any]:
-    if EXECUTION_MODE == "MT5_DEMO":
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
         return mt5_snapshot()
     return paper_snapshot()
 
@@ -448,7 +448,11 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     try:
         snapshot = await asyncio.to_thread(account_snapshot)
-        label = "MT5 DEMO ACCOUNT" if EXECUTION_MODE == "MT5_DEMO" else "PAPER ACCOUNT"
+        label = (
+            f"{EXECUTION_MODE.replace('_', ' ')} ACCOUNT"
+            if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}
+            else "PAPER ACCOUNT"
+        )
         await update.message.reply_text(
             f"💰 {label}\n\n"
             f"Balance: {money(snapshot['balance'])}\n"
@@ -497,7 +501,7 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     lines = ["📈 AAQTS OPEN POSITIONS", ""]
-    if EXECUTION_MODE == "MT5_DEMO":
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
         for index, position in enumerate(positions, start=1):
             side = "BUY" if getattr(position, "type", 0) == 0 else "SELL"
             lines.extend(
@@ -538,7 +542,7 @@ async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         snapshot = await asyncio.to_thread(account_snapshot)
         positions = snapshot["positions"]
-        if EXECUTION_MODE == "MT5_DEMO":
+        if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
             managed_profit = sum(float(getattr(p, "profit", 0.0)) for p in positions)
             text = (
                 "📈 LIVE MT5 PERFORMANCE\n\n"

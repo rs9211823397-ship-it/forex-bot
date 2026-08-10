@@ -37,6 +37,10 @@ class FakeDemoExecution:
         ]
 
 
+class FakeLiveExecution(FakeDemoExecution):
+    mode = "MT5_LIVE"
+
+
 def test_demo_risk_context_uses_broker_positions_and_realized_results():
     app = TradingApplication.__new__(TradingApplication)
     app.execution = FakeDemoExecution()
@@ -54,3 +58,17 @@ def test_demo_risk_context_uses_broker_positions_and_realized_results():
     assert len(context.closed_trades) == 1
     assert context.closed_trades[0].profit_loss == -25.0
     assert context.correlations == ()
+
+
+def test_live_risk_context_uses_broker_positions_and_realized_results():
+    app = TradingApplication.__new__(TradingApplication)
+    app.execution = FakeLiveExecution()
+    app.equity_history = []
+    app.latest_correlations = ()
+    app.news_provider = None
+
+    context = app._risk_context(datetime.now(timezone.utc))
+
+    assert len(context.open_positions) == 1
+    assert context.open_positions[0].risk_amount == 75.0
+    assert len(context.closed_trades) == 1

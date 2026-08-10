@@ -40,8 +40,8 @@ def _closed_position_results(deals: list[Any]) -> list[float]:
 
 def mt5_dashboard_snapshot() -> dict[str, Any]:
     """Return live AAQTS account, daily-performance, and exposure metrics."""
-    if EXECUTION_MODE != "MT5_DEMO":
-        raise RuntimeError("The live dashboard currently requires MT5_DEMO mode.")
+    if EXECUTION_MODE not in {"MT5_DEMO", "MT5_LIVE"}:
+        raise RuntimeError("The live dashboard requires an MT5 broker mode.")
 
     try:
         import MetaTrader5 as mt5

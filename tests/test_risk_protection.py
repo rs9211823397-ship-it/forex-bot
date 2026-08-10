@@ -125,6 +125,33 @@ def test_realized_loss_limits_use_utc_point_in_time_results(
     assert reason in assessment.reason_codes
 
 
+def test_daily_trade_limit_counts_closed_positions_in_utc_day():
+    manager = PortfolioRiskManager(
+        ProtectionConfig(max_daily_trades=2)
+    )
+    context = RiskContext(
+        closed_trades=(outcome(1, 10.0), outcome(2, -5.0))
+    )
+
+    assessment = manager.assess(request(), context)
+
+    assert assessment.action is RiskAction.BLOCK
+    assert assessment.reason_codes == ("MAX_DAILY_TRADES",)
+
+
+def test_daily_trade_limit_ignores_previous_utc_day():
+    manager = PortfolioRiskManager(
+        ProtectionConfig(max_daily_trades=2)
+    )
+    context = RiskContext(
+        closed_trades=(outcome(25, 10.0), outcome(26, -5.0))
+    )
+
+    assessment = manager.assess(request(), context)
+
+    assert assessment.action is RiskAction.ALLOW
+
+
 def test_drawdown_protection_uses_only_equity_known_at_decision_time():
     config = ProtectionConfig(max_equity_drawdown_percent=10.0)
     history = (

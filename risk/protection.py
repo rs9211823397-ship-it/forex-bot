@@ -231,6 +231,7 @@ class ProtectionConfig:
     news_pre_event_buffer: timedelta = timedelta(minutes=30)
     news_post_event_buffer: timedelta = timedelta(minutes=15)
     reduce_size_when_possible: bool = True
+    max_daily_trades: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.news_filter_enabled, bool):
@@ -275,6 +276,15 @@ class ProtectionConfig:
             )
         ):
             raise ValueError("max_open_trades must be a positive integer")
+        if (
+            self.max_daily_trades is not None
+            and (
+                not isinstance(self.max_daily_trades, int)
+                or isinstance(self.max_daily_trades, bool)
+                or self.max_daily_trades <= 0
+            )
+        ):
+            raise ValueError("max_daily_trades must be a positive integer")
         if self.consecutive_loss_cooldown <= timedelta(0):
             raise ValueError(
                 "consecutive_loss_cooldown must be greater than zero"
@@ -537,6 +547,10 @@ class PortfolioRiskManager:
             if outcome.profit_loss < 0
             and outcome.closed_at.date() == utc_date
         )
+        daily_trades = sum(
+            outcome.closed_at.date() == utc_date
+            for outcome in outcomes
+        )
         weekly_loss = sum(
             -outcome.profit_loss
             for outcome in outcomes
@@ -559,6 +573,11 @@ class PortfolioRiskManager:
             >= self.config.max_weekly_loss_percent
         ):
             blocking.append("WEEKLY_LOSS_LIMIT")
+        if (
+            self.config.max_daily_trades is not None
+            and daily_trades >= self.config.max_daily_trades
+        ):
+            blocking.append("MAX_DAILY_TRADES")
 
     def _check_drawdown(
         self,
