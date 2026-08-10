@@ -23,12 +23,11 @@ class ProductionSignalPipeline(SignalPipeline):
     legacy candle confirmation, and contextual trigger evidence contribute to
     ranking/quality without each receiving an independent veto.
 
-    Context remains fail-closed for wrong HTF/structure/location. The only
-    contextual case allowed to become soft evidence is a fully aligned setup in
-    a valid location where the *only* missing item is an exact contextual candle
-    trigger and the setup is already high-conviction by independent evidence.
-    This prevents a good trend setup being rejected twice for the same missing
-    micro-trigger while still refusing premium BUYs / discount SELLs.
+    Context remains fail-closed for wrong HTF/structure, expired setups, and
+    opposing RSI/Bollinger extremes. Missing micro-triggers and imperfect
+    locations become cautions only when the 2-of-3 trend vote, higher timeframe,
+    and market structure already agree. This prevents the same aligned setup
+    being rejected twice while retaining independent directional safety gates.
     """
 
     HIGH_CONVICTION_QUALITY = MIN_TRADE_QUALITY
@@ -173,8 +172,9 @@ class ProductionSignalPipeline(SignalPipeline):
                 approved=True,
                 reasons=contextual_gate.reasons
                 + (
-                    "Contextual trigger is soft evidence; location is a caution: "
+                    "Contextual trigger/location is soft evidence because the "
                     "majority setup already has aligned HTF and structure",
+                    "Contextual trigger is soft evidence; location is a caution",
                 ),
             )
 
