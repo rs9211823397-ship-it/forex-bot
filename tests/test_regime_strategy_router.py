@@ -200,6 +200,33 @@ def test_range_router_supports_bearish_reentry():
     assert result["score"] < 0
 
 
+def test_range_router_accepts_near_band_rsi_recovery_after_relaxation():
+    frame = range_reentry_frame("BUY").copy()
+    frame.loc[0, "close"] = frame.loc[0, "BB_LOWER"] + 0.20
+    frame.loc[0, "RSI"] = 43.0
+    frame.loc[1, "RSI"] = 44.0
+
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+    ).generate_analysis(frame, "EURUSD=X")
+
+    assert result["signal"] == "BUY"
+    assert result["strategy"] == "RANGE_REVERSION"
+
+
+def test_range_router_still_rejects_mid_range_noise():
+    frame = range_reentry_frame("BUY").copy()
+    frame.loc[0, "close"] = frame.loc[0, "BB_LOWER"] + 0.50
+    frame.loc[0, "RSI"] = 43.0
+    frame.loc[1, "RSI"] = 44.0
+
+    result = router(
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+    ).generate_analysis(frame, "EURUSD=X")
+
+    assert result["signal"] == "HOLD"
+
+
 def test_range_hold_does_not_report_regime_confidence_as_trade_confidence(caplog):
     caplog.set_level(logging.INFO)
     result = router(
