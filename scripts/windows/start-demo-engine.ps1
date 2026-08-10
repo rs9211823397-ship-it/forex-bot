@@ -11,6 +11,9 @@ $loginFile = Join-Path $runtime "mt5_expected_login.txt"
 $serverFile = Join-Path $runtime "mt5_demo_server.txt"
 
 if (-not (Test-Path -LiteralPath $python)) { throw "AAQTS Python was not found: $python" }
+$certFile = (& $python -m certifi).Trim()
+if (-not (Test-Path -LiteralPath $certFile)) { throw "Trusted CA bundle was not found: $certFile" }
+$env:SSL_CERT_FILE = $certFile
 if (-not (Test-Path -LiteralPath $TerminalPath)) { throw "MT5 terminal was not found: $TerminalPath" }
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 Set-Location $Repository
@@ -56,5 +59,9 @@ $env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = "5.0"
 $env:AAQTS_MIN_REGIME_CONFIDENCE = "35"
 $env:PYTHONUNBUFFERED = "1"
 
+$previousEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $python main.py 1>> (Join-Path $runtime "demo-engine.log") 2>> (Join-Path $runtime "demo-engine-error.log")
-exit $LASTEXITCODE
+$pythonExitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousEAP
+exit $pythonExitCode
