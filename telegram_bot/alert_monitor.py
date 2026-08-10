@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterable
 
 from config.settings import MT5_TERMINAL_PATH
 from execution.mt5_executor import AAQTS_MAGIC
+from mt5_ipc import serialized_mt5_call
 
 logger = logging.getLogger("aaqts.telegram.alerts")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -99,6 +100,7 @@ def _connect_mt5() -> Any:
     return mt5
 
 
+@serialized_mt5_call
 def read_positions() -> dict[int, PositionSnapshot]:
     mt5 = _connect_mt5()
     try:
@@ -273,6 +275,7 @@ def _deal_reason(mt5: Any, deal: Any) -> str:
     return mapping.get(reason, "CLOSED")
 
 
+@serialized_mt5_call
 def closed_position_details(position: PositionSnapshot) -> dict[str, Any]:
     mt5 = _connect_mt5()
     try:
@@ -316,6 +319,7 @@ def closed_position_details(position: PositionSnapshot) -> dict[str, Any]:
         mt5.shutdown()
 
 
+@serialized_mt5_call
 def daily_summary_snapshot() -> dict[str, Any]:
     mt5 = _connect_mt5()
     try:

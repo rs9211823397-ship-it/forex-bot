@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 
+import pandas as pd
+
+from price_action.contextual_trigger import ContextualTriggerEngine, SetupContext
 from strategy.contextual_integration import ContextualGateResult
 from strategy.decision import (
     MarketRegimeResult,
@@ -133,6 +136,43 @@ def test_invalid_location_is_soft_when_majority_htf_and_structure_align():
         "Contextual trigger/location is soft evidence" in reason
         for reason in decision.reasons
     )
+
+
+def test_real_contextual_output_softens_invalid_location_after_true_alignment():
+    now = pd.Timestamp("2026-08-10T06:00:00Z")
+
+    class InvalidZone:
+        location = "PREMIUM"
+
+        @staticmethod
+        def valid_for_direction(_direction):
+            return False
+
+    context = SimpleNamespace(
+        decision_time=now,
+        htf_regime=SimpleNamespace(regime="BULLISH"),
+        structure=SimpleNamespace(trend="BULLISH"),
+        zones=InvalidZone(),
+        liquidity=SimpleNamespace(event="NONE"),
+    )
+    output = ContextualTriggerEngine().evaluate(
+        context,
+        SetupContext(
+            direction="BUY",
+            created_at=now,
+            valid_until=now + pd.Timedelta(minutes=45),
+        ),
+    )
+
+    decision = _high_conviction_decision(output.reason_codes)
+
+    assert output.reason_codes == (
+        "SETUP_VALID",
+        "HTF_ALIGNED",
+        "STRUCTURE_ALIGNED",
+        "INVALID_LOCATION",
+    )
+    assert decision.signal == "BUY"
 
 
 def test_contextual_htf_mismatch_remains_hard_block():

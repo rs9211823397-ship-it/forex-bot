@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 
 from config.settings import MT5_RISK_BASELINE_UTC
 from execution.mt5_executor import ClosedPositionResult, ExecutionError
+from mt5_ipc import serialized_mt5_call
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ class MT5TradeAudit:
     def __init__(self, executor: Any, path: str | Path = "logs/trade_history.csv"):
         self.executor = executor
         self.path = Path(path)
+        self._file_lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
@@ -92,22 +95,24 @@ class MT5TradeAudit:
         return max(start, baseline), end
 
     def _existing_keys(self) -> set[tuple[str, str, str]]:
-        keys: set[tuple[str, str, str]] = set()
-        try:
-            with self.path.open("r", newline="", encoding="utf-8") as handle:
-                for row in csv.DictReader(handle):
-                    keys.add((str(row.get("Event", "")), str(row.get("PositionID", "")), str(row.get("DealTicket", ""))))
-        except OSError:
-            return set()
-        return keys
+        with self._file_lock:
+            keys: set[tuple[str, str, str]] = set()
+            try:
+                with self.path.open("r", newline="", encoding="utf-8") as handle:
+                    for row in csv.DictReader(handle):
+                        keys.add((str(row.get("Event", "")), str(row.get("PositionID", "")), str(row.get("DealTicket", ""))))
+            except OSError:
+                return set()
+            return keys
 
     def _append(self, row: dict[str, object]) -> None:
-        key = (str(row.get("Event", "")), str(row.get("PositionID", "")), str(row.get("DealTicket", "")))
-        if key in self._existing_keys():
-            return
-        with self.path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=self.HEADER)
-            writer.writerow({name: row.get(name, "") for name in self.HEADER})
+        with self._file_lock:
+            key = (str(row.get("Event", "")), str(row.get("PositionID", "")), str(row.get("DealTicket", "")))
+            if key in self._existing_keys():
+                return
+            with self.path.open("a", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=self.HEADER)
+                writer.writerow({name: row.get(name, "") for name in self.HEADER})
 
     def record_entry(self, *, source_symbol: str, side: str, risk_plan: dict[str, float], result: Any, managed_position: Any = None) -> None:
         position_id = int(getattr(managed_position, "ticket", 0) or getattr(result, "position", 0) or getattr(result, "order", 0) or 0)
@@ -148,6 +153,7 @@ class MT5TradeAudit:
             raise ExecutionError(f"MT5 deal history is unavailable: {last_error}")
         return list(deals)
 
+    @serialized_mt5_call
     def managed_closed_deals(self, start_time: datetime, end_time: datetime) -> list[ManagedClosedDeal]:
         start = self._as_utc(start_time, "start_time")
         end = self._as_utc(end_time, "end_time")

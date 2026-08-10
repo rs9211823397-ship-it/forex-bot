@@ -10,7 +10,9 @@ The multi-account registry remains available as an explicit future opt-in.
 The safe default is `PAPER`. `MT5_DEMO` must be selected explicitly.
 Set `AAQTS_PAPER_STARTING_BALANCE` to the forward-test account size; the
 default is `1000`, while a small-account simulation can use `100`.
-`MT5_LIVE` is blocked in code and is not enabled by this release.
+`MT5_LIVE` has a separate acknowledgement, account pin, server pin, risk
+baseline and preflight path, but this repository is not approving live-capital
+deployment. Complete the documented demo validation before any live review.
 
 ## Symbol catalog
 
@@ -172,11 +174,26 @@ installation:
 .venv\Scripts\python.exe -m pip install -r requirements-mt5.txt
 ```
 
-Then set `AAQTS_EXECUTION_MODE=MT5_DEMO`, `AAQTS_MT5_LOGIN`,
-`AAQTS_MT5_PASSWORD`, and `AAQTS_MT5_SERVER` in `.env` for a single worker, or
-use the per-account variables above with `account_supervisor.py`. The router
-validates the returned account login, requires protective SL/TP, prevents
-duplicate managed positions, and keeps live execution locked.
+For a persistent Windows VPS, keep the password out of `.env`. Log into the
+demo account visibly in MT5, then save a DPAPI-encrypted password that only the
+same Windows user can decrypt:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\save-demo-credentials.ps1
+powershell -ExecutionPolicy Bypass -File scripts\windows\install-scheduled-tasks.ps1
+Start-ScheduledTask -TaskName "AAQTS-MT5"
+Start-ScheduledTask -TaskName "AAQTS-Demo-Engine"
+Start-ScheduledTask -TaskName "AAQTS-Telegram"
+```
+
+The versioned engine launcher uses the encrypted credential when present. If
+it is absent, it explicitly selects demo-only preauthenticated-session mode;
+this ignores stale `AAQTS_MT5_LOGIN/PASSWORD/SERVER` values in `.env` and pins
+the account identity. `MT5_LIVE` rejects preauthenticated-session mode.
+
+The router validates the returned demo account login, requires protective
+SL/TP, prevents duplicate managed positions, and serializes access to the one
+MT5 terminal across the engine and Telegram processes.
 
 ## Release validation
 
@@ -205,14 +222,17 @@ accounting; it is not evidence of future profitability.
 - Invalid, incomplete, duplicate, or non-monotonic data fails closed.
 - AI components may rank or explain an existing rules-based setup; they do not
   invent trade direction.
-- The regime router delegates trends to the existing causal pipeline, requires
-  Bollinger/RSI re-entry for ranges, requires range-close/ATR/ADX confirmation
-  for breakouts, and blocks unknown or unsafe volatility states.
+- The regime router delegates trend and range regimes to the same 2-of-3
+  primary trend vote (EMA, Supertrend, momentum). RSI/Bollinger are opposing
+  extreme vetoes rather than duplicate positive confirmations. Breakouts still
+  require a range close plus ATR/ADX confirmation; unknown or unsafe volatility
+  states remain fail-closed.
 - Range and breakout strategies use reduced position-size multipliers that are
   preserved in deterministic backtest records.
 - Portfolio controls can block or reduce a qualified setup based on open risk,
   realized loss, drawdown, correlation, session, volatility, or news context.
-- MT5 demo positions are recovered into the lifecycle manager and can advance
+- MT5 demo positions are recovered into an independent 10-second lifecycle
+  loop and can advance
   to break-even, trail by ATR, take broker-valid partial profits, retain a
   runner, or close on time limits. Paper trading continues to use deterministic
   fixed SL/TP exits until those lifecycle fills are modeled equivalently.
@@ -221,6 +241,9 @@ accounting; it is not evidence of future profitability.
   never mixed into MT5 demo authorization.
 - Runtime state, credentials, logs, caches, and paper-account files are ignored
   by Git and checked by CI.
+- Runtime state records every decision stage separately (strategy HOLD,
+  trade-level reject, portfolio-risk block, execution reject, and execution),
+  so a zero-trade period no longer hides the actual gate.
 
 ## Research data and reproducibility
 

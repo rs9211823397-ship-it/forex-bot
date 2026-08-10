@@ -8,6 +8,7 @@ from typing import Any
 
 from config.settings import EXECUTION_MODE, MT5_TERMINAL_PATH
 from execution.mt5_executor import AAQTS_MAGIC
+from mt5_ipc import serialized_mt5_call
 
 
 def _money(value: Any) -> float:
@@ -38,6 +39,7 @@ def _closed_position_results(deals: list[Any]) -> list[float]:
     return list(results.values())
 
 
+@serialized_mt5_call
 def mt5_dashboard_snapshot() -> dict[str, Any]:
     """Return live AAQTS account, daily-performance, and exposure metrics."""
     if EXECUTION_MODE not in {"MT5_DEMO", "MT5_LIVE"}:

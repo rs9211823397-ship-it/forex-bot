@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from math import floor, isfinite
 from typing import Any, Optional
 
+from mt5_ipc import serialized_mt5_call
+
 
 logger = logging.getLogger(__name__)
 AAQTS_MAGIC = 20260730
@@ -66,6 +68,9 @@ class TradeResult:
 class AccountSnapshot:
     balance: float
     equity: float
+    login: Optional[int] = None
+    server: str = ""
+    trade_mode: Optional[int] = None
 
     def __post_init__(self) -> None:
         for field_name in ("balance", "equity"):
@@ -73,6 +78,11 @@ class AccountSnapshot:
             if not isfinite(value) or value <= 0:
                 raise ExecutionError(f"MT5 account {field_name} must be finite and positive")
             object.__setattr__(self, field_name, value)
+        if self.login is not None:
+            object.__setattr__(self, "login", int(self.login))
+        object.__setattr__(self, "server", str(self.server).strip())
+        if self.trade_mode is not None:
+            object.__setattr__(self, "trade_mode", int(self.trade_mode))
 
 
 @dataclass(frozen=True)
@@ -107,6 +117,7 @@ class MT5Executor:
         self.connected = False
         self.accept_new_trades = True
 
+    @serialized_mt5_call
     def connect(self) -> bool:
         kwargs = {}
         if self.config.terminal_path:
@@ -148,6 +159,7 @@ class MT5Executor:
             raise ExecutionError("Trading or expert trading is disabled on the account")
         return True
 
+    @serialized_mt5_call
     def shutdown(self) -> None:
         if self.connected:
             self.mt5.shutdown()
@@ -159,6 +171,7 @@ class MT5Executor:
     def resume(self) -> None:
         self.accept_new_trades = True
 
+    @serialized_mt5_call
     def positions(self, symbol: Optional[str] = None, managed_only: bool = True) -> list[Any]:
         self._ensure_connected()
         raw = self.mt5.positions_get(symbol=symbol) if symbol else self.mt5.positions_get()
@@ -172,6 +185,7 @@ class MT5Executor:
     def recover_positions(self) -> list[Any]:
         return self.positions(managed_only=True)
 
+    @serialized_mt5_call
     def account_snapshot(self) -> AccountSnapshot:
         self._ensure_connected()
         account = self.mt5.account_info()
@@ -180,8 +194,12 @@ class MT5Executor:
         return AccountSnapshot(
             balance=getattr(account, "balance", 0.0),
             equity=getattr(account, "equity", 0.0),
+            login=getattr(account, "login", None),
+            server=getattr(account, "server", ""),
+            trade_mode=getattr(account, "trade_mode", None),
         )
 
+    @serialized_mt5_call
     def closed_position_results(self, start_time: datetime, end_time: datetime) -> list[ClosedPositionResult]:
         self._ensure_connected()
         start = self._as_utc(start_time, "start_time")
@@ -224,6 +242,7 @@ class MT5Executor:
             return "SELL"
         raise ExecutionError("MT5 position has an unsupported direction")
 
+    @serialized_mt5_call
     def remaining_loss_at_stop(self, position: Any) -> float:
         self._ensure_connected()
         side = self.position_side(position)
@@ -243,6 +262,7 @@ class MT5Executor:
             raise ExecutionError(f"MT5 could not calculate stop risk: {self.mt5.last_error()}")
         return max(0.0, -float(projected))
 
+    @serialized_mt5_call
     def symbol_info(self, symbol: str) -> Any:
         self._ensure_connected()
         info = self.mt5.symbol_info(symbol)
@@ -256,6 +276,7 @@ class MT5Executor:
                 raise ExecutionError(f"Symbol information is unavailable after selecting {symbol}")
         return info
 
+    @serialized_mt5_call
     def symbol_tick(self, symbol: str) -> Any:
         self.symbol_info(symbol)
         tick = self.mt5.symbol_info_tick(symbol)
@@ -356,6 +377,7 @@ class MT5Executor:
                 raise ExecutionError(f"MT5 retry order_check rejected the request: {detail}")
             logger.warning("Retrying MT5 entry after explicit price rejection; retries_left=%s", retries_left)
 
+    @serialized_mt5_call
     def place_market_order(
         self,
         symbol: str,
@@ -433,6 +455,7 @@ class MT5Executor:
             raise ExecutionError(f"MT5 order_check rejected the request: {detail}")
         return self._send_new_market_order(request, side, info)
 
+    @serialized_mt5_call
     def modify_protection(self, position_ticket: int, stop_loss: float, take_profit: float) -> TradeResult:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
@@ -481,6 +504,7 @@ class MT5Executor:
             raise ExecutionError("Cannot trail a position without an existing take profit")
         return self.modify_protection(position_ticket, float(stop_loss), take_profit)
 
+    @serialized_mt5_call
     def partial_close(self, position_ticket: int, volume: float, comment: str = "AAQTS partial") -> TradeResult:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
@@ -494,6 +518,7 @@ class MT5Executor:
             raise ExecutionError("Partial close would leave a position below broker minimum volume")
         return self._close_volume(position, requested, comment)
 
+    @serialized_mt5_call
     def close_position(self, position_ticket: int, comment: str = "AAQTS close") -> TradeResult:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
@@ -528,6 +553,7 @@ class MT5Executor:
             raise ExecutionError(f"Close failed: {trade_result.comment}")
         return trade_result
 
+    @serialized_mt5_call
     def close_all(self) -> list[TradeResult]:
         positions = list(self.positions(managed_only=True))
         results: list[TradeResult] = []
@@ -542,6 +568,7 @@ class MT5Executor:
             raise ExecutionError("Emergency close incomplete: " + "; ".join(failures))
         return results
 
+    @serialized_mt5_call
     def emergency_stop(self) -> list[TradeResult]:
         self.pause()
         return self.close_all()
