@@ -11,6 +11,7 @@ class TechnicalIndicators:
 
     def add_indicators(self, data):
 
+        source_attrs = dict(getattr(data, "attrs", {}) or {})
         df = data.copy()
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -152,5 +153,6 @@ class TechnicalIndicators:
         # ==========================
 
         df = add_supertrend(df)
+        df.attrs.update(source_attrs)
 
         return df
