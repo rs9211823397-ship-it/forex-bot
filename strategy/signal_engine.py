@@ -30,9 +30,6 @@ class ProductionSignalPipeline(SignalPipeline):
     micro-trigger while still refusing premium BUYs / discount SELLs.
     """
 
-    # Do not demand a second, stricter score after the configured quality gate
-    # has already approved the same aligned evidence. Exact candle patterns are
-    # useful ranking evidence, but they are not an additional mandatory veto.
     HIGH_CONVICTION_QUALITY = MIN_TRADE_QUALITY
     HIGH_CONVICTION_SCORE_BUFFER = 0
 
@@ -158,7 +155,9 @@ class SignalEngine:
         self.mtf = mtf
         self.trade_quality = TradeQuality()
         self.decision_analyzer = AIDecisionAnalyzer()
-        self.setup_detector = SetupDetector()
+        self.setup_detector = SetupDetector(
+            allow_momentum_fallback=(pipeline_class is ProductionSignalPipeline)
+        )
         self.trigger_detector = TriggerDetector(self.candles)
         self.pipeline = pipeline_class(
             market_structure=self.market_structure,
