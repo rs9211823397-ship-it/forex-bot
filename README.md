@@ -230,6 +230,9 @@ accounting; it is not evidence of future profitability.
   majority setup, while a neutral H1 requires high conviction and an opposite
   H1 remains a hard veto. Breakouts still require a range close plus ATR/ADX
   confirmation; unknown or unsafe volatility states remain fail-closed.
+- `AAQTS_MIN_ADX` is the canonical ADX eligibility threshold for signal
+  validation and all regime classifiers; there is no hidden stronger regime
+  boundary after a candle passes validation.
 - Range and breakout strategies use reduced position-size multipliers that are
   preserved in deterministic backtest records.
 - Portfolio controls can block or reduce a qualified setup based on open risk,

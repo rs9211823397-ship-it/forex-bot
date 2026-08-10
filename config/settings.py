@@ -132,6 +132,12 @@ ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
 RISK_PERCENT = _bounded_float("AAQTS_RISK_PERCENT", 3.0, 0.05, 5.0)
 
 MIN_ADX = _bounded_float("AAQTS_MIN_ADX", 20.0, 0.0, 100.0)
+# One canonical ADX eligibility boundary is shared by signal validation and
+# every regime classifier.  Regime logic may still combine ADX with EMA slope,
+# separation and volatility, but it must not silently introduce a second
+# stronger ADX gate after the signal validator has accepted the candle.
+REGIME_ADX_TREND_THRESHOLD = MIN_ADX
+REGIME_ADX_RANGE_THRESHOLD = MIN_ADX
 MIN_REGIME_CONFIDENCE = _bounded_float(
     "AAQTS_MIN_REGIME_CONFIDENCE", 35.0, 0.0, 100.0
 )

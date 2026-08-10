@@ -2,6 +2,7 @@
 
 from validation.workflow import (
     ValidationError,
+    chronological_holdout_report,
     compare_signal_ledgers,
     forward_test_report,
     promotion_report,
@@ -10,6 +11,7 @@ from validation.workflow import (
 
 __all__ = [
     "ValidationError",
+    "chronological_holdout_report",
     "compare_signal_ledgers",
     "forward_test_report",
     "promotion_report",

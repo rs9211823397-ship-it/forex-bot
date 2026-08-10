@@ -19,6 +19,8 @@ from math import isfinite
 import numpy as np
 import pandas as pd
 
+from config.settings import REGIME_ADX_TREND_THRESHOLD
+
 from data.timeframes import (
     TimeframeError,
     normalize_timestamp,
@@ -57,7 +59,7 @@ class MarketRegimeConfig:
     realized_volatility_period: int = 20
     volatility_baseline_period: int = 60
     minimum_history: int = 200
-    adx_trend_threshold: float = 25.0
+    adx_trend_threshold: float = REGIME_ADX_TREND_THRESHOLD
     minimum_ema_separation_atr: float = 0.25
     high_volatility_ratio: float = 1.50
     low_volatility_ratio: float = 0.75

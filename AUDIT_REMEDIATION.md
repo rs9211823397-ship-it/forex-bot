@@ -7,12 +7,18 @@ Audit baseline: `63400c653f98a3fd9a93a27a003404ebb570b91c` on
 
 A deterministic 700-decision, mixed-regime M15 replay was run with the VPS
 policy (`ADX=12`, score `35`, one confirmation, quality `35`, regime `35`).
+The report freezes those values internally, so ambient shell or `.env`
+settings cannot silently change the audit result.
+It covers one synthetic `ETH-USD` stream from `2025-01-04 03:15 UTC` through
+`2025-01-11 10:00 UTC` (7 days 6 hours 45 minutes). It measures policy
+selectivity only; it is not nine-symbol market data or an order-frequency
+forecast.
 
 | Result | Audit baseline | Final calibrated policy |
 | --- | ---: | ---: |
 | Actionable BUY/SELL | 9.57% | 38.57% |
 | HOLD | 90.43% | 61.43% |
-| Candidate acceptance | not recorded | 47.96% |
+| Candidate acceptance | not recorded | 49.09% |
 
 The repaired policy produced 270 actionable decisions out of 700. The replay
 therefore no longer exhibits the reported 80–90% strategy HOLD problem. This
@@ -24,10 +30,10 @@ Exclusive remaining HOLD causes after repair:
 
 | Gate | Share of HOLDs | Policy |
 | --- | ---: | --- |
-| H1 direction conflict | 23.26% | Keep: one binary opposite-direction check |
-| Unsafe/unclear regime | 20.70% | Keep: volatility/data context safety |
+| Unsafe/unclear regime | 23.95% | Keep: volatility/data context safety |
+| H1 direction conflict | 20.23% | Keep: one binary opposite-direction check |
 | No primary direction | 15.81% | Keep: 2-of-3 vote did not form |
-| Structure conflict | 15.81% | Keep: opposite structure, not extra confirmation |
+| Structure conflict | 15.58% | Keep: opposite structure, not extra confirmation |
 | Contextual gate | 15.58% | Keep for weak candidates; aligned/neutral high-conviction context is advisory |
 | Breakout not confirmed | 8.37% | Keep: prevents false range breaks |
 | Quality threshold | 0.23% | Keep |
@@ -35,7 +41,8 @@ Exclusive remaining HOLD causes after repair:
 
 RSI no longer appears as an exclusive primary HOLD cause. A standalone RSI
 reading is advisory; it blocks only when Bollinger position and an opposing
-reversal candle independently confirm exhaustion.
+reversal candle independently confirm exhaustion. In the strong-trend
+ablation it changed 1 of 390 decisions (0.2564%).
 
 ## Defects fixed
 
@@ -74,6 +81,14 @@ reversal candle independently confirm exhaustion.
     positive confirmation or an independent rejection. Only RSI + Bollinger
     extreme + an opposing reversal candle can veto an otherwise qualified
     entry.
+11. **ADX gates disagreed.** `AAQTS_MIN_ADX` is now the single boundary used by
+    signal validation, the production regime detector, and the causal research
+    classifier. A VPS value of `12` cannot pass validation and then encounter
+    a hidden `20`, `22.5`, or `25` ADX gate.
+12. **Validation promotion was under-specified.** Promotion now requires full
+    and chronological holdout samples, PF >= 1.2, positive expectancy,
+    drawdown <= 10%, TradingView parity/coverage, and 100 closed demo trades.
+    Missing percent-drawdown or holdout evidence fails closed.
 
 ## Deliberately retained blocks
 

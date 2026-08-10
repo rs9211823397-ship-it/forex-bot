@@ -1,3 +1,7 @@
+import argparse
+import json
+from pathlib import Path
+
 from data.market_data import MarketData
 from strategy.signal_engine import SignalEngine
 from strategy.regime_router import RegimeStrategyRouter
@@ -6,11 +10,24 @@ from backtesting.backtest_engine import BacktestEngine
 from backtesting.performance import PerformanceReport
 from indicators.technical import TechnicalIndicators
 from config.instruments import get_instrument_spec
-from validation.workflow import write_signal_ledger
+from validation.workflow import chronological_holdout_report, write_signal_ledger
 
 
 LOWER_TIMEFRAME = "15m"
 HIGHER_TIMEFRAME = "1h"
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--symbol", default="ETH-USD")
+parser.add_argument("--output-dir", default="outputs/validation")
+args = parser.parse_args()
+symbol = str(args.symbol).strip().upper()
+if not symbol:
+    raise ValueError("symbol cannot be empty")
+output_dir = Path(args.output_dir)
+safe_symbol = "".join(
+    character.lower() if character.isalnum() else "_"
+    for character in symbol
+).strip("_")
 
 market = MarketData()
 trend_engine = SignalEngine.production(
@@ -24,8 +41,6 @@ engine = RegimeStrategyRouter(
 )
 indicators = TechnicalIndicators()
 primary_detector = SetupDetector()
-
-symbol = "ETH-USD"
 
 data = market.download_data(symbol, interval=LOWER_TIMEFRAME)
 higher_tf = market.download_data(symbol, interval=HIGHER_TIMEFRAME)
@@ -60,7 +75,7 @@ for i in range(len(data)):
 print("Signals calculated:", len(signals))
 ledger_path = write_signal_ledger(
     signal_ledger,
-    "outputs/validation/aaqts_primary_signals.csv",
+    output_dir / f"aaqts_primary_signals_{safe_symbol}.csv",
 )
 print("AAQTS signal ledger:", ledger_path)
 
@@ -83,11 +98,36 @@ report = PerformanceReport(
     initial_equity=backtest.initial_equity,
     equity_curve=backtest.equity_history,
 )
+full_summary = report.summary()
+
+# A chronological 70/30 holdout is reported independently.  Parameters are
+# never selected from this tail segment; promotion fails closed unless it has
+# enough completed trades and independently meets PF/expectancy/drawdown gates.
+holdout = chronological_holdout_report(
+    trades,
+    data,
+    initial_equity=backtest.initial_equity,
+)
+out_of_sample_summary = holdout["out_of_sample"]
+validation_metrics = {
+    "full": full_summary,
+    "out_of_sample": out_of_sample_summary,
+    "split": holdout["split"],
+}
+metrics_path = output_dir / f"backtest_metrics_{safe_symbol}.json"
+metrics_path.parent.mkdir(parents=True, exist_ok=True)
+metrics_path.write_text(
+    json.dumps(validation_metrics, indent=2, sort_keys=True),
+    encoding="utf-8",
+)
 
 print("==============================")
 print("BACKTEST REPORT")
 print("==============================")
-print(report.summary())
+print(full_summary)
+print("OUT-OF-SAMPLE REPORT")
+print(out_of_sample_summary)
+print("Validation metrics:", metrics_path)
 print("\nTRADE DETAILS")
 print("================")
 

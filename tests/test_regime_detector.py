@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
+import pytest
 
+from config.settings import MIN_ADX
 from strategy.regime_detector import (
     MarketRegimeDetector,
     REGIME_BREAKOUT,
@@ -51,8 +53,25 @@ def test_detects_downtrend():
 
 
 def test_detects_range_when_adx_is_weak():
-    result = MarketRegimeDetector().detect(make_frame("range", adx=12.0))
+    result = MarketRegimeDetector().detect(
+        make_frame("range", adx=max(0.0, MIN_ADX - 1.0))
+    )
     assert result["regime"] in {REGIME_RANGE, REGIME_LOW_VOLATILITY}
+
+
+def test_default_adx_thresholds_match_signal_validation_boundary():
+    detector = MarketRegimeDetector()
+
+    assert detector.adx_trend_threshold == MIN_ADX
+    assert detector.adx_range_threshold == MIN_ADX
+
+
+def test_invalid_adx_threshold_order_fails_closed():
+    with pytest.raises(ValueError, match="range threshold"):
+        MarketRegimeDetector(
+            adx_trend_threshold=12.0,
+            adx_range_threshold=20.0,
+        )
 
 
 def test_detects_breakout_without_lookahead():

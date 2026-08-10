@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from config.settings import MIN_ADX
+
 from strategy.market_regime import (
     BEARISH,
     BULLISH,
@@ -33,6 +35,10 @@ TEST_CONFIG = MarketRegimeConfig(
     high_volatility_ratio=1.50,
     low_volatility_ratio=0.75,
 )
+
+
+def test_default_classifier_adx_matches_signal_validation_boundary():
+    assert MarketRegimeConfig().adx_trend_threshold == MIN_ADX
 
 
 def candle_frame(close, ranges=None, start="2024-01-01"):
