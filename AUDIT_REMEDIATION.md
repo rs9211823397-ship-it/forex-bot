@@ -8,29 +8,34 @@ Audit baseline: `63400c653f98a3fd9a93a27a003404ebb570b91c` on
 A deterministic 700-decision, mixed-regime M15 replay was run with the VPS
 policy (`ADX=12`, score `35`, one confirmation, quality `35`, regime `35`).
 
-| Result | Before contextual repair | After repair |
+| Result | Audit baseline | Final calibrated policy |
 | --- | ---: | ---: |
-| Actionable BUY/SELL | 9.57% | 20.00% |
-| HOLD | 90.43% | 80.00% |
-| Candidate acceptance | not recorded | 24.73% |
+| Actionable BUY/SELL | 9.57% | 38.57% |
+| HOLD | 90.43% | 61.43% |
+| Candidate acceptance | not recorded | 47.96% |
 
-The repaired policy produced 140 actionable decisions out of 700. An 80% HOLD
-rate is therefore not evidence that the engine cannot trade; on nine symbols
-it is already permissive enough for demo forward testing. Genuine
-risk/execution gates are intentionally excluded from this strategy-only rate.
+The repaired policy produced 270 actionable decisions out of 700. The replay
+therefore no longer exhibits the reported 80–90% strategy HOLD problem. This
+is a deterministic selectivity test, not a profitability claim or a target
+trade frequency. Genuine risk/execution gates are intentionally excluded from
+this strategy-only rate.
 
 Exclusive remaining HOLD causes after repair:
 
 | Gate | Share of HOLDs | Policy |
 | --- | ---: | --- |
-| RSI opposing extreme | 31.61% | Keep: veto only at an extreme against entry |
-| H1 direction conflict | 17.86% | Keep: one binary direction check |
-| Unsafe/unclear regime | 15.89% | Keep: volatility/data context safety |
-| No primary direction | 12.14% | Keep: 2-of-3 vote did not form |
-| Structure conflict | 12.14% | Keep: opposite structure, not extra confirmation |
-| Breakout not confirmed | 6.43% | Keep: prevents false range breaks |
-| Contextual gate | 3.75% | Keep only true HTF/structure conflict; aligned location is advisory |
-| Quality threshold | 0.18% | Keep |
+| H1 direction conflict | 23.26% | Keep: one binary opposite-direction check |
+| Unsafe/unclear regime | 20.70% | Keep: volatility/data context safety |
+| No primary direction | 15.81% | Keep: 2-of-3 vote did not form |
+| Structure conflict | 15.81% | Keep: opposite structure, not extra confirmation |
+| Contextual gate | 15.58% | Keep for weak candidates; aligned/neutral high-conviction context is advisory |
+| Breakout not confirmed | 8.37% | Keep: prevents false range breaks |
+| Quality threshold | 0.23% | Keep |
+| Other | 0.23% | Keep and expose through telemetry |
+
+RSI no longer appears as an exclusive primary HOLD cause. A standalone RSI
+reading is advisory; it blocks only when Bollinger position and an opposing
+reversal candle independently confirm exhaustion.
 
 ## Defects fixed
 
@@ -39,8 +44,10 @@ Exclusive remaining HOLD causes after repair:
    `1000` peak cannot poison a different `96.69` account/session, while a real
    later drawdown for the same identity is still preserved.
 2. **Contextual softening was unreachable.** The contextual engine now returns
-   explicit HTF and structure alignment codes. Only an aligned invalid
-   location is advisory; neutral/opposite context still fails closed.
+   explicit HTF and structure alignment codes. Invalid location or a missing
+   micro-trigger is advisory for an aligned majority setup. A neutral H1 can
+   proceed only with both high quality and strong directional score; an
+   opposite H1 remains a hard veto.
 3. **Range routing duplicated RSI/Bollinger confirmation.** RANGE now uses the
    same primary majority vote. The unused legacy range-reversion method and its
    misleading HOLD reason were removed.
@@ -63,6 +70,10 @@ Exclusive remaining HOLD causes after repair:
    preauthenticated mode now explicitly ignores those fields. The recommended
    VPS path saves and verifies a DPAPI-encrypted demo password so restarts do
    not rely on terminal session persistence.
+10. **RSI was an oversized standalone veto.** RSI is no longer counted as a
+    positive confirmation or an independent rejection. Only RSI + Bollinger
+    extreme + an opposing reversal candle can veto an otherwise qualified
+    entry.
 
 ## Deliberately retained blocks
 

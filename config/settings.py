@@ -139,6 +139,16 @@ SIGNAL_SCORE_THRESHOLD = _bounded_int("AAQTS_SIGNAL_SCORE_THRESHOLD", 55, -100, 
 MIN_SIGNAL_CONFIRMATIONS = _bounded_int("AAQTS_MIN_SIGNAL_CONFIRMATIONS", 2, 1, 10)
 MIN_TRADE_QUALITY = _bounded_int("AAQTS_MIN_TRADE_QUALITY", 55, 0, 100)
 
+# RSI is an opposing-extreme veto, not a positive confirmation. It may block
+# only when the matching Bollinger extreme and an opposing reversal candle
+# independently confirm exhaustion.
+RSI_BAND_VETO_OVERBOUGHT = _bounded_float(
+    "AAQTS_RSI_BAND_VETO_OVERBOUGHT", 78.0, 50.0, 100.0
+)
+RSI_BAND_VETO_OVERSOLD = _bounded_float(
+    "AAQTS_RSI_BAND_VETO_OVERSOLD", 22.0, 0.0, 50.0
+)
+
 # Coherent protection limits for a 3% maximum per-trade risk budget. Two full
 # independent positions can coexist, while correlated exposure is reduced first.
 MAX_DAILY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_DAILY_LOSS_PERCENT", 6.0, 0.1, 100.0)

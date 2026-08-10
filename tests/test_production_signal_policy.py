@@ -69,7 +69,7 @@ def test_production_policy_keeps_structure_htf_and_contextual_fail_closed():
     assert "Contextual trigger rejected setup" in failures
 
 
-def _high_conviction_decision(reason_codes):
+def _high_conviction_decision(reason_codes, *, quality=70, latest=None):
     pipeline = ProductionSignalPipeline.__new__(ProductionSignalPipeline)
     setup = SetupResult(trend_score=30, reasons=("Bullish EMA alignment",))
     trigger = TriggerResult(candle_score=0, reasons=("No candle confirmation",))
@@ -87,7 +87,7 @@ def _high_conviction_decision(reason_codes):
         confirmation="BUY",
         reasons=("Multi timeframe BUY confirmation",),
     )
-    quality = TradeQualityResult(quality=70, approved=True)
+    quality = TradeQualityResult(quality=quality, approved=quality >= 55)
     contextual = ContextualGateResult(
         enabled=True,
         approved=False,
@@ -106,6 +106,7 @@ def _high_conviction_decision(reason_codes):
         quality=quality,
         contextual_gate=contextual,
         strict_direction=True,
+        latest=latest,
     )
 
 
@@ -188,6 +189,19 @@ def test_contextual_htf_mismatch_remains_hard_block():
     assert decision.signal == "HOLD"
 
 
+def test_neutral_htf_softens_duplicate_context_gate_only_for_high_conviction():
+    reason_codes = (
+        "SETUP_VALID",
+        "HTF_NEUTRAL",
+        "STRUCTURE_ALIGNED",
+        "LOCATION_VALID",
+        "NO_CONTEXTUAL_TRIGGER",
+    )
+
+    assert _high_conviction_decision(reason_codes).signal == "BUY"
+    assert _high_conviction_decision(reason_codes, quality=40).signal == "HOLD"
+
+
 def test_bos_is_entry_trigger_without_duplicate_contextual_veto():
     pipeline = ProductionSignalPipeline.__new__(ProductionSignalPipeline)
     decision = pipeline._final_decision(
@@ -233,6 +247,42 @@ def test_rsi_extreme_remains_hard_veto():
     )
 
     assert "RSI extreme conflicts with setup" in failures
+
+
+def test_rsi_is_never_a_standalone_veto_without_price_reversal():
+    pipeline = ProductionSignalPipeline.__new__(ProductionSignalPipeline)
+
+    normal = pipeline._confirm_momentum({"RSI": 76.0})
+    exhausted = pipeline._confirm_momentum({"RSI": 83.0})
+
+    assert normal.score == 0
+    assert exhausted.score == 0
+
+
+def test_rsi_bollinger_veto_requires_opposing_reversal_candle():
+    reason_codes = (
+        "SETUP_VALID",
+        "HTF_ALIGNED",
+        "STRUCTURE_ALIGNED",
+        "LOCATION_VALID",
+        "NO_CONTEXTUAL_TRIGGER",
+    )
+    continuation = {
+        "RSI": 85.0,
+        "open": 99.0,
+        "close": 101.0,
+        "BB_UPPER": 100.0,
+        "BB_LOWER": 90.0,
+    }
+    reversal = dict(continuation, open=102.0, close=101.0)
+
+    assert _high_conviction_decision(reason_codes, latest=continuation).signal == "BUY"
+    blocked = _high_conviction_decision(reason_codes, latest=reversal)
+    assert blocked.signal == "HOLD"
+    assert any(
+        "RSI/Bollinger extreme has an opposing reversal candle" in reason
+        for reason in blocked.reasons
+    )
 
 
 def test_legacy_engine_keeps_legacy_pipeline_and_production_uses_new_policy(monkeypatch):

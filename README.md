@@ -223,10 +223,13 @@ accounting; it is not evidence of future profitability.
 - AI components may rank or explain an existing rules-based setup; they do not
   invent trade direction.
 - The regime router delegates trend and range regimes to the same 2-of-3
-  primary trend vote (EMA, Supertrend, momentum). RSI/Bollinger are opposing
-  extreme vetoes rather than duplicate positive confirmations. Breakouts still
-  require a range close plus ATR/ADX confirmation; unknown or unsafe volatility
-  states remain fail-closed.
+  primary trend vote (EMA, Supertrend, momentum). RSI is advisory and becomes
+  an opposing-extreme veto only when Bollinger position and an opposing
+  reversal candle agree; it is never a duplicate positive confirmation.
+  Missing contextual micro-triggers/locations are advisory for an aligned
+  majority setup, while a neutral H1 requires high conviction and an opposite
+  H1 remains a hard veto. Breakouts still require a range close plus ATR/ADX
+  confirmation; unknown or unsafe volatility states remain fail-closed.
 - Range and breakout strategies use reduced position-size multipliers that are
   preserved in deterministic backtest records.
 - Portfolio controls can block or reduce a qualified setup based on open risk,
