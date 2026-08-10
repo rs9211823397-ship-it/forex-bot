@@ -117,8 +117,7 @@ class ProductionSignalPipeline(SignalPipeline):
         output = getattr(contextual_gate, "output", None)
         reason_codes = set(getattr(output, "reason_codes", ()) or ())
         contextual_caution_only = (
-            "SETUP_VALID" in reason_codes
-            and "HTF_ALIGNED" in reason_codes
+            "HTF_ALIGNED" in reason_codes
             and "STRUCTURE_ALIGNED" in reason_codes
             and {
                 "NO_CONTEXTUAL_TRIGGER",
@@ -174,8 +173,8 @@ class ProductionSignalPipeline(SignalPipeline):
                 approved=True,
                 reasons=contextual_gate.reasons
                 + (
-                    "Contextual trigger/location is soft evidence: majority setup "
-                    "already has aligned HTF and structure",
+                    "Contextual trigger is soft evidence; location is a caution: "
+                    "majority setup already has aligned HTF and structure",
                 ),
             )
 
