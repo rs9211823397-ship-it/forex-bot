@@ -75,6 +75,12 @@ class SetupDetector:
         ema50 = latest["EMA_50"]
         ema200 = latest["EMA_200"]
         supertrend_bullish = bool(latest["SUPERTREND"])
+        has_macd = "MACD" in latest and "MACD_SIGNAL" in latest
+        macd_bullish = (
+            latest["MACD"] > latest["MACD_SIGNAL"]
+            if has_macd
+            else None
+        )
 
         if ema20 > ema50 and ema50 > ema200 and supertrend_bullish:
             return SetupResult(
@@ -90,18 +96,43 @@ class SetupDetector:
 
         if ema20 > ema50 and supertrend_bullish:
             return SetupResult(
-                trend_score=15,
+                trend_score=25,
                 reasons=(
-                    "Developing bullish trend (EMA20 > EMA50 + Supertrend)",
+                    "Bullish 2/3 trend vote (EMA + Supertrend)",
                 ),
             )
 
         if ema20 < ema50 and not supertrend_bullish:
             return SetupResult(
-                trend_score=-15,
+                trend_score=-25,
                 reasons=(
-                    "Developing bearish trend (EMA20 < EMA50 + Supertrend)",
+                    "Bearish 2/3 trend vote (EMA + Supertrend)",
                 ),
+            )
+
+        bullish_votes = sum(
+            vote is True
+            for vote in (ema20 > ema50, supertrend_bullish, macd_bullish)
+        )
+        bearish_votes = sum(
+            vote is True
+            for vote in (
+                ema20 < ema50,
+                not supertrend_bullish,
+                (not macd_bullish) if macd_bullish is not None else None,
+            )
+        )
+
+        if bullish_votes >= 2:
+            return SetupResult(
+                trend_score=25,
+                reasons=("Bullish majority trend vote (2/3)",),
+            )
+
+        if bearish_votes >= 2:
+            return SetupResult(
+                trend_score=-25,
+                reasons=("Bearish majority trend vote (2/3)",),
             )
 
         if self.allow_momentum_fallback:
