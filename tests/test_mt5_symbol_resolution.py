@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.settings import MT5_SYMBOL_MAP
 from data.market_data import MarketData, MarketDataError
 
 
@@ -20,6 +21,14 @@ class FakeMT5:
     def symbols_get(self):
         self.symbols_get_calls += 1
         return tuple(SimpleNamespace(name=name) for name in self.names)
+
+
+@pytest.fixture(autouse=True)
+def restore_mt5_symbol_map():
+    original = dict(MT5_SYMBOL_MAP)
+    yield
+    MT5_SYMBOL_MAP.clear()
+    MT5_SYMBOL_MAP.update(original)
 
 
 def _market():
@@ -44,6 +53,7 @@ def test_unique_broker_suffix_is_resolved_automatically():
 
     assert market._resolve_mt5_symbol(mt5, "EURUSD=X", "EURUSD") == "EURUSDm"
     assert market._resolved_mt5_symbols["EURUSD=X"] == "EURUSDm"
+    assert MT5_SYMBOL_MAP["EURUSD=X"] == "EURUSDm"
 
 
 def test_resolved_symbol_is_cached_for_future_reads():
