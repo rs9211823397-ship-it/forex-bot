@@ -276,7 +276,17 @@ class ContextualTriggerEngine:
                 setup,
                 trigger="NONE",
                 candle_quality="NONE",
-                reason_codes=("INVALID_LOCATION",)
+                # Preserve the gates that already passed.  Production policy
+                # may treat location as soft evidence only for a majority
+                # setup whose directional HTF and structure truly align.
+                # Opposite/neutral HTF and structure mismatches still return
+                # earlier and remain hard vetoes.
+                reason_codes=(
+                    "SETUP_VALID",
+                    htf_reason_code,
+                    "STRUCTURE_ALIGNED",
+                    "INVALID_LOCATION",
+                )
             )
 
         candidates = []

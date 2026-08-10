@@ -132,12 +132,28 @@ ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
 RISK_PERCENT = _bounded_float("AAQTS_RISK_PERCENT", 3.0, 0.05, 5.0)
 
 MIN_ADX = _bounded_float("AAQTS_MIN_ADX", 20.0, 0.0, 100.0)
+# One canonical ADX eligibility boundary is shared by signal validation and
+# every regime classifier.  Regime logic may still combine ADX with EMA slope,
+# separation and volatility, but it must not silently introduce a second
+# stronger ADX gate after the signal validator has accepted the candle.
+REGIME_ADX_TREND_THRESHOLD = MIN_ADX
+REGIME_ADX_RANGE_THRESHOLD = MIN_ADX
 MIN_REGIME_CONFIDENCE = _bounded_float(
     "AAQTS_MIN_REGIME_CONFIDENCE", 35.0, 0.0, 100.0
 )
 SIGNAL_SCORE_THRESHOLD = _bounded_int("AAQTS_SIGNAL_SCORE_THRESHOLD", 55, -100, 100)
 MIN_SIGNAL_CONFIRMATIONS = _bounded_int("AAQTS_MIN_SIGNAL_CONFIRMATIONS", 2, 1, 10)
 MIN_TRADE_QUALITY = _bounded_int("AAQTS_MIN_TRADE_QUALITY", 55, 0, 100)
+
+# RSI is an opposing-extreme veto, not a positive confirmation. It may block
+# only when the matching Bollinger extreme and an opposing reversal candle
+# independently confirm exhaustion.
+RSI_BAND_VETO_OVERBOUGHT = _bounded_float(
+    "AAQTS_RSI_BAND_VETO_OVERBOUGHT", 78.0, 50.0, 100.0
+)
+RSI_BAND_VETO_OVERSOLD = _bounded_float(
+    "AAQTS_RSI_BAND_VETO_OVERSOLD", 22.0, 0.0, 50.0
+)
 
 # Coherent protection limits for a 3% maximum per-trade risk budget. Two full
 # independent positions can coexist, while correlated exposure is reduced first.
@@ -165,16 +181,37 @@ SYMBOLS = filter_active_symbols(
 )
 
 MT5_TERMINAL_PATH = os.getenv("AAQTS_MT5_TERMINAL_PATH", _default_mt5_terminal_path())
-MT5_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
+MT5_USE_PREAUTHENTICATED_SESSION = _env_flag(
+    "AAQTS_MT5_USE_PREAUTHENTICATED_SESSION",
+    False,
+)
+if MT5_USE_PREAUTHENTICATED_SESSION and EXECUTION_MODE == "MT5_LIVE":
+    raise ValueError(
+        "AAQTS_MT5_USE_PREAUTHENTICATED_SESSION is not allowed in MT5_LIVE; "
+        "live execution requires explicit pinned credentials"
+    )
+
+_MT5_CONFIGURED_LOGIN = os.getenv("AAQTS_MT5_LOGIN", "").strip()
+_MT5_CONFIGURED_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
+_MT5_CONFIGURED_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
+
+# A deliberate preauthenticated-session selection must override stale values
+# left in .env.  Blank PowerShell environment variables alone are not a
+# reliable way to express this because dotenv/configuration precedence differs
+# across launch methods.
+MT5_LOGIN = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_LOGIN
 MT5_EXPECTED_LOGIN = os.getenv("AAQTS_MT5_EXPECTED_LOGIN", "").strip() or _read_pinned_login()
 MT5_EXPECTED_LOGIN_FILE = str(_pinned_login_file())
 MT5_RISK_BASELINE_UTC = _read_risk_baseline()
 MT5_RISK_BASELINE_FILE = str(_risk_baseline_file())
-MT5_PASSWORD = os.getenv("AAQTS_MT5_PASSWORD", "").strip()
-MT5_SERVER = os.getenv("AAQTS_MT5_SERVER", "").strip()
+MT5_PASSWORD = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_PASSWORD
+MT5_SERVER = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_SERVER
 MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.01)
 MT5_MAX_OPEN_POSITIONS = _bounded_int("AAQTS_MT5_MAX_OPEN_POSITIONS", 3, 1, 20)
 BOT_INTERVAL_SECONDS = _bounded_int("AAQTS_BOT_INTERVAL_SECONDS", 300, 15, 86400)
+POSITION_MANAGEMENT_INTERVAL_SECONDS = _bounded_int(
+    "AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS", 10, 1, 60
+)
 MT5_MAX_TICK_AGE_SECONDS = _bounded_float("AAQTS_MT5_MAX_TICK_AGE_SECONDS", 15.0, 1.0, 300.0)
 MT5_MAX_SPREAD_STOP_RATIO = _bounded_float(
     "AAQTS_MT5_MAX_SPREAD_STOP_RATIO", 0.25, 0.01, 1.0

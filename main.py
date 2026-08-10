@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from bot_controller import BotController
@@ -26,6 +28,7 @@ from config.settings import (
     MAX_PORTFOLIO_RISK_PERCENT,
     MAX_WEEKLY_LOSS_PERCENT,
     MIN_REGIME_CONFIDENCE,
+    MT5_RISK_BASELINE_UTC,
     MT5_MAX_OPEN_POSITIONS,
     MT5_SYMBOL_MAP,
     NEWS_BLOCKED_IMPACTS,
@@ -39,6 +42,7 @@ from config.settings import (
     NEWS_REFRESH_MINUTES,
     PORTFOLIO_MAX_ABS_CORRELATION,
     PORTFOLIO_MAX_CORRELATED_RISK_PERCENT,
+    POSITION_MANAGEMENT_INTERVAL_SECONDS,
     RISK_PERCENT,
     TRADING_TIMEFRAME,
 )
@@ -120,23 +124,124 @@ class TradingApplication:
         self.execution = ExecutionRouter(self.paper_trader)
         self.trade_logger = TradeLogger()
         self.equity_history: list[EquityPoint] = []
-        previous = read_runtime_state()
-        try:
-            previous_peak = float(previous.get("equity_peak", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            previous_peak = 0.0
-        if previous_peak > 0:
-            self.equity_history.append(
-                EquityPoint(timestamp=datetime.now(timezone.utc), equity=previous_peak)
-            )
+        self._previous_runtime_state = read_runtime_state()
+        self._risk_state_identity = ""
+        self._cycle_stages: Counter[str] = Counter()
+        self._session_stages: Counter[str] = Counter()
+        self._cycle_reasons: Counter[str] = Counter()
+        self._session_reasons: Counter[str] = Counter()
+        self._telemetry_lock = threading.RLock()
         self.latest_atr_by_symbol: dict[str, float] = {}
+        self._atr_lock = threading.RLock()
+        self._last_management_report: dict[str, object] = {}
+        self._management_report_lock = threading.RLock()
         self.latest_correlations: tuple[CorrelationObservation, ...] = ()
         self.loop = BotLoop(interval=BOT_INTERVAL_SECONDS)
+        self.management_loop = BotLoop(
+            interval=POSITION_MANAGEMENT_INTERVAL_SECONDS,
+            max_consecutive_failures=10,
+        )
         self.controller = BotController.configured(
             bot_loop=self.loop,
             execution_router=self.execution,
             callback=self.run_cycle,
+            management_loop=self.management_loop,
+            management_callback=self.run_position_management_cycle,
         )
+
+    def _record_decision_stage(self, stage: str, reason: object = None) -> None:
+        normalized_stage = str(stage).strip().upper() or "UNKNOWN"
+        with self._telemetry_lock:
+            self._cycle_stages[normalized_stage] += 1
+            self._session_stages[normalized_stage] += 1
+            if reason is None:
+                return
+            reasons = reason if isinstance(reason, (list, tuple, set)) else (reason,)
+            for item in reasons:
+                text = " ".join(str(item).strip().split())
+                if not text:
+                    continue
+                key = f"{normalized_stage}:{text}"[:240]
+                self._cycle_reasons[key] += 1
+                self._session_reasons[key] += 1
+
+    def _decision_telemetry(self) -> dict[str, object]:
+        with self._telemetry_lock:
+            return {
+                "cycle_stages": dict(self._cycle_stages.most_common()),
+                "session_stages": dict(self._session_stages.most_common()),
+                "cycle_reasons": dict(self._cycle_reasons.most_common(20)),
+                "session_reasons": dict(self._session_reasons.most_common(50)),
+            }
+
+    @staticmethod
+    def _closed_trade_stats(closed_results) -> dict[str, float | int]:
+        results = tuple(closed_results)
+        wins = sum(item.profit_loss > 0 for item in results)
+        losses = sum(item.profit_loss < 0 for item in results)
+        return {
+            "closed_trades": len(results),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / len(results) * 100.0 if results else 0.0,
+        }
+
+    def _runtime_risk_identity(self, account) -> str:
+        """Bind persisted drawdown state to one account and risk epoch."""
+
+        baseline = (
+            MT5_RISK_BASELINE_UTC.isoformat()
+            if MT5_RISK_BASELINE_UTC is not None
+            else "UNSET"
+        )
+        if self.execution.mode == "PAPER":
+            broker_identity = f"paper:{self.account_id}"
+        else:
+            login = getattr(account, "login", None)
+            server = str(getattr(account, "server", "")).strip()
+            if login is None or not server:
+                raise RuntimeError(
+                    "Broker account identity is unavailable; persisted risk state cannot be trusted"
+                )
+            broker_identity = f"mt5:{int(login)}:{server.casefold()}"
+        return f"{self.execution.mode}:{broker_identity}:baseline:{baseline}"
+
+    def _initialize_equity_state(self, account, observed_at: datetime) -> None:
+        """Restore a peak only when the persisted account epoch is identical."""
+
+        if self._risk_state_identity:
+            return
+        identity = self._runtime_risk_identity(account)
+        previous = self._previous_runtime_state
+        previous_identity = str(previous.get("risk_state_identity", "")).strip()
+        previous_peak = 0.0
+        try:
+            previous_peak = float(previous.get("equity_peak", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pass
+
+        current_equity = float(account.equity)
+        restored_peak = (
+            previous_peak
+            if previous_identity == identity and previous_peak >= current_equity
+            else current_equity
+        )
+        self.equity_history = [
+            EquityPoint(timestamp=observed_at, equity=restored_peak)
+        ]
+        self._risk_state_identity = identity
+        if previous_peak > 0 and previous_identity != identity:
+            logger.warning(
+                "Discarded stale equity peak %.2f because runtime risk identity changed",
+                previous_peak,
+            )
+
+    def _record_equity(self, account, observed_at: datetime) -> None:
+        self._initialize_equity_state(account, observed_at)
+        self.equity_history.append(
+            EquityPoint(timestamp=observed_at, equity=float(account.equity))
+        )
+        self.equity_history = self.equity_history[-10_000:]
 
     def _handle_control_request(self, request: ControlRequest) -> str:
         if request.account_id != self.account_id:
@@ -340,6 +445,7 @@ class TradingApplication:
         )
 
     def _process_symbol(self, symbol, data, higher_tf) -> float:
+        self._record_decision_stage("SYMBOL_SCANNED")
         if self.execution.mode in {"MT5_DEMO", "MT5_LIVE"}:
             if not self._frame_is_demo_safe(data):
                 raise RuntimeError(f"Unsafe/stale lower-timeframe data blocked for {symbol}")
@@ -349,16 +455,22 @@ class TradingApplication:
         signal = self.strategy_router.generate_analysis(analyzed, symbol, higher_tf)
         trade = self.trade_manager.calculate_trade(analyzed, signal)
         current_price = float(trade["current_price"])
-        self.latest_atr_by_symbol[symbol] = float(trade["atr"])
+        with self._atr_lock:
+            self.latest_atr_by_symbol[symbol] = float(trade["atr"])
         self.trade_logger.log_signal(symbol, signal["signal"], signal["confidence"])
         if self.execution.mode == "PAPER":
             self.paper_trader.check_trade(symbol, current_price)
         if signal["signal"] not in {"BUY", "SELL"}:
+            report = signal.get("decision_report") or {}
+            primary = report.get("primary_reason") or "NO_ACTIONABLE_SETUP"
+            self._record_decision_stage("STRATEGY_HOLD", primary)
             return current_price
+        self._record_decision_stage("STRATEGY_ACTIONABLE", signal["signal"])
         risk_plan = self.risk_manager.calculate_trade_levels(
             signal["signal"], current_price, trade["atr"]
         )
         if not risk_plan:
+            self._record_decision_stage("TRADE_LEVEL_REJECTED", "INVALID_RISK_PLAN")
             return current_price
         equity = self._account_equity()
         risk_multiplier = float(signal.get("risk_multiplier", 1.0))
@@ -374,6 +486,7 @@ class TradingApplication:
                 risk_multiplier=risk_multiplier,
             )
             if requested_quantity <= 0:
+                self._record_decision_stage("SIZING_REJECTED", "NON_POSITIVE_PAPER_SIZE")
                 logger.warning(
                     "Paper position size rejected for %s (equity=%.2f requested_risk=%.2f)",
                     symbol,
@@ -398,6 +511,7 @@ class TradingApplication:
             self._risk_context(decision_time),
         )
         if not assessment.allowed:
+            self._record_decision_stage("PORTFOLIO_RISK_BLOCKED", assessment.reason_codes)
             logger.warning(
                 "Portfolio risk blocked %s: %s",
                 symbol,
@@ -415,18 +529,50 @@ class TradingApplication:
                 assessment.approved_risk_amount,
                 assessment.action.value,
             )
-        result = self.execution.execute(
-            source_symbol=symbol,
-            signal=signal["signal"],
-            risk_plan=risk_plan,
-            paper_position_size=approved_quantity,
-            approved_risk_amount=assessment.approved_risk_amount,
-        )
+        self._record_decision_stage("EXECUTION_ATTEMPT", signal["signal"])
+        try:
+            result = self.execution.execute(
+                source_symbol=symbol,
+                signal=signal["signal"],
+                risk_plan=risk_plan,
+                paper_position_size=approved_quantity,
+                approved_risk_amount=assessment.approved_risk_amount,
+            )
+        except Exception as exc:
+            self._record_decision_stage(
+                "EXECUTION_REJECTED",
+                f"{type(exc).__name__}: {exc}",
+            )
+            raise
+        if result is None:
+            self._record_decision_stage(
+                "EXECUTION_REJECTED",
+                "EXECUTOR_RETURNED_NO_POSITION",
+            )
+            logger.warning("Execution produced no new position for %s", symbol)
+            return current_price
+        self._record_decision_stage("EXECUTED", signal["signal"])
         logger.info("Execution result for %s: %r", symbol, result)
         return current_price
 
+    def run_position_management_cycle(self) -> None:
+        with self._atr_lock:
+            latest_atr = dict(self.latest_atr_by_symbol)
+        report = self.execution.manage_positions(latest_atr)
+        with self._management_report_lock:
+            self._last_management_report = dict(report)
+        if report.get("errors"):
+            self._record_decision_stage("POSITION_MANAGEMENT_ERROR", report["errors"])
+            logger.error("Position-management errors: %s", report["errors"])
+
     def run_cycle(self) -> None:
-        self.latest_atr_by_symbol = {}
+        with self._atr_lock:
+            self.latest_atr_by_symbol = {}
+        with self._telemetry_lock:
+            self._cycle_stages.clear()
+            self._cycle_reasons.clear()
+        cycle_account = self.execution.account_snapshot()
+        self._record_equity(cycle_account, datetime.now(timezone.utc))
         write_runtime_state(
             account_id=self.account_id,
             status=self.controller.status(),
@@ -446,6 +592,11 @@ class TradingApplication:
         missing_lower = sorted(expected.difference(lower_frames))
         missing_higher = sorted(expected.difference(higher_frames))
         if broker_mode and (missing_lower or missing_higher):
+            self._record_decision_stage(
+                "MARKET_DATA_BLOCKED",
+                tuple(f"LOWER:{item}" for item in missing_lower)
+                + tuple(f"HIGHER:{item}" for item in missing_higher),
+            )
             logger.error(
                 "Broker data health degraded; affected symbols will fail closed | lower=%s higher=%s",
                 missing_lower,
@@ -460,27 +611,34 @@ class TradingApplication:
             try:
                 prices[symbol] = self._process_symbol(symbol, data, higher_frames.get(symbol))
             except Exception:
+                self._record_decision_stage("SYMBOL_ERROR", symbol)
                 logger.exception("Cycle failed for %s", symbol)
         if self.execution.mode == "PAPER":
             self.paper_trader.update_equity(prices)
-        management = self.execution.manage_positions(self.latest_atr_by_symbol)
-        if management.get("errors"):
-            logger.error("Position-management errors: %s", management["errors"])
         now = datetime.now(timezone.utc)
         account = self.execution.account_snapshot()
-        self.equity_history.append(EquityPoint(timestamp=now, equity=account.equity))
-        self.equity_history = self.equity_history[-10_000:]
+        self._record_equity(account, now)
         equity_peak = max(point.equity for point in self.equity_history)
         if self.execution.mode == "PAPER":
             stats = self.paper_trader.get_stats()
             closed_trades = stats["total_trades"]
             closed_window = "all"
         else:
-            stats = {"equity": account.equity, "balance": account.balance}
-            closed_trades = len(
-                self.execution.closed_position_results(now - timedelta(days=7), now)
+            closed_results = self.execution.closed_position_results(
+                now - timedelta(days=7), now
             )
+            closed_stats = self._closed_trade_stats(closed_results)
+            stats = {
+                "equity": account.equity,
+                "balance": account.balance,
+                "wins": closed_stats["wins"],
+                "losses": closed_stats["losses"],
+                "win_rate": closed_stats["win_rate"],
+            }
+            closed_trades = int(closed_stats["closed_trades"])
             closed_window = "7d"
+        with self._management_report_lock:
+            management_report = dict(self._last_management_report)
         write_runtime_state(
             account_id=self.account_id,
             status=self.controller.status(),
@@ -493,6 +651,14 @@ class TradingApplication:
             correlation_observations=len(self.latest_correlations),
             equity=stats["equity"],
             equity_peak=equity_peak,
+            risk_state_identity=self._risk_state_identity,
+            mt5_login=account.login,
+            mt5_server=account.server,
+            risk_baseline_utc=(
+                MT5_RISK_BASELINE_UTC.isoformat()
+                if MT5_RISK_BASELINE_UTC is not None
+                else None
+            ),
             balance=stats["balance"],
             floating_pnl=(
                 stats["floating_pnl"]
@@ -505,6 +671,12 @@ class TradingApplication:
             starting_balance=stats.get("starting_balance", stats["balance"]),
             wins=stats.get("wins", 0),
             losses=stats.get("losses", 0),
+            win_rate=stats.get("win_rate", 0.0),
+            decision_telemetry=self._decision_telemetry(),
+            position_management={
+                "interval_seconds": POSITION_MANAGEMENT_INTERVAL_SECONDS,
+                "last_cycle": management_report,
+            },
         )
 
 

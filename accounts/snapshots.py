@@ -17,6 +17,7 @@ from accounts.credentials import EnvironmentCredentialProvider
 from accounts.registry import AccountPlatform, TradingAccount
 from execution.mt5_executor import AAQTS_MAGIC
 from runtime_state import RUNTIME_DIR, heartbeat_is_fresh, runtime_state_file
+from mt5_ipc import serialized_mt5_call
 
 _MT5_LOCK = threading.RLock()
 
@@ -171,6 +172,7 @@ class MultiAccountSnapshotReader:
             as_of_utc=str(state.get("heartbeat_utc", "")),
         )
 
+    @serialized_mt5_call
     def _read_mt5(self, account: TradingAccount) -> AccountView:
         credentials = self.credentials.credentials(account)
         try:

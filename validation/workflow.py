@@ -20,6 +20,68 @@ LEDGER_COLUMNS = ("timestamp", "symbol", "signal")
 VALID_SIGNALS = {"BUY", "SELL", "HOLD"}
 
 
+def chronological_holdout_report(
+    trades,
+    data,
+    *,
+    initial_equity,
+    training_fraction=0.70,
+) -> dict:
+    """Return a deterministic chronological holdout performance report."""
+
+    if not 0.0 < float(training_fraction) < 1.0:
+        raise ValidationError("training_fraction must be between zero and one")
+    frame = _frame(data)
+    if len(frame) < 2:
+        raise ValidationError("holdout reporting requires at least two candles")
+    if "close_time" in frame.columns:
+        close_times = pd.to_datetime(frame["close_time"], utc=True, errors="coerce")
+    elif isinstance(frame.index, pd.DatetimeIndex):
+        close_times = pd.Series(pd.to_datetime(frame.index, utc=True), index=frame.index)
+    else:
+        raise ValidationError("holdout data requires close_time or a DatetimeIndex")
+    if close_times.isna().any() or not close_times.is_monotonic_increasing:
+        raise ValidationError("holdout close times must be valid and monotonic")
+
+    split_position = max(
+        1,
+        min(len(frame) - 1, int(len(frame) * float(training_fraction))),
+    )
+    split_time = pd.Timestamp(close_times.iloc[split_position])
+    completed = [trade for trade in trades if trade.get("type") == "EXIT"]
+    try:
+        timed = [
+            (trade, pd.to_datetime(trade["exit_time"], utc=True, errors="raise"))
+            for trade in completed
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValidationError("completed trades require valid exit_time values") from exc
+    pre_split = [trade for trade, exit_time in timed if exit_time < split_time]
+    out_of_sample = [trade for trade, exit_time in timed if exit_time >= split_time]
+    holdout_starting_equity = float(initial_equity) + sum(
+        float(trade["profit"]) for trade in pre_split
+    )
+
+    from backtesting.performance import PerformanceReport
+
+    return {
+        "out_of_sample": PerformanceReport(
+            out_of_sample,
+            initial_equity=holdout_starting_equity,
+        ).summary(),
+        "split": {
+            "method": "chronological_70_30_holdout",
+            "split_close_time_utc": split_time.isoformat(),
+            "training_rows": split_position,
+            "out_of_sample_rows": len(frame) - split_position,
+            "out_of_sample_starting_equity": round(
+                holdout_starting_equity,
+                4,
+            ),
+        },
+    }
+
+
 def write_signal_ledger(records, output) -> Path:
     """Validate and atomically write AAQTS close-confirmed decisions."""
 
@@ -108,7 +170,32 @@ def _max_drawdown(profits) -> float:
     return drawdown
 
 
-def forward_test_report(deals, *, min_closed_trades=100) -> dict:
+def _max_drawdown_percent(profits, starting_equity) -> float | None:
+    if starting_equity is None:
+        return None
+    starting_equity = float(starting_equity)
+    if not isfinite(starting_equity) or starting_equity <= 0:
+        raise ValidationError("starting_equity must be finite and greater than zero")
+    equity = starting_equity
+    peak = starting_equity
+    maximum_percent = 0.0
+    for profit in profits:
+        equity += float(profit)
+        peak = max(peak, equity)
+        if peak > 0:
+            maximum_percent = max(
+                maximum_percent,
+                (peak - equity) / peak * 100.0,
+            )
+    return maximum_percent
+
+
+def forward_test_report(
+    deals,
+    *,
+    min_closed_trades=100,
+    starting_equity=None,
+) -> dict:
     """Summarize closed AAQTS broker deals exported from MT5."""
 
     frame = _frame(deals)
@@ -136,6 +223,10 @@ def forward_test_report(deals, *, min_closed_trades=100) -> dict:
         gross_profit / gross_loss if gross_loss else 0.0
     )
     total = len(frame)
+    max_drawdown_percent = _max_drawdown_percent(
+        frame["profit"],
+        starting_equity,
+    )
     return {
         "closed_trades": int(total),
         "minimum_required": int(min_closed_trades),
@@ -147,6 +238,19 @@ def forward_test_report(deals, *, min_closed_trades=100) -> dict:
         "profit_factor": "Infinity" if profit_factor == inf else round(profit_factor, 4),
         "expectancy": round(float(frame["profit"].mean()), 4) if total else 0.0,
         "max_drawdown": round(_max_drawdown(frame["profit"]), 4),
+        "max_drawdown_percent": (
+            None
+            if max_drawdown_percent is None
+            else round(max_drawdown_percent, 4)
+        ),
+        "starting_equity": (
+            None if starting_equity is None else round(float(starting_equity), 4)
+        ),
+        "ending_equity": (
+            None
+            if starting_equity is None
+            else round(float(starting_equity) + float(frame["profit"].sum()), 4)
+        ),
         "first_deal_utc": None if not total else frame.iloc[0]["timestamp"].isoformat(),
         "last_deal_utc": None if not total else frame.iloc[-1]["timestamp"].isoformat(),
     }
@@ -158,30 +262,84 @@ def promotion_report(
     parity_metrics,
     forward_metrics,
     min_backtest_trades=100,
-    min_profit_factor=1.1,
+    min_out_of_sample_trades=20,
+    min_profit_factor=1.2,
+    max_drawdown_percent=10.0,
     min_parity_percent=99.0,
 ) -> dict:
     """Create a fail-closed, human-reviewed promotion recommendation."""
 
-    profit_factor = backtest_metrics.get("Profit Factor", 0)
-    if profit_factor == "Infinity":
-        profit_factor = inf
+    if int(min_backtest_trades) < 1 or int(min_out_of_sample_trades) < 1:
+        raise ValidationError("promotion trade minimums must be positive")
+    if not isfinite(float(min_profit_factor)) or float(min_profit_factor) <= 0:
+        raise ValidationError("minimum profit factor must be positive and finite")
+    if not 0 <= float(max_drawdown_percent) <= 100:
+        raise ValidationError("maximum drawdown percent must be between 0 and 100")
+    if not 0 <= float(min_parity_percent) <= 100:
+        raise ValidationError("minimum parity percent must be between 0 and 100")
+
+    full_backtest = backtest_metrics.get("full", backtest_metrics)
+    out_of_sample = backtest_metrics.get("out_of_sample", {})
+
+    def number(value, fallback=0.0):
+        if value == "Infinity":
+            return inf
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return float(fallback)
+        return parsed if isfinite(parsed) else parsed
+
+    backtest_profit_factor = number(full_backtest.get("Profit Factor", 0))
+    oos_profit_factor = number(out_of_sample.get("Profit Factor", 0))
+    forward_profit_factor = number(forward_metrics.get("profit_factor", 0))
+    backtest_drawdown = number(
+        full_backtest.get("Max Drawdown %"),
+        fallback=inf,
+    )
+    oos_drawdown = number(
+        out_of_sample.get("Max Drawdown %"),
+        fallback=inf,
+    )
+    forward_drawdown = number(
+        forward_metrics.get("max_drawdown_percent"),
+        fallback=inf,
+    )
     checks = {
-        "backtest_sample": int(backtest_metrics.get("Completed Trades", 0))
+        "backtest_sample": int(full_backtest.get("Completed Trades", 0))
         >= int(min_backtest_trades),
-        "backtest_profit_factor": float(profit_factor) >= float(min_profit_factor),
-        "backtest_expectancy": float(backtest_metrics.get("Expectancy", 0)) > 0,
-        "tradingview_parity": float(parity_metrics.get("actionable_agreement_percent", 0))
+        "backtest_profit_factor": backtest_profit_factor
+        >= float(min_profit_factor),
+        "backtest_expectancy": number(full_backtest.get("Expectancy", 0)) > 0,
+        "backtest_drawdown": backtest_drawdown <= float(max_drawdown_percent),
+        "out_of_sample_sample": int(out_of_sample.get("Completed Trades", 0))
+        >= int(min_out_of_sample_trades),
+        "out_of_sample_profit_factor": oos_profit_factor
+        >= float(min_profit_factor),
+        "out_of_sample_expectancy": number(out_of_sample.get("Expectancy", 0)) > 0,
+        "out_of_sample_drawdown": oos_drawdown <= float(max_drawdown_percent),
+        "tradingview_parity": number(
+            parity_metrics.get("actionable_agreement_percent", 0)
+        )
         >= float(min_parity_percent),
         "tradingview_coverage": (
             int(parity_metrics.get("missing_in_tradingview", 0)) == 0
             and int(parity_metrics.get("missing_in_aaqts", 0)) == 0
         ),
         "forward_sample": bool(forward_metrics.get("sample_complete", False)),
-        "forward_expectancy": float(forward_metrics.get("expectancy", 0)) > 0,
+        "forward_expectancy": number(forward_metrics.get("expectancy", 0)) > 0,
+        "forward_profit_factor": forward_profit_factor >= float(min_profit_factor),
+        "forward_drawdown": forward_drawdown <= float(max_drawdown_percent),
     }
     return {
         "checks": checks,
+        "thresholds": {
+            "minimum_backtest_trades": int(min_backtest_trades),
+            "minimum_out_of_sample_trades": int(min_out_of_sample_trades),
+            "minimum_profit_factor": float(min_profit_factor),
+            "maximum_drawdown_percent": float(max_drawdown_percent),
+            "minimum_parity_percent": float(min_parity_percent),
+        },
         "eligible_for_human_review": all(checks.values()),
         "automatic_live_enable": False,
     }

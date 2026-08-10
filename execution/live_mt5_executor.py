@@ -8,11 +8,13 @@ It never permits an unpinned session and it verifies the configured server.
 from __future__ import annotations
 
 from execution.mt5_executor import ExecutionError, MT5Executor
+from mt5_ipc import serialized_mt5_call
 
 
 class LiveMT5Executor(MT5Executor):
     """MT5Executor variant that accepts only the explicitly pinned REAL account."""
 
+    @serialized_mt5_call
     def connect(self) -> bool:
         if self.config.expected_login is None:
             raise ExecutionError("MT5_LIVE requires a pinned expected login")
