@@ -35,7 +35,7 @@ class StubTrendEngine:
         return {
             "signal": self.signal,
             "confidence": 80,
-            "score": 80,
+            "score": -80 if self.signal == "SELL" else 80 if self.signal == "BUY" else 0,
             "reasons": ["existing causal trend pipeline"],
             "decision_summary": {
                 "positive": ["existing causal trend pipeline"],
@@ -178,29 +178,30 @@ def test_trend_regime_delegates_to_existing_causal_engine():
     assert result["regime_confidence"] == 75.0
 
 
-def test_range_router_requires_confirmed_band_reentry_and_reduces_risk():
+def test_range_router_uses_primary_vote_and_reduces_risk():
     result = router(
         StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
     ).generate_analysis(range_reentry_frame("BUY"), "EURUSD=X")
 
     assert result["signal"] == "BUY"
-    assert result["strategy"] == "RANGE_REVERSION"
+    assert result["strategy"] == "RANGE_TREND_VOTE"
     assert result["risk_multiplier"] == 0.5
-    assert result["confidence"] == 70
+    assert result["confidence"] == 80
     assert result["regime_confidence"] == 70.0
     assert result["decision_report"]["approved"] is True
 
 
 def test_range_router_supports_bearish_reentry():
     result = router(
-        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        trend=StubTrendEngine("SELL"),
     ).generate_analysis(range_reentry_frame("SELL"), "EURUSD=X")
 
     assert result["signal"] == "SELL"
     assert result["score"] < 0
 
 
-def test_range_router_accepts_near_band_rsi_recovery_after_relaxation():
+def test_range_router_does_not_require_band_reentry_for_primary_vote():
     frame = range_reentry_frame("BUY").copy()
     frame.loc[0, "close"] = frame.loc[0, "BB_LOWER"] + 0.20
     frame.loc[0, "RSI"] = 43.0
@@ -211,17 +212,18 @@ def test_range_router_accepts_near_band_rsi_recovery_after_relaxation():
     ).generate_analysis(frame, "EURUSD=X")
 
     assert result["signal"] == "BUY"
-    assert result["strategy"] == "RANGE_REVERSION"
+    assert result["strategy"] == "RANGE_TREND_VOTE"
 
 
-def test_range_router_still_rejects_mid_range_noise():
+def test_range_router_holds_when_primary_vote_holds():
     frame = range_reentry_frame("BUY").copy()
     frame.loc[0, "close"] = frame.loc[0, "BB_LOWER"] + 0.50
     frame.loc[0, "RSI"] = 43.0
     frame.loc[1, "RSI"] = 44.0
 
     result = router(
-        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        trend=StubTrendEngine("HOLD"),
     ).generate_analysis(frame, "EURUSD=X")
 
     assert result["signal"] == "HOLD"
@@ -230,14 +232,15 @@ def test_range_router_still_rejects_mid_range_noise():
 def test_range_hold_does_not_report_regime_confidence_as_trade_confidence(caplog):
     caplog.set_level(logging.INFO)
     result = router(
-        StaticDetector(REGIME_RANGE, confidence=78, risk=0.5)
+        StaticDetector(REGIME_RANGE, confidence=78, risk=0.5),
+        trend=StubTrendEngine("HOLD"),
     ).generate_analysis(range_no_entry_frame(), "CAD=X")
 
     assert result["signal"] == "HOLD"
     assert result["confidence"] == 0
     assert result["regime_confidence"] == 78.0
     assert result["risk_multiplier"] == 0.0
-    assert "Range detected but no confirmed Bollinger/RSI re-entry" in result["reasons"]
+    assert "existing causal trend pipeline" in result["reasons"]
     assert "ROUTED HOLD detail CAD=X" in caplog.text
     assert "regime_confidence=78.0" in caplog.text
     assert "trade_confidence=0" in caplog.text
@@ -255,13 +258,14 @@ def test_range_buy_is_allowed_when_higher_timeframe_is_bullish():
 
     assert result["signal"] == "BUY"
     assert result["risk_multiplier"] == 0.5
-    assert result["confidence"] == 70
+    assert result["confidence"] == 80
     assert result["higher_timeframe_regime"] == "BULLISH"
 
 
 def test_range_sell_is_blocked_when_higher_timeframe_is_bullish():
     result = router(
         StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        trend=StubTrendEngine("SELL"),
         htf="BULLISH",
     ).generate_analysis(
         range_reentry_frame("SELL"),
@@ -278,6 +282,7 @@ def test_range_sell_is_blocked_when_higher_timeframe_is_bullish():
 def test_range_sell_is_allowed_when_higher_timeframe_is_bearish():
     result = router(
         StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        trend=StubTrendEngine("SELL"),
         htf="BEARISH",
     ).generate_analysis(
         range_reentry_frame("SELL"),
@@ -287,7 +292,7 @@ def test_range_sell_is_allowed_when_higher_timeframe_is_bearish():
 
     assert result["signal"] == "SELL"
     assert result["risk_multiplier"] == 0.5
-    assert result["confidence"] == 70
+    assert result["confidence"] == 80
     assert result["higher_timeframe_regime"] == "BEARISH"
 
 
@@ -366,7 +371,8 @@ def test_range_sell_does_not_require_bearish_candle_colour():
     frame.loc[frame.index[-1], "open"] = frame.iloc[-1]["close"] - 0.2
 
     result = router(
-        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5)
+        StaticDetector(REGIME_RANGE, confidence=70, risk=0.5),
+        trend=StubTrendEngine("SELL"),
     ).generate_analysis(frame, "EURUSD=X")
 
     assert result["signal"] == "SELL"
