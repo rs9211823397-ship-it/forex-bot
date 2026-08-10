@@ -136,6 +136,8 @@ class TradingApplication:
         self._last_management_report: dict[str, object] = {}
         self._management_report_lock = threading.RLock()
         self.latest_correlations: tuple[CorrelationObservation, ...] = ()
+        self._latest_analysis_by_symbol: dict[str, dict[str, object]] = {}
+        self._analysis_lock = threading.RLock()
         self.loop = BotLoop(interval=BOT_INTERVAL_SECONDS)
         self.management_loop = BotLoop(
             interval=POSITION_MANAGEMENT_INTERVAL_SECONDS,
@@ -173,6 +175,113 @@ class TradingApplication:
                 "cycle_reasons": dict(self._cycle_reasons.most_common(20)),
                 "session_reasons": dict(self._session_reasons.most_common(50)),
             }
+
+    def _record_runtime_analysis(
+        self,
+        symbol: str,
+        signal: dict,
+        *,
+        final_decision: str | None = None,
+        final_reason: object = None,
+        risk_plan: dict | None = None,
+        portfolio_action: object = None,
+        execution_status: str | None = None,
+    ) -> None:
+        report = signal.get("decision_report") or {}
+        reasons = signal.get("reasons") or report.get("reasons") or []
+        if isinstance(reasons, str):
+            reasons = [reasons]
+
+        strategy_signal = str(signal.get("signal", "HOLD")).upper()
+
+        if final_decision is None:
+            final_decision = (
+                "PENDING"
+                if strategy_signal in {"BUY", "SELL"}
+                else "HOLD"
+            )
+
+        if final_reason is None:
+            final_reason = (
+                report.get("primary_reason")
+                or (reasons[0] if reasons else "No actionable setup")
+            )
+
+        entry = None
+        stop_loss = None
+        take_profit = None
+        risk_reward = None
+
+        if isinstance(risk_plan, dict):
+            entry = risk_plan.get("entry")
+            stop_loss = risk_plan.get("stop_loss")
+            take_profit = (
+                risk_plan.get("take_profit")
+                if "take_profit" in risk_plan
+                else risk_plan.get("tp")
+            )
+
+            try:
+                if (
+                    entry is not None
+                    and stop_loss is not None
+                    and take_profit is not None
+                ):
+                    risk = abs(float(entry) - float(stop_loss))
+                    reward = abs(float(take_profit) - float(entry))
+                    if risk > 0:
+                        risk_reward = reward / risk
+            except (TypeError, ValueError):
+                risk_reward = None
+
+        summary = {
+            "symbol": str(symbol),
+            "strategy_signal": strategy_signal,
+            "signal": strategy_signal,
+            "final_decision": str(final_decision),
+            "final_reason": str(final_reason),
+            "confidence": float(signal.get("confidence", 0) or 0),
+            "strategy": str(
+                signal.get("strategy")
+                or report.get("strategy")
+                or "UNKNOWN"
+            ),
+            "regime": str(
+                signal.get("regime")
+                or report.get("regime")
+                or "UNKNOWN"
+            ),
+            "higher_timeframe_bias": str(
+                signal.get("higher_timeframe_bias")
+                or signal.get("higher_timeframe")
+                or signal.get("htf_regime")
+                or signal.get("htf")
+                or report.get("higher_timeframe_bias")
+                or report.get("higher_timeframe")
+                or report.get("htf_regime")
+                or report.get("htf")
+                or "UNKNOWN"
+            ),
+            "primary_reason": str(
+                report.get("primary_reason")
+                or (reasons[0] if reasons else "No actionable setup")
+            ),
+            "reasons": [str(item) for item in list(reasons)[:6]],
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk_reward": risk_reward,
+            "portfolio_action": (
+                str(portfolio_action)
+                if portfolio_action is not None
+                else None
+            ),
+            "execution_status": execution_status,
+            "updated_utc": datetime.now(timezone.utc).isoformat(),
+        }
+
+        with self._analysis_lock:
+            self._latest_analysis_by_symbol[str(symbol)] = summary
 
     @staticmethod
     def _closed_trade_stats(closed_results) -> dict[str, float | int]:
@@ -453,6 +562,7 @@ class TradingApplication:
                 raise RuntimeError(f"Unsafe/stale higher-timeframe data blocked for {symbol}")
         analyzed = self.indicators.add_indicators(data)
         signal = self.strategy_router.generate_analysis(analyzed, symbol, higher_tf)
+        self._record_runtime_analysis(symbol, signal)
         trade = self.trade_manager.calculate_trade(analyzed, signal)
         current_price = float(trade["current_price"])
         with self._atr_lock:
@@ -464,6 +574,13 @@ class TradingApplication:
             report = signal.get("decision_report") or {}
             primary = report.get("primary_reason") or "NO_ACTIONABLE_SETUP"
             self._record_decision_stage("STRATEGY_HOLD", primary)
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="HOLD",
+                final_reason=primary,
+                execution_status="NOT_ACTIONABLE",
+            )
             return current_price
         self._record_decision_stage("STRATEGY_ACTIONABLE", signal["signal"])
         risk_plan = self.risk_manager.calculate_trade_levels(
@@ -471,6 +588,13 @@ class TradingApplication:
         )
         if not risk_plan:
             self._record_decision_stage("TRADE_LEVEL_REJECTED", "INVALID_RISK_PLAN")
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="BLOCKED",
+                final_reason="INVALID_RISK_PLAN",
+                execution_status="RISK_PLAN_REJECTED",
+            )
             return current_price
         equity = self._account_equity()
         risk_multiplier = float(signal.get("risk_multiplier", 1.0))
@@ -487,6 +611,14 @@ class TradingApplication:
             )
             if requested_quantity <= 0:
                 self._record_decision_stage("SIZING_REJECTED", "NON_POSITIVE_PAPER_SIZE")
+                self._record_runtime_analysis(
+                    symbol,
+                    signal,
+                    final_decision="BLOCKED",
+                    final_reason="NON_POSITIVE_PAPER_SIZE",
+                    risk_plan=risk_plan,
+                    execution_status="SIZING_REJECTED",
+                )
                 logger.warning(
                     "Paper position size rejected for %s (equity=%.2f requested_risk=%.2f)",
                     symbol,
@@ -512,6 +644,15 @@ class TradingApplication:
         )
         if not assessment.allowed:
             self._record_decision_stage("PORTFOLIO_RISK_BLOCKED", assessment.reason_codes)
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="BLOCKED",
+                final_reason=", ".join(assessment.reason_codes),
+                risk_plan=risk_plan,
+                portfolio_action=getattr(assessment.action, "value", assessment.action),
+                execution_status="PORTFOLIO_RISK_BLOCKED",
+            )
             logger.warning(
                 "Portfolio risk blocked %s: %s",
                 symbol,
@@ -529,6 +670,15 @@ class TradingApplication:
                 assessment.approved_risk_amount,
                 assessment.action.value,
             )
+        self._record_runtime_analysis(
+            symbol,
+            signal,
+            final_decision="APPROVED",
+            final_reason="All pre-execution checks passed",
+            risk_plan=risk_plan,
+            portfolio_action=getattr(assessment.action, "value", assessment.action),
+            execution_status="EXECUTION_ATTEMPT",
+        )
         self._record_decision_stage("EXECUTION_ATTEMPT", signal["signal"])
         try:
             result = self.execution.execute(
@@ -543,15 +693,42 @@ class TradingApplication:
                 "EXECUTION_REJECTED",
                 f"{type(exc).__name__}: {exc}",
             )
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="BLOCKED",
+                final_reason=f"{type(exc).__name__}: {exc}",
+                risk_plan=risk_plan,
+                portfolio_action=getattr(assessment.action, "value", assessment.action),
+                execution_status="EXECUTION_REJECTED",
+            )
             raise
         if result is None:
             self._record_decision_stage(
                 "EXECUTION_REJECTED",
                 "EXECUTOR_RETURNED_NO_POSITION",
             )
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="BLOCKED",
+                final_reason="EXECUTOR_RETURNED_NO_POSITION",
+                risk_plan=risk_plan,
+                portfolio_action=getattr(assessment.action, "value", assessment.action),
+                execution_status="EXECUTION_REJECTED",
+            )
             logger.warning("Execution produced no new position for %s", symbol)
             return current_price
         self._record_decision_stage("EXECUTED", signal["signal"])
+        self._record_runtime_analysis(
+            symbol,
+            signal,
+            final_decision="EXECUTED",
+            final_reason="Trade executed",
+            risk_plan=risk_plan,
+            portfolio_action=getattr(assessment.action, "value", assessment.action),
+            execution_status="EXECUTED",
+        )
         logger.info("Execution result for %s: %r", symbol, result)
         return current_price
 
@@ -639,6 +816,34 @@ class TradingApplication:
             closed_window = "7d"
         with self._management_report_lock:
             management_report = dict(self._last_management_report)
+
+        raw_positions = list(self.execution.positions())
+        runtime_positions = []
+        for position in raw_positions:
+            if isinstance(position, dict):
+                runtime_positions.append(dict(position))
+                continue
+            runtime_positions.append(
+                {
+                    "ticket": getattr(position, "ticket", None),
+                    "symbol": getattr(position, "symbol", "Unknown"),
+                    "type": getattr(position, "type", None),
+                    "volume": getattr(position, "volume", None),
+                    "price_open": getattr(position, "price_open", None),
+                    "price_current": getattr(position, "price_current", None),
+                    "sl": getattr(position, "sl", None),
+                    "tp": getattr(position, "tp", None),
+                    "profit": float(getattr(position, "profit", 0.0) or 0.0),
+                    "magic": getattr(position, "magic", None),
+                }
+            )
+
+        with self._analysis_lock:
+            analysis_snapshot = [
+                dict(item)
+                for _, item in sorted(self._latest_analysis_by_symbol.items())
+            ]
+
         write_runtime_state(
             account_id=self.account_id,
             status=self.controller.status(),
@@ -665,7 +870,10 @@ class TradingApplication:
                 if self.execution.mode == "PAPER"
                 else account.equity - account.balance
             ),
-            open_positions=len(self.execution.positions()),
+            open_positions=len(runtime_positions),
+            positions=runtime_positions,
+            latest_analysis=analysis_snapshot,
+            analysis_updated_utc=now.isoformat(),
             closed_trades=closed_trades,
             closed_trades_window=closed_window,
             starting_balance=stats.get("starting_balance", stats["balance"]),

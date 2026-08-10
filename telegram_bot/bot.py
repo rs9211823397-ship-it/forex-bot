@@ -300,6 +300,12 @@ def money(value: Any) -> str:
         return "$0.00"
 
 
+def _position_value(position: Any, key: str, default: Any = None) -> Any:
+    if isinstance(position, dict):
+        return position.get(key, default)
+    return getattr(position, key, default)
+
+
 def runtime_status() -> tuple[str, dict[str, Any]]:
     state = read_runtime_state()
     if heartbeat_is_fresh(state):
@@ -309,39 +315,28 @@ def runtime_status() -> tuple[str, dict[str, Any]]:
     return "STOPPED (no recent heartbeat)", state
 
 
-@serialized_mt5_call
 def mt5_snapshot() -> dict[str, Any]:
-    """Read live account and AAQTS-managed positions directly from MT5."""
-    try:
-        import MetaTrader5 as mt5
-    except ImportError as exc:
-        raise RuntimeError("MetaTrader5 package is not installed.") from exc
+    """Read the broker snapshot published by the trading engine.
 
-    if not mt5.initialize(path=MT5_TERMINAL_PATH):
-        raise RuntimeError(f"MT5 initialization failed: {mt5.last_error()}")
+    Telegram intentionally never initializes or shuts down MT5.
+    """
+    status, state = runtime_status()
+    if not heartbeat_is_fresh(state):
+        raise RuntimeError(
+            "Trading-engine heartbeat is stale; broker snapshot unavailable."
+        )
 
-    try:
-        account = mt5.account_info()
-        if account is None:
-            raise RuntimeError("MT5 account information is unavailable.")
-
-        positions = [
-            position
-            for position in list(mt5.positions_get() or [])
-            if getattr(position, "magic", None) == AAQTS_MAGIC
-        ]
-        return {
-            "login": getattr(account, "login", None),
-            "server": getattr(account, "server", "Unknown"),
-            "balance": float(getattr(account, "balance", 0.0)),
-            "equity": float(getattr(account, "equity", 0.0)),
-            "profit": float(getattr(account, "profit", 0.0)),
-            "margin": float(getattr(account, "margin", 0.0)),
-            "margin_free": float(getattr(account, "margin_free", 0.0)),
-            "positions": positions,
-        }
-    finally:
-        mt5.shutdown()
+    return {
+        "login": state.get("mt5_login"),
+        "server": state.get("mt5_server", "Unknown"),
+        "balance": float(state.get("balance", 0.0) or 0.0),
+        "equity": float(state.get("equity", 0.0) or 0.0),
+        "profit": float(state.get("floating_pnl", 0.0) or 0.0),
+        "margin": float(state.get("margin", 0.0) or 0.0),
+        "margin_free": float(state.get("margin_free", 0.0) or 0.0),
+        "positions": list(state.get("positions") or []),
+        "engine_status": status,
+    }
 
 
 def paper_snapshot() -> dict[str, Any]:
@@ -458,12 +453,33 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if not update.message:
         return
-    try:
-        snapshot = await asyncio.to_thread(mt5_dashboard_snapshot)
-        await update.message.reply_text(format_dashboard(snapshot))
-    except Exception as exc:
-        logger.exception("Dashboard command failed")
-        await update.message.reply_text(f"❌ Could not build live dashboard.\n\n{exc}")
+
+    status, state = runtime_status()
+    if not heartbeat_is_fresh(state):
+        await update.message.reply_text(
+            "Trading engine heartbeat is stale; dashboard unavailable."
+        )
+        return
+
+    text = (
+        "AAQTS DEMO DASHBOARD\n\n"
+        f"Engine: {status}\n"
+        f"Mode: {state.get('execution_mode', EXECUTION_MODE)}\n"
+        f"Login: {state.get('mt5_login', 'N/A')}\n"
+        f"Server: {state.get('mt5_server', 'N/A')}\n\n"
+        f"Balance: {money(state.get('balance', 0))}\n"
+        f"Equity: {money(state.get('equity', 0))}\n"
+        f"Floating P/L: {money(state.get('floating_pnl', 0))}\n"
+        f"Open positions: {state.get('open_positions', 0)}\n\n"
+        f"Closed trades ({state.get('closed_trades_window', '7d')}): "
+        f"{state.get('closed_trades', 0)}\n"
+        f"Wins: {state.get('wins', 0)}\n"
+        f"Losses: {state.get('losses', 0)}\n"
+        f"Win rate: {float(state.get('win_rate', 0) or 0):.1f}%\n"
+        f"Market data: "
+        f"{'HEALTHY' if state.get('market_data_healthy') else 'DEGRADED'}"
+    )
+    await update.message.reply_text(text)
 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -528,17 +544,17 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     lines = ["📈 AAQTS OPEN POSITIONS", ""]
     if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
         for index, position in enumerate(positions, start=1):
-            side = "BUY" if getattr(position, "type", 0) == 0 else "SELL"
+            side = "BUY" if _position_value(position, "type", 0) == 0 else "SELL"
             lines.extend(
                 [
-                    f"{index}. {getattr(position, 'symbol', 'Unknown')} | {side}",
-                    f"Ticket: {getattr(position, 'ticket', 'N/A')}",
-                    f"Volume: {getattr(position, 'volume', 'N/A')}",
-                    f"Entry: {getattr(position, 'price_open', 'N/A')}",
-                    f"Current: {getattr(position, 'price_current', 'N/A')}",
-                    f"P/L: {money(getattr(position, 'profit', 0.0))}",
-                    f"SL: {getattr(position, 'sl', 'N/A')}",
-                    f"TP: {getattr(position, 'tp', 'N/A')}",
+                    f"{index}. {_position_value(position, 'symbol', 'Unknown')} | {side}",
+                    f"Ticket: {_position_value(position, 'ticket', 'N/A')}",
+                    f"Volume: {_position_value(position, 'volume', 'N/A')}",
+                    f"Entry: {_position_value(position, 'price_open', 'N/A')}",
+                    f"Current: {_position_value(position, 'price_current', 'N/A')}",
+                    f"P/L: {money(_position_value(position, 'profit', 0.0))}",
+                    f"SL: {_position_value(position, 'sl', 'N/A')}",
+                    f"TP: {_position_value(position, 'tp', 'N/A')}",
                     "",
                 ]
             )
@@ -568,7 +584,7 @@ async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         snapshot = await asyncio.to_thread(account_snapshot)
         positions = snapshot["positions"]
         if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
-            managed_profit = sum(float(getattr(p, "profit", 0.0)) for p in positions)
+            managed_profit = sum(float(_position_value(p, "profit", 0.0) or 0.0) for p in positions)
             text = (
                 "📈 LIVE MT5 PERFORMANCE\n\n"
                 f"AAQTS open positions: {len(positions)}\n"
@@ -592,69 +608,145 @@ async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def run_analysis_sync() -> str:
-    from config.settings import HIGHER_TIMEFRAME, TRADING_TIMEFRAME
-    from data.market_data import MarketData
-    from indicators.technical import TechnicalIndicators
-    from strategy.signal_engine import SignalEngine
+    status, state = runtime_status()
 
-    market = MarketData()
-    indicator = TechnicalIndicators()
-    signal_engine = SignalEngine()
-    all_data = market.download_all_data(interval=TRADING_TIMEFRAME)
-    higher_tf_data = market.download_all_data(interval=HIGHER_TIMEFRAME)
-    results = []
+    if not heartbeat_is_fresh(state):
+        return "Engine heartbeat is stale. Analysis is unavailable."
 
-    for symbol, data in all_data.items():
-        try:
-            analyzed_data = indicator.add_indicators(data)
-            signal = signal_engine.generate_analysis(
-                analyzed_data, symbol, higher_tf_data.get(symbol)
-            )
-            results.append(
-                {
-                    "symbol": symbol,
-                    "signal": signal.get("signal", "HOLD"),
-                    "confidence": signal.get("confidence", 0),
-                    "reasons": signal.get("reasons", []),
-                    "decision_report": signal.get("decision_report", {}),
-                }
-            )
-        except Exception as exc:
-            logger.exception("Analysis failed for %s", symbol)
-            results.append(
-                {
-                    "symbol": symbol,
-                    "signal": "ERROR",
-                    "confidence": 0,
-                    "reasons": [str(exc)],
-                    "decision_report": {
-                        "decision": "ERROR",
-                        "status": "REJECTED",
-                        "approved": False,
-                        "confidence": 0,
-                        "score": 0,
-                        "reasons": [str(exc)],
-                        "decision_summary": {"positive": [], "warnings": [str(exc)]},
-                        "rejection_reasons": [str(exc)],
-                        "report_text": f"Decision: ERROR\nStatus: REJECTED\nConfidence: 0%\nScore: 0\nRejection reasons:\n- {exc}",
-                    },
-                }
-            )
+    results = list(state.get("latest_analysis") or [])
 
     if not results:
-        return "No market data was returned."
-
-    lines = ["🧠 AAQTS MARKET ANALYSIS", ""]
-    for result in results:
-        lines.append(
-            f"{result['symbol']} | {result['signal']} | {result['confidence']}%"
+        phase = state.get("phase", "UNKNOWN")
+        return (
+            "AAQTS MARKET ANALYSIS\n\n"
+            "No completed engine analysis is available yet.\n"
+            f"Engine: {status}\n"
+            f"Phase: {phase}\n"
+            "Wait for the current scan to complete and try /analysis again."
         )
-        decision_report = result.get("decision_report") or {}
-        if decision_report.get("report_text"):
-            lines.append(decision_report["report_text"])
-        for reason in result["reasons"][:2]:
-            lines.append(f"• {reason}")
+
+    def display_symbol(raw: object) -> str:
+        symbol = str(raw or "UNKNOWN").upper()
+
+        aliases = {
+            "AUDUSD=X": "AUDUSD",
+            "EURUSD=X": "EURUSD",
+            "GBPUSD=X": "GBPUSD",
+            "NZDUSD=X": "NZDUSD",
+            "JPY=X": "USDJPY",
+            "CAD=X": "USDCAD",
+            "CHF=X": "USDCHF",
+            "BTC-USD": "BTCUSD",
+            "ETH-USD": "ETHUSD",
+        }
+
+        return aliases.get(symbol, symbol.replace("-", ""))
+
+    def price(value: object) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "N/A"
+
+        if abs(number) >= 1000:
+            return f"{number:.2f}"
+        if abs(number) >= 100:
+            return f"{number:.3f}"
+        return f"{number:.5f}"
+
+    lines = [
+        "AAQTS MARKET ANALYSIS",
+        "",
+        f"Engine: {status}",
+        f"Mode: {state.get('execution_mode', EXECUTION_MODE)}",
+        f"Updated: {state.get('analysis_updated_utc', 'Unknown')}",
+        "",
+    ]
+
+    for result in results:
+        symbol = display_symbol(result.get("symbol"))
+        strategy_signal = str(
+            result.get("strategy_signal")
+            or result.get("signal")
+            or "HOLD"
+        ).upper()
+
+        final_decision = str(
+            result.get("final_decision")
+            or ("HOLD" if strategy_signal == "HOLD" else "PENDING")
+        ).upper()
+
+        confidence = float(result.get("confidence", 0) or 0)
+        regime = str(result.get("regime", "UNKNOWN"))
+        strategy = str(result.get("strategy", "UNKNOWN"))
+        htf = str(result.get("higher_timeframe_bias", "UNKNOWN"))
+        final_reason = str(
+            result.get("final_reason")
+            or result.get("primary_reason")
+            or "No actionable setup"
+        )
+
+        execution_status = result.get("execution_status")
+        portfolio_action = result.get("portfolio_action")
+
+        if final_decision == "EXECUTED":
+            label = "[EXECUTED]"
+        elif final_decision == "APPROVED":
+            label = "[APPROVED]"
+        elif final_decision == "BLOCKED":
+            label = "[BLOCKED]"
+        elif final_decision == "HOLD":
+            label = "[HOLD]"
+        else:
+            label = "[PENDING]"
+
+        lines.append(
+            f"{label} {symbol} | {final_decision} | "
+            f"Strategy signal: {strategy_signal} | {confidence:.0f}%"
+        )
+        lines.append(
+            f"Regime: {regime} | Strategy: {strategy} | HTF: {htf}"
+        )
+        lines.append(f"Decision: {final_reason}")
+
+        entry = result.get("entry")
+        stop_loss = result.get("stop_loss")
+        take_profit = result.get("take_profit")
+        rr = result.get("risk_reward")
+
+        if any(value is not None for value in (entry, stop_loss, take_profit)):
+            lines.append(
+                f"Entry: {price(entry)} | SL: {price(stop_loss)} | "
+                f"TP: {price(take_profit)}"
+            )
+
+        if rr is not None:
+            try:
+                lines.append(f"Risk/Reward: 1:{float(rr):.2f}")
+            except (TypeError, ValueError):
+                pass
+
+        if portfolio_action:
+            lines.append(f"Portfolio action: {portfolio_action}")
+
+        if execution_status:
+            lines.append(f"Execution: {execution_status}")
+
+        reasons = list(result.get("reasons") or [])
+        extras = [
+            str(reason)
+            for reason in reasons
+            if str(reason).strip()
+            and str(reason).strip() != final_reason.strip()
+        ]
+
+        for reason in extras[:2]:
+            lines.append(f"- {reason}")
+
         lines.append("")
+
     return "\n".join(lines)
 
 
@@ -741,7 +833,26 @@ async def _show_account(update: Update, role: TelegramRole, token: str) -> None:
             update, "❌ Account no longer exists.", back_home_keyboard()
         )
         return
-    view = await asyncio.to_thread(ACCOUNT_READER.read, account)
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
+        runtime_connection, runtime_state = runtime_status()
+
+        class RuntimeAccountView:
+            status = (
+                "CONNECTED"
+                if heartbeat_is_fresh(runtime_state)
+                and runtime_state.get("market_data_healthy")
+                else runtime_connection
+            )
+            open_positions = int(runtime_state.get("open_positions", 0) or 0)
+            floating_pnl = float(runtime_state.get("floating_pnl", 0.0) or 0.0)
+            balance = float(runtime_state.get("balance", 0.0) or 0.0)
+            equity = float(runtime_state.get("equity", 0.0) or 0.0)
+            reason = None
+
+        view = RuntimeAccountView()
+    else:
+        view = await asyncio.to_thread(ACCOUNT_READER.read, account)
+
     missing = CREDENTIALS.readiness(account).missing
     setup = ""
     if missing:
@@ -1022,7 +1133,32 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("av:"):
         _, section, token = data.split(":", 2)
         account = _resolve_managed_token(token)
-        view = await asyncio.to_thread(ACCOUNT_READER.read, account)
+        if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
+            runtime_connection, runtime_state = runtime_status()
+
+            class RuntimeAccountView:
+                status = (
+                    "CONNECTED"
+                    if heartbeat_is_fresh(runtime_state)
+                    and runtime_state.get("market_data_healthy")
+                    else runtime_connection
+                )
+                open_positions = int(runtime_state.get("open_positions", 0) or 0)
+                floating_pnl = float(runtime_state.get("floating_pnl", 0.0) or 0.0)
+                balance = float(runtime_state.get("balance", 0.0) or 0.0)
+                equity = float(runtime_state.get("equity", 0.0) or 0.0)
+                starting_balance = float(
+                    runtime_state.get("starting_balance", balance) or balance
+                )
+                total_pnl = balance - starting_balance
+                closed_trades = int(runtime_state.get("closed_trades", 0) or 0)
+                wins = int(runtime_state.get("wins", 0) or 0)
+                win_rate = float(runtime_state.get("win_rate", 0.0) or 0.0)
+
+            view = RuntimeAccountView()
+        else:
+            view = await asyncio.to_thread(ACCOUNT_READER.read, account)
+
         active_symbols = [symbol for group in SYMBOLS.values() for symbol in group]
         control_records = CONTROL_COMMANDS.recent(account.account_id, limit=5)
         control_text = "No control requests for this account."
@@ -1482,6 +1618,17 @@ async def post_init(application: Application) -> None:
         )
     except TelegramError:
         logger.warning("Could not update Telegram command menu")
+    # In broker modes the trading engine exclusively owns the MT5 terminal
+    # session. Telegram must never initialize/shutdown the same terminal.
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
+        logger.info(
+            "Telegram broker-side trade alert polling disabled; "
+            "the trading engine owns the MT5 terminal session"
+        )
+        application.bot_data["trade_alert_monitor"] = None
+        application.bot_data["trade_alert_task"] = None
+        return
+
     enabled_accounts = _managed_accounts(enabled_only=True)
     paper_accounts = tuple(
         account
