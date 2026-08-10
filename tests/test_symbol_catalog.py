@@ -1,6 +1,11 @@
 from config.instruments import get_instrument_spec
 from config.settings import MT5_SYMBOL_MAP, SYMBOLS
-from config.symbols import SYMBOL_CATALOG, active_symbols, symbol_by_broker
+from config.symbols import (
+    SYMBOL_CATALOG,
+    active_symbols,
+    executable_symbol_map,
+    symbol_by_broker,
+)
 
 
 REQUESTED_BROKER_SYMBOLS = {
@@ -58,10 +63,12 @@ def test_active_symbols_have_cost_aware_specs_and_safe_mt5_mappings():
             assert symbol in MT5_SYMBOL_MAP
 
 
-def test_yahoo_short_forex_tickers_map_to_the_correct_mt5_symbols():
-    assert MT5_SYMBOL_MAP["JPY=X"] == "USDJPY"
-    assert MT5_SYMBOL_MAP["CHF=X"] == "USDCHF"
-    assert MT5_SYMBOL_MAP["CAD=X"] == "USDCAD"
+def test_yahoo_short_forex_tickers_map_to_the_correct_base_mt5_symbols():
+    base_map = executable_symbol_map()
+
+    assert base_map["JPY=X"] == "USDJPY"
+    assert base_map["CHF=X"] == "USDCHF"
+    assert base_map["CAD=X"] == "USDCAD"
 
 
 def test_usdt_exposure_is_not_misclassified_as_usd():
