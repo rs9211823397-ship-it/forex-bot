@@ -18,6 +18,7 @@ from config.settings import (
     MT5_TERMINAL_PATH,
     SYMBOLS,
 )
+from config.symbols import symbol_by_data
 from data.historical import HistoricalDataError, HistoricalDataStore
 from data.timeframes import normalize_timeframe, normalize_timestamp, timeframe_delta
 
@@ -44,6 +45,7 @@ class MarketData:
     def __init__(self, cache_dir="data/cache", cache_downloads=True, *, execution_mode=None, allow_cache_fallback=None, provider=None, max_stale_bars=None):
         self.history = HistoricalDataStore(cache_dir)
         self.cache_downloads = bool(cache_downloads)
+        self._resolved_mt5_symbols = {}
         self.execution_mode = str(execution_mode if execution_mode is not None else os.getenv("AAQTS_EXECUTION_MODE", "PAPER")).upper().strip()
         self.provider = str(provider if provider is not None else os.getenv("AAQTS_MARKET_DATA_PROVIDER", "MT5" if self.execution_mode == "MT5_DEMO" else "YAHOO")).upper().strip()
         if self.provider not in {"MT5", "YAHOO"}:
@@ -86,9 +88,51 @@ class MarketData:
     def _mt5_count(interval):
         return {"15m": 6000, "30m": 5000, "1h": 6000, "1d": 2500}.get(normalize_timeframe(interval), 2500)
 
+    def _resolve_mt5_symbol(self, mt5, data_symbol, configured_symbol):
+        cached = self._resolved_mt5_symbols.get(data_symbol)
+        if cached and mt5.symbol_info(cached) is not None:
+            return cached
+
+        if mt5.symbol_info(configured_symbol) is not None:
+            self._resolved_mt5_symbols[data_symbol] = configured_symbol
+            return configured_symbol
+
+        try:
+            canonical = symbol_by_data(data_symbol).broker_symbol
+        except KeyError:
+            canonical = configured_symbol
+
+        candidates = sorted({
+            str(getattr(item, "name", "")).strip()
+            for item in (mt5.symbols_get() or ())
+            if str(getattr(item, "name", "")).strip().upper().startswith(canonical.upper())
+        })
+
+        if len(candidates) == 1:
+            resolved = candidates[0]
+            self._resolved_mt5_symbols[data_symbol] = resolved
+            logger.info(
+                "Resolved MT5 symbol %s: %s -> %s",
+                data_symbol,
+                configured_symbol,
+                resolved,
+            )
+            return resolved
+
+        if not candidates:
+            raise MarketDataError(
+                f"Unknown MT5 symbol: {configured_symbol}; no broker symbol matches {canonical}"
+            )
+
+        raise MarketDataError(
+            f"Ambiguous MT5 symbol mapping for {data_symbol}: "
+            + ", ".join(candidates)
+            + ". Set AAQTS_MT5_SYMBOL_SUFFIX explicitly."
+        )
+
     def _download_mt5(self, symbol, interval):
-        broker_symbol = MT5_SYMBOL_MAP.get(symbol)
-        if not broker_symbol:
+        configured_symbol = MT5_SYMBOL_MAP.get(symbol)
+        if not configured_symbol:
             raise MarketDataError(f"No MT5 symbol mapping configured for {symbol}")
         try:
             import MetaTrader5 as mt5
@@ -100,6 +144,7 @@ class MarketData:
             if not initialized_here:
                 raise MarketDataError(f"MT5 initialization failed: {mt5.last_error()}")
         try:
+            broker_symbol = self._resolve_mt5_symbol(mt5, symbol, configured_symbol)
             info = mt5.symbol_info(broker_symbol)
             if info is None:
                 raise MarketDataError(f"Unknown MT5 symbol: {broker_symbol}")
@@ -121,7 +166,9 @@ class MarketData:
                 frame["volume"] = pd.to_numeric(frame["real_volume"], errors="coerce")
             else:
                 frame["volume"] = 0.0
-            return frame[["open", "high", "low", "close", "volume"]].copy()
+            result = frame[["open", "high", "low", "close", "volume"]].copy()
+            result.attrs["broker_symbol"] = broker_symbol
+            return result
         finally:
             if initialized_here:
                 mt5.shutdown()
@@ -181,6 +228,7 @@ class MarketData:
             if use_cache:
                 return self._cached_or_raise(symbol, timeframe, as_of=as_of)
             raise MarketDataError(f"No data found for {symbol}")
+        provider_attrs = dict(getattr(data, "attrs", {}) or {})
         data = self._align_provider_candles(data, timeframe)
         if data.empty:
             if use_cache:
@@ -203,6 +251,7 @@ class MarketData:
             self._assert_fresh(prepared, symbol, timeframe)
         if self.cache_downloads:
             self.history.save(prepared, symbol, timeframe, source=self.provider.lower())
+        prepared.attrs.update(provider_attrs)
         prepared.attrs["source"] = self.provider
         prepared.attrs["fresh"] = True
         return prepared
