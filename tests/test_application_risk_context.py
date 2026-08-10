@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from config.settings import MT5_SYMBOL_MAP
 from execution.mt5_executor import AccountSnapshot, ClosedPositionResult
 from main import TradingApplication
 
@@ -14,7 +15,7 @@ class FakeDemoExecution:
     def positions(self):
         return [
             SimpleNamespace(
-                symbol="EURUSD",
+                symbol=MT5_SYMBOL_MAP["EURUSD=X"],
                 type=0,
                 time=1_700_000_000,
                 volume=0.05,
