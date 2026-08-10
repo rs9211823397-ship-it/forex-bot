@@ -116,13 +116,15 @@ class ProductionSignalPipeline(SignalPipeline):
 
         output = getattr(contextual_gate, "output", None)
         reason_codes = set(getattr(output, "reason_codes", ()) or ())
-        missing_trigger_only = (
-            "NO_CONTEXTUAL_TRIGGER" in reason_codes
-            and "LOCATION_VALID" in reason_codes
+        contextual_caution_only = (
+            "SETUP_VALID" in reason_codes
             and "HTF_ALIGNED" in reason_codes
             and "STRUCTURE_ALIGNED" in reason_codes
-            and not {
+            and {
+                "NO_CONTEXTUAL_TRIGGER",
                 "INVALID_LOCATION",
+            }.intersection(reason_codes)
+            and not {
                 "HTF_DIRECTION_MISMATCH",
                 "STRUCTURE_DIRECTION_MISMATCH",
                 "SETUP_EXPIRED",
@@ -163,7 +165,7 @@ class ProductionSignalPipeline(SignalPipeline):
             contextual_gate.enabled
             and not contextual_gate.approved
             and contextual_gate.direction == direction
-            and missing_trigger_only
+            and contextual_caution_only
             and (high_conviction or aligned_majority)
         ):
             effective_contextual_gate = replace(
@@ -172,8 +174,8 @@ class ProductionSignalPipeline(SignalPipeline):
                 approved=True,
                 reasons=contextual_gate.reasons
                 + (
-                    "Contextual trigger is soft evidence: high-conviction setup "
-                    "already has aligned HTF, structure, and valid location",
+                    "Contextual trigger/location is soft evidence: majority setup "
+                    "already has aligned HTF and structure",
                 ),
             )
 
