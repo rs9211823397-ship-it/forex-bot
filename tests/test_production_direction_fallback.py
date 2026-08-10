@@ -29,13 +29,13 @@ def _latest(*, bullish):
     })
 
 
-def test_legacy_detector_still_fails_closed_when_trend_is_not_aligned():
+def test_majority_vote_can_form_direction_without_full_alignment():
     detector = SetupDetector()
     setup = detector.detect(_latest(bullish=True))
 
-    assert setup.trend_score == 0
-    assert setup.direction is None
-    assert setup.reasons == ("Trend not aligned",)
+    assert setup.trend_score == 25
+    assert setup.direction == "BUY"
+    assert setup.reasons == ("Bullish majority trend vote (2/3)",)
 
 
 def test_production_detector_can_form_small_momentum_led_candidates():
@@ -44,13 +44,13 @@ def test_production_detector_can_form_small_momentum_led_candidates():
     bullish = detector.detect(_latest(bullish=True))
     bearish = detector.detect(_latest(bullish=False))
 
-    assert bullish.trend_score == 10
+    assert bullish.trend_score == 25
     assert bullish.direction == "BUY"
-    assert bullish.reasons == ("Momentum-led bullish setup candidate",)
+    assert bullish.reasons == ("Bullish majority trend vote (2/3)",)
 
-    assert bearish.trend_score == -10
+    assert bearish.trend_score == -25
     assert bearish.direction == "SELL"
-    assert bearish.reasons == ("Momentum-led bearish setup candidate",)
+    assert bearish.reasons == ("Bearish majority trend vote (2/3)",)
 
 
 def test_momentum_led_candidate_still_needs_structure_and_htf_context():

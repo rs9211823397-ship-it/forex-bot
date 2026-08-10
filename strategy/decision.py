@@ -38,11 +38,10 @@ class MarketRegimeResult:
             return True
 
         expected_regime = "BULLISH" if direction == "BUY" else "BEARISH"
-        return (
-            self.mtf_confirmed
-            and self.regime == expected_regime
-            and self.confirmation == direction
-        )
+        # Production only needs the completed H1 trend direction to match.
+        # Requiring a second indicator-by-indicator confirmation duplicated
+        # the same evidence and caused valid setups to be rejected twice.
+        return self.regime == expected_regime
 
 
 @dataclass(frozen=True)

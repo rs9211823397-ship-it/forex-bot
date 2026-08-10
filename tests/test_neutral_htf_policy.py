@@ -40,6 +40,18 @@ def test_opposite_directional_htf_remains_hard_veto():
     assert bearish.allows("BUY") is False
 
 
+def test_directional_h1_match_does_not_require_duplicate_confirmation():
+    bullish = MarketRegimeResult(
+        mtf_confirmed=False,
+        regime="BULLISH",
+        higher_timeframe_available=True,
+        confirmation="HOLD",
+    )
+
+    assert bullish.allows("BUY") is True
+    assert bullish.allows("SELL") is False
+
+
 def test_setup_detector_carries_aligned_ltf_setup_through_neutral_htf():
     detector = SetupDetector(contextual_expiry_candles=3)
     now = pd.Timestamp("2026-08-08T10:00:00Z")

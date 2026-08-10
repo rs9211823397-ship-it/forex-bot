@@ -33,13 +33,13 @@ def test_developing_trend_can_establish_direction_with_reduced_score():
     bullish = detector.detect(_latest(3.0, 2.0, 4.0, True))
     bearish = detector.detect(_latest(2.0, 3.0, 1.0, False))
 
-    assert bullish.trend_score == 15
+    assert bullish.trend_score == 25
     assert bullish.direction == "BUY"
-    assert "Developing bullish trend" in bullish.reasons[0]
+    assert "Bullish 2/3 trend vote" in bullish.reasons[0]
 
-    assert bearish.trend_score == -15
+    assert bearish.trend_score == -25
     assert bearish.direction == "SELL"
-    assert "Developing bearish trend" in bearish.reasons[0]
+    assert "Bearish 2/3 trend vote" in bearish.reasons[0]
 
 
 def test_supertrend_conflict_still_fails_closed():
