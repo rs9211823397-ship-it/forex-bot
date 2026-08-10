@@ -128,6 +128,12 @@ class RegimeStrategyRouter:
             # extreme vetoes inside the production pipeline.
             decision = self.trend_engine.generate_analysis(data, symbol, higher_tf)
             signal = decision.get("signal", "HOLD")
+            if signal == "HOLD":
+                # A HOLD may carry candidate diagnostics from the trend engine,
+                # but it has no executable trade confidence.  Keeping a stale
+                # non-zero value here makes a blocked decision look actionable.
+                decision = dict(decision)
+                decision["confidence"] = 0
             if signal in {"BUY", "SELL"} and higher_tf is not None:
                 expected_htf = "BULLISH" if signal == "BUY" else "BEARISH"
                 if htf_regime not in {expected_htf, "NEUTRAL"}:
