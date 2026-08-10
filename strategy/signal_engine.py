@@ -7,6 +7,7 @@ from strategy.multi_timeframe import MultiTimeframeAnalyzer
 from ai.trade_quality import TradeQuality
 from ai.decision_analyzer import AIDecisionAnalyzer
 from strategy.pipeline import SignalPipeline
+from strategy.decision import MomentumResult
 from strategy.setup_detector import SetupDetector
 from strategy.trigger_detector import TriggerDetector
 from config.settings import MIN_TRADE_QUALITY
@@ -33,6 +34,24 @@ class ProductionSignalPipeline(SignalPipeline):
     HIGH_CONVICTION_QUALITY = MIN_TRADE_QUALITY
     HIGH_CONVICTION_SCORE_BUFFER = 0
 
+    def _confirm_momentum(self, latest):
+        """Use RSI only as an extreme veto; MACD already votes in the setup."""
+        rsi = float(latest["RSI"])
+        if rsi >= 75.0:
+            return MomentumResult(
+                score=-20,
+                reasons=("RSI extreme overbought: blocks new BUY entries",),
+            )
+        if rsi <= 25.0:
+            return MomentumResult(
+                score=20,
+                reasons=("RSI extreme oversold: blocks new SELL entries",),
+            )
+        return MomentumResult(
+            score=0,
+            reasons=("RSI is not at an opposing extreme",),
+        )
+
     @staticmethod
     def _eligibility_failures(
         direction,
@@ -52,6 +71,12 @@ class ProductionSignalPipeline(SignalPipeline):
 
         if not regime.allows(direction):
             failures.append("Higher timeframe conflicts with setup")
+
+        momentum_score = int(getattr(momentum, "score", 0))
+        if (direction == "BUY" and momentum_score < 0) or (
+            direction == "SELL" and momentum_score > 0
+        ):
+            failures.append("RSI extreme conflicts with setup")
 
         if (
             contextual_gate.enabled
@@ -75,6 +100,7 @@ class ProductionSignalPipeline(SignalPipeline):
         quality,
         contextual_gate,
         strict_direction=False,
+        latest=None,
     ):
         """Soften only a duplicated micro-trigger veto on approved aligned setups."""
 
@@ -112,13 +138,33 @@ class ProductionSignalPipeline(SignalPipeline):
             and regime.allows(direction)
         )
 
+        structural_trigger = (
+            direction == "BUY"
+            and structure.bos == "BULLISH BOS"
+        ) or (
+            direction == "SELL"
+            and structure.bos == "BEARISH BOS"
+        ) or (
+            direction == "BUY"
+            and structure.choch == "BULLISH CHoCH"
+        ) or (
+            direction == "SELL"
+            and structure.choch == "BEARISH CHoCH"
+        )
+        aligned_majority = (
+            direction in {"BUY", "SELL"}
+            and abs(setup.trend_score) >= 20
+            and structure.allows(direction)
+            and regime.allows(direction)
+        )
+
         effective_contextual_gate = contextual_gate
         if (
             contextual_gate.enabled
             and not contextual_gate.approved
             and contextual_gate.direction == direction
             and missing_trigger_only
-            and high_conviction
+            and (high_conviction or aligned_majority)
         ):
             effective_contextual_gate = replace(
                 contextual_gate,
@@ -131,9 +177,29 @@ class ProductionSignalPipeline(SignalPipeline):
                 ),
             )
 
-        return super()._final_decision(
+        if structural_trigger and aligned_majority:
+            effective_contextual_gate = replace(
+                contextual_gate,
+                enabled=False,
+                approved=True,
+                reasons=contextual_gate.reasons
+                + ("BOS/CHoCH is the directional entry trigger",),
+            )
+
+        effective_trigger = trigger
+        if structural_trigger and aligned_majority:
+            structural_score = 10 if direction == "BUY" else -10
+            if abs(trigger.candle_score) < 10:
+                effective_trigger = replace(
+                    trigger,
+                    candle_score=structural_score,
+                    reasons=trigger.reasons
+                    + ("BOS/CHoCH supplies the entry trigger",),
+                )
+
+        decision = super()._final_decision(
             setup=setup,
-            trigger=trigger,
+            trigger=effective_trigger,
             momentum=momentum,
             volume=volume,
             structure=structure,
@@ -141,6 +207,30 @@ class ProductionSignalPipeline(SignalPipeline):
             quality=quality,
             contextual_gate=effective_contextual_gate,
             strict_direction=strict_direction,
+        )
+
+        if decision.signal not in {"BUY", "SELL"} or latest is None:
+            return decision
+
+        rsi = float(latest["RSI"])
+        close = float(latest["close"])
+        upper = float(latest["BB_UPPER"])
+        lower = float(latest["BB_LOWER"])
+        extreme_against = (
+            decision.signal == "BUY"
+            and (rsi >= 75.0 or (close >= upper and rsi >= 70.0))
+        ) or (
+            decision.signal == "SELL"
+            and (rsi <= 25.0 or (close <= lower and rsi <= 30.0))
+        )
+        if not extreme_against:
+            return decision
+
+        return replace(
+            decision,
+            signal="HOLD",
+            reasons=decision.reasons
+            + ("Rejected: RSI/Bollinger extreme conflicts with entry",),
         )
 
 
