@@ -182,6 +182,46 @@ class SignalEngine:
         )
         return engine
 
+    @staticmethod
+    def _fresh_mt5_frame(frame):
+        attrs = getattr(frame, "attrs", {}) or {}
+        return bool(
+            frame is not None
+            and attrs.get("source") == "MT5"
+            and attrs.get("fresh") is True
+        )
+
+    def _should_delegate_fresh_mt5_analysis(self, data, higher_tf):
+        return bool(
+            not isinstance(self.pipeline, ProductionSignalPipeline)
+            and self._fresh_mt5_frame(data)
+            and self._fresh_mt5_frame(higher_tf)
+        )
+
+    def _fresh_mt5_production_analysis(self, data, symbol, higher_tf):
+        """Keep broker-native analysis identical to the trading engine policy.
+
+        Telegram historically constructed ``SignalEngine()`` directly, which
+        selected the legacy research pipeline even while market data came from
+        the live MT5 demo feed.  Fresh broker-native frames are now routed to
+        the same production signal engine and regime router used by
+        ``TradingApplication``.  Synthetic, cached, Yahoo and legacy research
+        calls continue using the compatibility pipeline.
+        """
+        from config.settings import HIGHER_TIMEFRAME, TRADING_TIMEFRAME
+        from strategy.regime_router import RegimeStrategyRouter
+
+        production_engine = SignalEngine.production(
+            higher_timeframe=HIGHER_TIMEFRAME,
+            lower_timeframe=TRADING_TIMEFRAME,
+        )
+        router = RegimeStrategyRouter(
+            production_engine,
+            higher_timeframe=HIGHER_TIMEFRAME,
+            lower_timeframe=TRADING_TIMEFRAME,
+        )
+        return router.generate_analysis(data, symbol, higher_tf)
+
     def generate_signal(self, data, symbol, higher_tf=None):
         """Return the stable strategy dictionary contract."""
 
@@ -193,6 +233,9 @@ class SignalEngine:
 
     def generate_analysis(self, data, symbol, higher_tf=None):
         """Return the strategy decision plus an explainable AI report."""
+
+        if self._should_delegate_fresh_mt5_analysis(data, higher_tf):
+            return self._fresh_mt5_production_analysis(data, symbol, higher_tf)
 
         result = self.generate_signal(data, symbol, higher_tf)
 
