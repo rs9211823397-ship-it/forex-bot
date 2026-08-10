@@ -1,10 +1,12 @@
 from data.market_data import MarketData
 from strategy.signal_engine import SignalEngine
 from strategy.regime_router import RegimeStrategyRouter
+from strategy.setup_detector import SetupDetector
 from backtesting.backtest_engine import BacktestEngine
 from backtesting.performance import PerformanceReport
 from indicators.technical import TechnicalIndicators
 from config.instruments import get_instrument_spec
+from validation.workflow import write_signal_ledger
 
 
 LOWER_TIMEFRAME = "15m"
@@ -21,6 +23,7 @@ engine = RegimeStrategyRouter(
     lower_timeframe=LOWER_TIMEFRAME,
 )
 indicators = TechnicalIndicators()
+primary_detector = SetupDetector()
 
 symbol = "ETH-USD"
 
@@ -31,6 +34,7 @@ data = indicators.add_indicators(data).dropna()
 print("Calculating causal production signals...")
 
 signals = []
+signal_ledger = []
 for i in range(len(data)):
     if i % 500 == 0:
         print(f"Processed {i}/{len(data)} candles")
@@ -41,8 +45,24 @@ for i in range(len(data)):
     df = data.iloc[max(0, i - 250) : i + 1].copy()
     result = engine.generate_signal(df, symbol, higher_tf)
     signals.append(result)
+    decision_time = (
+        data.iloc[i]["close_time"]
+        if "close_time" in data.columns
+        else data.index[i]
+    )
+    primary_setup = primary_detector.detect(data.iloc[i])
+    signal_ledger.append({
+        "timestamp": decision_time,
+        "symbol": symbol,
+        "signal": primary_setup.direction or "HOLD",
+    })
 
 print("Signals calculated:", len(signals))
+ledger_path = write_signal_ledger(
+    signal_ledger,
+    "outputs/validation/aaqts_primary_signals.csv",
+)
+print("AAQTS signal ledger:", ledger_path)
 
 
 def run_strategy(index):
