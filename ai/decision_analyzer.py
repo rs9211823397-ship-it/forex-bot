@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+from config.settings import MIN_TRADE_QUALITY
 
 
 class AIDecisionAnalyzer:
@@ -123,6 +126,7 @@ class AIDecisionAnalyzer:
             "blocks",
             "conflicts",
             "No directional setup",
+            "Trade Quality:",
             "Contextual INVALID_LOCATION",
             "NO_CONTEXTUAL_TRIGGER",
             "Regime confidence below",
@@ -166,10 +170,9 @@ class AIDecisionAnalyzer:
         if not text:
             return False
 
-        # Trade quality is descriptive on its own; it becomes a blocker only
-        # when the strategy explicitly reports that the threshold was not met.
         if text.startswith("trade quality:"):
-            return False
+            match = re.search(r"trade quality:\s*(\d+(?:\.\d+)?)\s*/\s*100", text)
+            return bool(match and float(match.group(1)) < float(MIN_TRADE_QUALITY))
 
         blocker_markers = (
             "rejected:",
