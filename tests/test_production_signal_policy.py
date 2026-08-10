@@ -119,13 +119,30 @@ def test_missing_exact_context_trigger_is_soft_for_high_conviction_aligned_setup
     assert decision.signal == "BUY"
 
 
-def test_invalid_location_remains_hard_block_even_when_quality_is_high():
+def test_invalid_location_is_soft_when_majority_htf_and_structure_align():
     decision = _high_conviction_decision(
         (
             "SETUP_VALID",
             "HTF_ALIGNED",
             "STRUCTURE_ALIGNED",
             "INVALID_LOCATION",
+        )
+    )
+    assert decision.signal == "BUY"
+    assert any(
+        "Contextual trigger/location is soft evidence" in reason
+        for reason in decision.reasons
+    )
+
+
+def test_contextual_htf_mismatch_remains_hard_block():
+    decision = _high_conviction_decision(
+        (
+            "SETUP_VALID",
+            "HTF_ALIGNED",
+            "STRUCTURE_ALIGNED",
+            "INVALID_LOCATION",
+            "HTF_DIRECTION_MISMATCH",
         )
     )
     assert decision.signal == "HOLD"

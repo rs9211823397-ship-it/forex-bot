@@ -23,12 +23,11 @@ class ProductionSignalPipeline(SignalPipeline):
     legacy candle confirmation, and contextual trigger evidence contribute to
     ranking/quality without each receiving an independent veto.
 
-    Context remains fail-closed for wrong HTF/structure/location. The only
-    contextual case allowed to become soft evidence is a fully aligned setup in
-    a valid location where the *only* missing item is an exact contextual candle
-    trigger and the setup is already high-conviction by independent evidence.
-    This prevents a good trend setup being rejected twice for the same missing
-    micro-trigger while still refusing premium BUYs / discount SELLs.
+    Context remains fail-closed for wrong HTF/structure, expired setups, and
+    opposing RSI/Bollinger extremes. Missing micro-triggers and imperfect
+    locations become cautions only when the 2-of-3 trend vote, higher timeframe,
+    and market structure already agree. This prevents the same aligned setup
+    being rejected twice while retaining independent directional safety gates.
     """
 
     HIGH_CONVICTION_QUALITY = MIN_TRADE_QUALITY
@@ -116,13 +115,14 @@ class ProductionSignalPipeline(SignalPipeline):
 
         output = getattr(contextual_gate, "output", None)
         reason_codes = set(getattr(output, "reason_codes", ()) or ())
-        missing_trigger_only = (
-            "NO_CONTEXTUAL_TRIGGER" in reason_codes
-            and "LOCATION_VALID" in reason_codes
-            and "HTF_ALIGNED" in reason_codes
+        contextual_caution_only = (
+            "HTF_ALIGNED" in reason_codes
             and "STRUCTURE_ALIGNED" in reason_codes
-            and not {
+            and {
+                "NO_CONTEXTUAL_TRIGGER",
                 "INVALID_LOCATION",
+            }.intersection(reason_codes)
+            and not {
                 "HTF_DIRECTION_MISMATCH",
                 "STRUCTURE_DIRECTION_MISMATCH",
                 "SETUP_EXPIRED",
@@ -163,7 +163,7 @@ class ProductionSignalPipeline(SignalPipeline):
             contextual_gate.enabled
             and not contextual_gate.approved
             and contextual_gate.direction == direction
-            and missing_trigger_only
+            and contextual_caution_only
             and (high_conviction or aligned_majority)
         ):
             effective_contextual_gate = replace(
@@ -172,8 +172,9 @@ class ProductionSignalPipeline(SignalPipeline):
                 approved=True,
                 reasons=contextual_gate.reasons
                 + (
-                    "Contextual trigger is soft evidence: high-conviction setup "
-                    "already has aligned HTF, structure, and valid location",
+                    "Contextual trigger/location is soft evidence because the "
+                    "majority setup already has aligned HTF and structure",
+                    "Contextual trigger is soft evidence; location is a caution",
                 ),
             )
 
