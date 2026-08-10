@@ -49,9 +49,7 @@ def timeframe_delta(value):
     normalized = normalize_timeframe(value)
     count = int(normalized[:-1])
     unit = normalized[-1]
-    return pd.Timedelta(
-        seconds=count * _UNIT_SECONDS[unit]
-    )
+    return pd.Timedelta(count * _UNIT_SECONDS[unit], unit="s")
 
 
 def normalize_timestamp(value, name="timestamp"):

@@ -47,15 +47,22 @@ class MarketData:
         self.cache_downloads = bool(cache_downloads)
         self._resolved_mt5_symbols = {}
         self.execution_mode = str(execution_mode if execution_mode is not None else os.getenv("AAQTS_EXECUTION_MODE", "PAPER")).upper().strip()
-        self.provider = str(provider if provider is not None else os.getenv("AAQTS_MARKET_DATA_PROVIDER", "MT5" if self.execution_mode == "MT5_DEMO" else "YAHOO")).upper().strip()
+        self.broker_mode = self.execution_mode in {"MT5_DEMO", "MT5_LIVE"}
+        self.provider = str(provider if provider is not None else os.getenv("AAQTS_MARKET_DATA_PROVIDER", "MT5" if self.broker_mode else "YAHOO")).upper().strip()
         if self.provider not in {"MT5", "YAHOO"}:
             raise ValueError("AAQTS_MARKET_DATA_PROVIDER must be MT5 or YAHOO")
-        if self.execution_mode == "MT5_DEMO" and self.provider != "MT5":
-            raise ValueError("MT5_DEMO requires AAQTS_MARKET_DATA_PROVIDER=MT5")
+        if self.broker_mode and self.provider != "MT5":
+            raise ValueError(
+                f"{self.execution_mode} requires AAQTS_MARKET_DATA_PROVIDER=MT5"
+            )
         if allow_cache_fallback is None:
-            allow_cache_fallback = self.execution_mode != "MT5_DEMO"
+            allow_cache_fallback = not self.broker_mode
+        if self.broker_mode and allow_cache_fallback:
+            raise ValueError(
+                f"{self.execution_mode} forbids cached market-data fallback"
+            )
         self.allow_cache_fallback = bool(allow_cache_fallback)
-        default_stale = "1.5" if self.execution_mode == "MT5_DEMO" else "2.5"
+        default_stale = "1.5" if self.broker_mode else "2.5"
         self.max_stale_bars = float(max_stale_bars if max_stale_bars is not None else os.getenv("AAQTS_MARKET_DATA_MAX_STALE_BARS", default_stale))
         if self.max_stale_bars <= 0:
             raise ValueError("AAQTS_MARKET_DATA_MAX_STALE_BARS must be positive")
@@ -254,7 +261,7 @@ class MarketData:
             if use_cache:
                 return self._cached_or_raise(symbol, timeframe, as_of=as_of)
             raise MarketDataError(f"No completed candles found for {symbol}")
-        if self.execution_mode == "MT5_DEMO":
+        if self.broker_mode:
             self._assert_fresh(prepared, symbol, timeframe)
         if self.cache_downloads:
             self.history.save(prepared, symbol, timeframe, source=self.provider.lower())

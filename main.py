@@ -20,10 +20,12 @@ from config.settings import (
     EXECUTION_MODE,
     HIGHER_TIMEFRAME,
     MAX_CONSECUTIVE_LOSSES,
+    MAX_DAILY_TRADES,
     MAX_DAILY_LOSS_PERCENT,
     MAX_EQUITY_DRAWDOWN_PERCENT,
     MAX_PORTFOLIO_RISK_PERCENT,
     MAX_WEEKLY_LOSS_PERCENT,
+    MIN_REGIME_CONFIDENCE,
     MT5_MAX_OPEN_POSITIONS,
     MT5_SYMBOL_MAP,
     NEWS_BLOCKED_IMPACTS,
@@ -84,6 +86,7 @@ class TradingApplication:
             self.signal_engine,
             higher_timeframe=HIGHER_TIMEFRAME,
             lower_timeframe=TRADING_TIMEFRAME,
+            minimum_regime_confidence=MIN_REGIME_CONFIDENCE,
         )
         self.trade_manager = TradeManager()
         self.risk_manager = RiskManager()
@@ -93,6 +96,7 @@ class TradingApplication:
                 max_weekly_loss_percent=MAX_WEEKLY_LOSS_PERCENT,
                 max_equity_drawdown_percent=MAX_EQUITY_DRAWDOWN_PERCENT,
                 max_consecutive_losses=MAX_CONSECUTIVE_LOSSES,
+                max_daily_trades=MAX_DAILY_TRADES,
                 max_open_trades=MT5_MAX_OPEN_POSITIONS,
                 max_portfolio_risk_percent=MAX_PORTFOLIO_RISK_PERCENT,
                 max_abs_correlation=PORTFOLIO_MAX_ABS_CORRELATION,
@@ -258,7 +262,7 @@ class TradingApplication:
         return self.execution.account_snapshot().equity
 
     def _risk_context(self, decision_time: datetime) -> RiskContext:
-        if self.execution.mode == "MT5_DEMO":
+        if self.execution.mode in {"MT5_DEMO", "MT5_LIVE"}:
             return self._mt5_risk_context(decision_time)
         positions = []
         for trade in self.paper_trader.open_trades:
@@ -336,7 +340,7 @@ class TradingApplication:
         )
 
     def _process_symbol(self, symbol, data, higher_tf) -> float:
-        if self.execution.mode == "MT5_DEMO":
+        if self.execution.mode in {"MT5_DEMO", "MT5_LIVE"}:
             if not self._frame_is_demo_safe(data):
                 raise RuntimeError(f"Unsafe/stale lower-timeframe data blocked for {symbol}")
             if not self._frame_is_demo_safe(higher_tf):
@@ -437,19 +441,20 @@ class TradingApplication:
         observed_at = datetime.now(timezone.utc)
         self.latest_correlations = self._build_correlations(lower_frames, observed_at)
         prices = {}
-        expected = set(MT5_SYMBOL_MAP) if self.execution.mode == "MT5_DEMO" else set(lower_frames)
+        broker_mode = self.execution.mode in {"MT5_DEMO", "MT5_LIVE"}
+        expected = set(MT5_SYMBOL_MAP) if broker_mode else set(lower_frames)
         missing_lower = sorted(expected.difference(lower_frames))
         missing_higher = sorted(expected.difference(higher_frames))
-        if self.execution.mode == "MT5_DEMO" and (missing_lower or missing_higher):
+        if broker_mode and (missing_lower or missing_higher):
             logger.error(
-                "Demo data health degraded; affected symbols will fail closed | lower=%s higher=%s",
+                "Broker data health degraded; affected symbols will fail closed | lower=%s higher=%s",
                 missing_lower,
                 missing_higher,
             )
         for symbol, data in lower_frames.items():
             if self.controller.status() != "RUNNING":
                 break
-            if self.execution.mode == "MT5_DEMO" and symbol not in higher_frames:
+            if broker_mode and symbol not in higher_frames:
                 logger.error("Skipping %s: required higher-timeframe data unavailable", symbol)
                 continue
             try:
