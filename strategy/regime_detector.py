@@ -90,7 +90,10 @@ class MarketRegimeDetector:
 
         *,
 
-        adx_trend_threshold: float = 25.0,
+        # Keep a real trend-strength gate, but halve the five-point gap above
+        # the range threshold.  The previous 25/20 split classified many
+        # developing trends as RANGE even after directional alignment formed.
+        adx_trend_threshold: float = 22.5,
 
         adx_range_threshold: float = 20.0,
 
@@ -625,7 +628,7 @@ class MarketRegimeDetector:
 
         elif (
             adx >= self.adx_trend_threshold
-            and trend_score >= 60
+            and trend_score >= 55
             and direction == "BULLISH"
         ):
 
@@ -635,7 +638,7 @@ class MarketRegimeDetector:
 
         elif (
             adx >= self.adx_trend_threshold
-            and trend_score >= 60
+            and trend_score >= 55
             and direction == "BEARISH"
         ):
 

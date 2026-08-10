@@ -208,20 +208,28 @@ class RegimeStrategyRouter:
         previous_close = float(previous["close"])
         previous_lower = float(previous["BB_LOWER"])
         previous_upper = float(previous["BB_UPPER"])
+        atr = abs(float(latest["ATR"]))
+
+        # Relax entry strictness without accepting an unconfirmed mid-range
+        # signal.  A prior candle may finish within 0.25 ATR of the band and
+        # RSI only needs to reach 45/55 (half the old distance from neutral).
+        # RSI must still reverse and the completed candle must close back
+        # inside the band.
+        band_tolerance = atr * 0.25
 
         # The completed close back inside the band plus RSI recovery already
         # confirms a range re-entry. Candle colour measures the same recovery
         # again and used to reject otherwise valid reversions.
         bullish_reentry = (
-            previous_close < previous_lower
+            previous_close <= previous_lower + band_tolerance
             and close >= lower
-            and rsi <= 40.0
+            and rsi <= 45.0
             and rsi > previous_rsi
         )
         bearish_reentry = (
-            previous_close > previous_upper
+            previous_close >= previous_upper - band_tolerance
             and close <= upper
-            and rsi >= 60.0
+            and rsi >= 55.0
             and rsi < previous_rsi
         )
         trade_confidence = int(min(85.0, self._finite_number(regime.get("confidence"), 0.0)))
