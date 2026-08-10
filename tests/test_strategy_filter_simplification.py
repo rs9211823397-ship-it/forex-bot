@@ -64,7 +64,7 @@ def test_production_allows_quality_approved_setup_without_duplicate_micro_trigge
     assert any("Contextual trigger is soft evidence" in reason for reason in decision.reasons)
 
 
-def test_production_keeps_wrong_location_as_hard_veto():
+def test_production_treats_wrong_location_as_caution_when_alignment_is_independent():
     pipeline = ProductionSignalPipeline(trade_quality=TradeQuality())
     contextual_output = TriggerOutput(
         trigger="NONE",
@@ -110,5 +110,8 @@ def test_production_keeps_wrong_location_as_hard_veto():
         strict_direction=True,
     )
 
-    assert decision.signal == "HOLD"
-    assert "Rejected: Contextual trigger rejected setup" in decision.reasons
+    assert decision.signal == "BUY"
+    assert any(
+        "location is a caution" in reason
+        for reason in decision.reasons
+    )
