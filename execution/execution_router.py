@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -23,6 +24,7 @@ from config.settings import (
     MT5_SYMBOL_MAP,
     MT5_SYMBOL_SUFFIX,
     MT5_TERMINAL_PATH,
+    MT5_USE_PREAUTHENTICATED_SESSION,
 )
 from config.symbols import executable_symbol_map
 from execution.live_mt5_executor import LiveMT5Executor
@@ -35,6 +37,7 @@ from execution.mt5_executor import (
 )
 from execution.mt5_trade_audit import MT5TradeAudit
 from execution.position_manager import PositionManager
+from runtime_state import RUNTIME_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -101,6 +104,7 @@ class ExecutionRouter:
         self._isolate_strategy_risk = _strategy_risk_isolation_enabled(self.mode)
         self._strategy_risk_anchor_time: datetime | None = None
         self._strategy_risk_anchor_balance: float | None = None
+        self._position_lock = threading.RLock()
 
         if self.mode == "MT5_LIVE":
             acknowledgement = os.getenv("AAQTS_LIVE_TRADING_ACK", "").strip()
@@ -116,6 +120,17 @@ class ExecutionRouter:
 
         self.mt5_executor = mt5_executor
         if self.mode in BROKER_MODES and self.mt5_executor is None:
+            if self.mode == "MT5_DEMO" and not MT5_EXPECTED_LOGIN:
+                raise ExecutionError(
+                    "MT5_DEMO requires a pinned expected account login"
+                )
+            credential_fields = (bool(MT5_LOGIN), bool(MT5_PASSWORD), bool(MT5_SERVER))
+            if not MT5_USE_PREAUTHENTICATED_SESSION and any(credential_fields) and not all(
+                credential_fields
+            ):
+                raise ExecutionError(
+                    "MT5 credentials must provide LOGIN, PASSWORD, and SERVER together"
+                )
             config = ExecutionConfig(
                 terminal_path=MT5_TERMINAL_PATH,
                 login=int(MT5_LOGIN) if MT5_LOGIN else None,
@@ -125,6 +140,7 @@ class ExecutionRouter:
                 max_open_positions=MT5_MAX_OPEN_POSITIONS,
                 max_tick_age_seconds=MT5_MAX_TICK_AGE_SECONDS,
                 max_spread_stop_ratio=MT5_MAX_SPREAD_STOP_RATIO,
+                fill_audit_path=str(RUNTIME_DIR / "mt5_fill_audit.jsonl"),
             )
             self.mt5_executor = (
                 LiveMT5Executor(config) if self.mode == "MT5_LIVE" else MT5Executor(config)
@@ -166,7 +182,8 @@ class ExecutionRouter:
         assert self.position_manager is not None
         self.mt5_executor.connect()
         self._capture_strategy_risk_anchor()
-        recovered = self.position_manager.recover_positions(reset_registry=True)
+        with self._position_lock:
+            recovered = self.position_manager.recover_positions(reset_registry=True)
         if self.trade_audit is not None:
             self.trade_audit.sync_closed()
         return recovered
@@ -277,10 +294,12 @@ class ExecutionRouter:
             comment=f"AAQTS {source_symbol}",
             reference_entry=risk_plan["entry"],
             risk_amount=approved_risk_amount,
+            source_symbol=source_symbol,
         )
         managed = None
         if self.position_manager is not None:
-            managed = self.position_manager.register_execution_result(result)
+            with self._position_lock:
+                managed = self.position_manager.register_execution_result(result)
         if self.trade_audit is not None:
             self.trade_audit.record_entry(
                 source_symbol=source_symbol,
@@ -301,7 +320,10 @@ class ExecutionRouter:
             for source, atr in atr_by_source_symbol.items()
             if source in management_map
         }
-        report = self.position_manager.manage_positions(broker_atr, force_sync=False)
+        with self._position_lock:
+            report = self.position_manager.manage_positions(
+                broker_atr, force_sync=False
+            )
         if self.trade_audit is not None:
             try:
                 self.trade_audit.sync_closed()
@@ -361,7 +383,13 @@ class ExecutionRouter:
         )
         isolated_balance = self._strategy_risk_anchor_balance + realized
         isolated_equity = isolated_balance + floating
-        return AccountSnapshot(balance=isolated_balance, equity=isolated_equity)
+        return AccountSnapshot(
+            balance=isolated_balance,
+            equity=isolated_equity,
+            login=actual.login,
+            server=actual.server,
+            trade_mode=actual.trade_mode,
+        )
 
     def closed_position_results(self, start_time: datetime, end_time: datetime) -> list[ClosedPositionResult]:
         if self.mode not in BROKER_MODES or self.mt5_executor is None:

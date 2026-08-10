@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import yfinance as yf
 
+from mt5_ipc import serialized_mt5_call
+
 from config.settings import (
     LOOKBACK_DAYS,
     MT5_SYMBOL_MAP,
@@ -144,6 +146,7 @@ class MarketData:
             + ". Set AAQTS_MT5_SYMBOL_SUFFIX explicitly."
         )
 
+    @serialized_mt5_call
     def _download_mt5(self, symbol, interval):
         configured_symbol = MT5_SYMBOL_MAP.get(symbol)
         if not configured_symbol:

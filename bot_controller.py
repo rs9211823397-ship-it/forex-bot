@@ -19,6 +19,9 @@ class BotController:
         self.running = False
         self.paused = False
         self._thread: threading.Thread | None = None
+        self.management_loop: BotLoop | None = None
+        self.management_callback: Callable[[], None] | None = None
+        self._management_thread: threading.Thread | None = None
 
     @classmethod
     def configured(
@@ -26,11 +29,15 @@ class BotController:
         bot_loop: BotLoop,
         execution_router: ExecutionRouter,
         callback: Callable[[], None],
+        management_loop: BotLoop | None = None,
+        management_callback: Callable[[], None] | None = None,
     ) -> "BotController":
         controller = cls()
         controller.bot_loop = bot_loop
         controller.execution_router = execution_router
         controller.callback = callback
+        controller.management_loop = management_loop
+        controller.management_callback = management_callback
         return controller
 
     def start_bot(self):
@@ -49,6 +56,14 @@ class BotController:
                 name="AAQTS-BotLoop",
             )
             self._thread.start()
+        if self.management_loop is not None and self.management_callback is not None:
+            self._management_thread = threading.Thread(
+                target=self.management_loop.start,
+                args=(self.management_callback,),
+                daemon=True,
+                name="AAQTS-PositionManagement",
+            )
+            self._management_thread.start()
         logger.info("AAQTS Bot started successfully")
         return "BOT STARTED"
 
@@ -58,11 +73,18 @@ class BotController:
         logger.info("Stopping AAQTS Bot")
         if self.bot_loop is not None:
             self.bot_loop.stop()
+        if self.management_loop is not None:
+            self.management_loop.stop()
         if self._thread is not None:
             self._thread.join(timeout=10)
             if self._thread.is_alive():
                 logger.error("Bot loop thread did not stop within timeout")
             self._thread = None
+        if self._management_thread is not None:
+            self._management_thread.join(timeout=10)
+            if self._management_thread.is_alive():
+                logger.error("Position-management thread did not stop within timeout")
+            self._management_thread = None
         if self.execution_router is not None:
             self.execution_router.shutdown()
         self.running = False
@@ -105,11 +127,20 @@ class BotController:
         finally:
             if self.bot_loop is not None:
                 self.bot_loop.stop()
+            if self.management_loop is not None:
+                self.management_loop.stop()
             if self._thread is not None:
                 self._thread.join(timeout=10)
                 if self._thread.is_alive():
                     logger.error("Bot loop thread did not stop within emergency timeout")
                 self._thread = None
+            if self._management_thread is not None:
+                self._management_thread.join(timeout=10)
+                if self._management_thread.is_alive():
+                    logger.error(
+                        "Position-management thread did not stop within emergency timeout"
+                    )
+                self._management_thread = None
             if self.execution_router is not None:
                 self.execution_router.shutdown()
             self.running = False
@@ -126,6 +157,12 @@ class BotController:
         # BotLoop.active here creates a startup race before the new thread gets
         # its first scheduling slice.
         if self._thread is not None and not self._thread.is_alive():
+            return "STOPPED"
+        # In broker modes this loop owns break-even, trailing-stop and partial
+        # close maintenance. A dead management thread must fail the worker
+        # closed instead of leaving Telegram to report a healthy engine while
+        # open positions are no longer being supervised.
+        if self._management_thread is not None and not self._management_thread.is_alive():
             return "STOPPED"
         if self.paused:
             return "PAUSED"

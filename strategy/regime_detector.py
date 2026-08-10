@@ -6,6 +6,11 @@ from typing import Any
 import math
 import pandas as pd
 
+from config.settings import (
+    REGIME_ADX_RANGE_THRESHOLD,
+    REGIME_ADX_TREND_THRESHOLD,
+)
+
 
 ###############################################################################
 # REGIME CONSTANTS
@@ -90,12 +95,9 @@ class MarketRegimeDetector:
 
         *,
 
-        # Keep a real trend-strength gate, but halve the five-point gap above
-        # the range threshold.  The previous 25/20 split classified many
-        # developing trends as RANGE even after directional alignment formed.
-        adx_trend_threshold: float = 22.5,
+        adx_trend_threshold: float | None = None,
 
-        adx_range_threshold: float = 20.0,
+        adx_range_threshold: float | None = None,
 
         lookback: int = 100,
 
@@ -105,9 +107,29 @@ class MarketRegimeDetector:
 
     ):
 
-        self.adx_trend_threshold = float(adx_trend_threshold)
+        self.adx_trend_threshold = float(
+            REGIME_ADX_TREND_THRESHOLD
+            if adx_trend_threshold is None
+            else adx_trend_threshold
+        )
 
-        self.adx_range_threshold = float(adx_range_threshold)
+        self.adx_range_threshold = float(
+            REGIME_ADX_RANGE_THRESHOLD
+            if adx_range_threshold is None
+            else adx_range_threshold
+        )
+
+        if not all(
+            math.isfinite(value) and 0.0 <= value <= 100.0
+            for value in (
+                self.adx_trend_threshold,
+                self.adx_range_threshold,
+            )
+        ):
+            raise ValueError("ADX regime thresholds must be finite and between 0 and 100")
+
+        if self.adx_range_threshold > self.adx_trend_threshold:
+            raise ValueError("ADX range threshold cannot exceed trend threshold")
 
         self.lookback = int(lookback)
 

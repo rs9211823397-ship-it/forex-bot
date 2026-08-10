@@ -168,6 +168,7 @@ def check_mt5_demo_broker() -> None:
         MT5_SERVER,
         MT5_SYMBOL_MAP,
         MT5_TERMINAL_PATH,
+        MT5_USE_PREAUTHENTICATED_SESSION,
     )
 
     if EXECUTION_MODE != "MT5_DEMO":
@@ -175,6 +176,18 @@ def check_mt5_demo_broker() -> None:
     terminal_path = Path(MT5_TERMINAL_PATH)
     if not terminal_path.is_file():
         fail(f"MT5 terminal was not found: {terminal_path}")
+    if not MT5_EXPECTED_LOGIN:
+        fail(
+            "MT5_DEMO requires a pinned expected login; run "
+            "scripts/pin_mt5_account.py or save-demo-credentials.ps1"
+        )
+    if not MT5_USE_PREAUTHENTICATED_SESSION and not (
+        MT5_LOGIN and MT5_PASSWORD and MT5_SERVER
+    ):
+        fail(
+            "MT5_DEMO requires complete LOGIN/PASSWORD/SERVER credentials or "
+            "AAQTS_MT5_USE_PREAUTHENTICATED_SESSION=true"
+        )
 
     try:
         from execution.mt5_executor import ExecutionConfig, MT5Executor
@@ -237,7 +250,8 @@ def check_mt5_demo_broker() -> None:
                 "[preflight] MT5 demo broker OK "
                 f"(balance={account.balance:.2f}, equity={account.equity:.2f}, "
                 f"symbols={len(MT5_SYMBOL_MAP)}, quoted={quoted}, "
-                f"candle_ready={candle_ready})"
+                f"candle_ready={candle_ready}, "
+                f"authentication={'terminal-session' if MT5_USE_PREAUTHENTICATED_SESSION else 'explicit'})"
             )
         finally:
             executor.shutdown()

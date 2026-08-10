@@ -61,6 +61,7 @@ from runtime_state import (
     read_runtime_state,
     runtime_state_file,
 )
+from mt5_ipc import serialized_mt5_call
 from telegram_bot.alert_monitor import (
     TradeAlertMonitor,
     is_subscribed,
@@ -218,6 +219,28 @@ def _home_text(role: TelegramRole) -> str:
     status, state = runtime_status()
     worker_states = read_all_runtime_states()
     fresh_workers = sum(heartbeat_is_fresh(item) for item in worker_states)
+    telemetry = state.get("decision_telemetry") or {}
+    cycle_stages = telemetry.get("cycle_stages") or {}
+    cycle_reasons = telemetry.get("cycle_reasons") or {}
+    diagnostic_lines = []
+    if cycle_stages:
+        diagnostic_lines.append(
+            "Last scan: "
+            f"{int(cycle_stages.get('STRATEGY_ACTIONABLE', 0))} actionable · "
+            f"{int(cycle_stages.get('STRATEGY_HOLD', 0))} held · "
+            f"{int(cycle_stages.get('PORTFOLIO_RISK_BLOCKED', 0))} risk-blocked · "
+            f"{int(cycle_stages.get('EXECUTED', 0))} executed"
+        )
+    if cycle_reasons:
+        top_reason = next(iter(cycle_reasons))
+        diagnostic_lines.append(
+            f"Top gate: {top_reason.split(':', 1)[-1]}"
+        )
+    diagnostic_text = (
+        "\n" + "\n".join(diagnostic_lines) + "\n"
+        if diagnostic_lines
+        else ""
+    )
     if SINGLE_ACCOUNT_MODE:
         if accounts:
             account_line = (
@@ -239,6 +262,7 @@ def _home_text(role: TelegramRole) -> str:
             f"Engine: {status}\n"
             f"Worker: {'CONNECTED' if fresh_workers else 'OFFLINE'}\n"
             f"Execution mode: {state.get('execution_mode', EXECUTION_MODE)}\n"
+            f"{diagnostic_text}"
             "Live execution: LOCKED 🔒\n"
             f"Role: {role.name.replace('_', ' ')}"
         )
@@ -285,6 +309,7 @@ def runtime_status() -> tuple[str, dict[str, Any]]:
     return "STOPPED (no recent heartbeat)", state
 
 
+@serialized_mt5_call
 def mt5_snapshot() -> dict[str, Any]:
     """Read live account and AAQTS-managed positions directly from MT5."""
     try:

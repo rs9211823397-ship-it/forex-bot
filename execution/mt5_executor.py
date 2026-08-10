@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from math import floor, isfinite
 from typing import Any, Optional
 
+from execution.fill_audit import FillAudit
+from mt5_ipc import serialized_mt5_call
+
 
 logger = logging.getLogger(__name__)
 AAQTS_MAGIC = 20260730
@@ -38,6 +41,7 @@ class ExecutionConfig:
     max_tick_age_seconds: float = 15.0
     max_spread_stop_ratio: float = 0.25
     order_send_price_retries: int = 1
+    fill_audit_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isfinite(float(self.max_tick_age_seconds)) or self.max_tick_age_seconds <= 0:
@@ -60,12 +64,16 @@ class TradeResult:
     order: Optional[int] = None
     deal: Optional[int] = None
     position: Optional[int] = None
+    average_fill_price: Optional[float] = None
 
 
 @dataclass(frozen=True)
 class AccountSnapshot:
     balance: float
     equity: float
+    login: Optional[int] = None
+    server: str = ""
+    trade_mode: Optional[int] = None
 
     def __post_init__(self) -> None:
         for field_name in ("balance", "equity"):
@@ -73,6 +81,11 @@ class AccountSnapshot:
             if not isfinite(value) or value <= 0:
                 raise ExecutionError(f"MT5 account {field_name} must be finite and positive")
             object.__setattr__(self, field_name, value)
+        if self.login is not None:
+            object.__setattr__(self, "login", int(self.login))
+        object.__setattr__(self, "server", str(self.server).strip())
+        if self.trade_mode is not None:
+            object.__setattr__(self, "trade_mode", int(self.trade_mode))
 
 
 @dataclass(frozen=True)
@@ -106,7 +119,9 @@ class MT5Executor:
         self.mt5 = adapter
         self.connected = False
         self.accept_new_trades = True
+        self.fill_audit = FillAudit(self.config.fill_audit_path) if self.config.fill_audit_path else None
 
+    @serialized_mt5_call
     def connect(self) -> bool:
         kwargs = {}
         if self.config.terminal_path:
@@ -148,6 +163,7 @@ class MT5Executor:
             raise ExecutionError("Trading or expert trading is disabled on the account")
         return True
 
+    @serialized_mt5_call
     def shutdown(self) -> None:
         if self.connected:
             self.mt5.shutdown()
@@ -159,6 +175,7 @@ class MT5Executor:
     def resume(self) -> None:
         self.accept_new_trades = True
 
+    @serialized_mt5_call
     def positions(self, symbol: Optional[str] = None, managed_only: bool = True) -> list[Any]:
         self._ensure_connected()
         raw = self.mt5.positions_get(symbol=symbol) if symbol else self.mt5.positions_get()
@@ -172,6 +189,7 @@ class MT5Executor:
     def recover_positions(self) -> list[Any]:
         return self.positions(managed_only=True)
 
+    @serialized_mt5_call
     def account_snapshot(self) -> AccountSnapshot:
         self._ensure_connected()
         account = self.mt5.account_info()
@@ -180,8 +198,12 @@ class MT5Executor:
         return AccountSnapshot(
             balance=getattr(account, "balance", 0.0),
             equity=getattr(account, "equity", 0.0),
+            login=getattr(account, "login", None),
+            server=getattr(account, "server", ""),
+            trade_mode=getattr(account, "trade_mode", None),
         )
 
+    @serialized_mt5_call
     def closed_position_results(self, start_time: datetime, end_time: datetime) -> list[ClosedPositionResult]:
         self._ensure_connected()
         start = self._as_utc(start_time, "start_time")
@@ -224,6 +246,7 @@ class MT5Executor:
             return "SELL"
         raise ExecutionError("MT5 position has an unsupported direction")
 
+    @serialized_mt5_call
     def remaining_loss_at_stop(self, position: Any) -> float:
         self._ensure_connected()
         side = self.position_side(position)
@@ -243,6 +266,7 @@ class MT5Executor:
             raise ExecutionError(f"MT5 could not calculate stop risk: {self.mt5.last_error()}")
         return max(0.0, -float(projected))
 
+    @serialized_mt5_call
     def symbol_info(self, symbol: str) -> Any:
         self._ensure_connected()
         info = self.mt5.symbol_info(symbol)
@@ -256,6 +280,7 @@ class MT5Executor:
                 raise ExecutionError(f"Symbol information is unavailable after selecting {symbol}")
         return info
 
+    @serialized_mt5_call
     def symbol_tick(self, symbol: str) -> Any:
         self.symbol_info(symbol)
         tick = self.mt5.symbol_info_tick(symbol)
@@ -356,6 +381,7 @@ class MT5Executor:
                 raise ExecutionError(f"MT5 retry order_check rejected the request: {detail}")
             logger.warning("Retrying MT5 entry after explicit price rejection; retries_left=%s", retries_left)
 
+    @serialized_mt5_call
     def place_market_order(
         self,
         symbol: str,
@@ -367,6 +393,7 @@ class MT5Executor:
         *,
         reference_entry: Optional[float] = None,
         risk_amount: Optional[float] = None,
+        source_symbol: Optional[str] = None,
     ) -> TradeResult:
         self._ensure_connected()
         if not self.accept_new_trades:
@@ -431,8 +458,40 @@ class MT5Executor:
         if check is None or getattr(check, "retcode", None) != 0:
             detail = getattr(check, "comment", self.mt5.last_error())
             raise ExecutionError(f"MT5 order_check rejected the request: {detail}")
-        return self._send_new_market_order(request, side, info)
+        trade_result = self._send_new_market_order(request, side, info)
+        if self.fill_audit is not None:
+            try:
+                fill_price = float(trade_result.average_fill_price or request["price"])
+                request_price = float(request["price"])
+                adverse = max(0.0, fill_price - request_price) if side == "BUY" else max(0.0, request_price - fill_price)
+                assumed = None
+                canonical = str(source_symbol or symbol).strip().upper()
+                try:
+                    from config.instruments import get_instrument_spec
+                    assumed = float(get_instrument_spec(canonical).slippage)
+                except KeyError:
+                    pass
+                self.fill_audit.append({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "source_symbol": canonical,
+                    "broker_symbol": symbol,
+                    "side": side,
+                    "order": trade_result.order,
+                    "deal": trade_result.deal,
+                    "position": trade_result.position,
+                    "reference_price": None if reference_entry is None else float(reference_entry),
+                    "request_price": request_price,
+                    "fill_price": fill_price,
+                    "fill_price_source": "broker_result" if trade_result.average_fill_price else "request_fallback",
+                    "point": float(getattr(info, "point", 0.0) or 0.0),
+                    "adverse_slippage_price": adverse,
+                    "assumed_slippage_price": assumed,
+                })
+            except Exception:  # noqa: BLE001 - a completed broker order must still be returned
+                logger.exception("MT5 order succeeded but fill-audit evidence could not be persisted")
+        return trade_result
 
+    @serialized_mt5_call
     def modify_protection(self, position_ticket: int, stop_loss: float, take_profit: float) -> TradeResult:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
@@ -481,6 +540,7 @@ class MT5Executor:
             raise ExecutionError("Cannot trail a position without an existing take profit")
         return self.modify_protection(position_ticket, float(stop_loss), take_profit)
 
+    @serialized_mt5_call
     def partial_close(self, position_ticket: int, volume: float, comment: str = "AAQTS partial") -> TradeResult:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
@@ -494,6 +554,7 @@ class MT5Executor:
             raise ExecutionError("Partial close would leave a position below broker minimum volume")
         return self._close_volume(position, requested, comment)
 
+    @serialized_mt5_call
     def close_position(self, position_ticket: int, comment: str = "AAQTS close") -> TradeResult:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
@@ -528,6 +589,7 @@ class MT5Executor:
             raise ExecutionError(f"Close failed: {trade_result.comment}")
         return trade_result
 
+    @serialized_mt5_call
     def close_all(self) -> list[TradeResult]:
         positions = list(self.positions(managed_only=True))
         results: list[TradeResult] = []
@@ -542,6 +604,7 @@ class MT5Executor:
             raise ExecutionError("Emergency close incomplete: " + "; ".join(failures))
         return results
 
+    @serialized_mt5_call
     def emergency_stop(self) -> list[TradeResult]:
         self.pause()
         return self.close_all()
@@ -680,4 +743,9 @@ class MT5Executor:
             order=getattr(result, "order", None),
             deal=getattr(result, "deal", None),
             position=position or getattr(result, "order", None),
+            average_fill_price=(
+                float(getattr(result, "price", 0.0))
+                if float(getattr(result, "price", 0.0) or 0.0) > 0
+                else None
+            ),
         )

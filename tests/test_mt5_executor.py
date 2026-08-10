@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -190,6 +191,46 @@ def test_buy_request_contains_broker_side_protection():
     assert request["sl"] == 1.098
     assert request["tp"] == 1.104
     assert request["type_filling"] == adapter.ORDER_FILLING_FOK
+
+
+def test_successful_broker_fill_writes_slippage_evidence(tmp_path):
+    audit = tmp_path / "fills.jsonl"
+    executor, adapter = connected_executor(fill_audit_path=str(audit))
+    adapter.send_results = [SimpleNamespace(
+        retcode=adapter.TRADE_RETCODE_DONE,
+        comment="Done",
+        order=123,
+        deal=456,
+        price=1.10003,
+    )]
+    result = executor.place_market_order(
+        "EURUSD",
+        "BUY",
+        0.01,
+        stop_loss=1.09800,
+        take_profit=1.10400,
+        reference_entry=1.10000,
+        source_symbol="EURUSD=X",
+    )
+    record = json.loads(audit.read_text(encoding="utf-8"))
+    assert result.average_fill_price == 1.10003
+    assert record["fill_price_source"] == "broker_result"
+    assert record["adverse_slippage_price"] == pytest.approx(0.00001)
+    assert record["assumed_slippage_price"] == pytest.approx(0.00002)
+
+
+def test_fill_audit_failure_cannot_change_a_completed_broker_outcome():
+    executor, _ = connected_executor()
+
+    class BrokenAudit:
+        def append(self, record):
+            raise OSError("disk full")
+
+    executor.fill_audit = BrokenAudit()
+    result = executor.place_market_order(
+        "EURUSD", "BUY", 0.01, stop_loss=1.09800, take_profit=1.10400
+    )
+    assert result.success is True
 
 
 def test_reference_distances_are_translated_to_current_broker_quote():
