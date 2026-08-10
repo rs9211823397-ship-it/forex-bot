@@ -23,6 +23,7 @@ def test_mt5_demo_never_falls_back_to_cached_candles(tmp_path):
     market = MarketData(
         cache_dir=tmp_path,
         execution_mode="MT5_DEMO",
+        provider="MT5",
     )
     market.history.save(_frame(), "EURUSD=X", "15m", source="fixture")
     market._download = lambda *_args, **_kwargs: pd.DataFrame()
@@ -35,6 +36,7 @@ def test_paper_mode_may_use_cached_candles_after_provider_failure(tmp_path):
     market = MarketData(
         cache_dir=tmp_path,
         execution_mode="PAPER",
+        provider="YAHOO",
     )
     market.history.save(_frame(), "EURUSD=X", "15m", source="fixture")
     market._download = lambda *_args, **_kwargs: pd.DataFrame()
