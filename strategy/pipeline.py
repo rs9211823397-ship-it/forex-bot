@@ -399,7 +399,8 @@ class SignalPipeline:
         regime,
         quality,
         contextual_gate,
-        strict_direction=False
+        strict_direction=False,
+        latest=None
     ):
         score = (
             setup.trend_score
@@ -681,7 +682,8 @@ class SignalPipeline:
             regime=regime,
             quality=quality,
             contextual_gate=contextual_gate,
-            strict_direction=causal_data.enabled
+            strict_direction=causal_data.enabled,
+            latest=latest,
         )
 
         if not risk_validation.valid:
