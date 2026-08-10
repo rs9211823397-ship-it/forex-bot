@@ -20,6 +20,7 @@ def test_analyzer_marks_rejections_and_formats_report():
     )
 
     assert report["decision"] == "HOLD"
+    assert report["status"] == "HELD"
     assert report["approved"] is False
     assert "Trade Quality: 40/100" in report["rejection_reasons"]
     assert "SELL conflicts with TREND_UP regime" in report["rejection_reasons"]
@@ -27,8 +28,8 @@ def test_analyzer_marks_rejections_and_formats_report():
 
     rendered = analyzer.format_report(report)
     assert "Decision: HOLD" in rendered
-    assert "Status: REJECTED" in rendered
-    assert "Rejection reasons" in rendered
+    assert "Status: HELD" in rendered
+    assert "Primary blocker:" in rendered
 
 
 def test_analyzer_keeps_approved_signal_clean():
