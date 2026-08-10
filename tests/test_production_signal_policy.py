@@ -131,6 +131,53 @@ def test_invalid_location_remains_hard_block_even_when_quality_is_high():
     assert decision.signal == "HOLD"
 
 
+def test_bos_is_entry_trigger_without_duplicate_contextual_veto():
+    pipeline = ProductionSignalPipeline.__new__(ProductionSignalPipeline)
+    decision = pipeline._final_decision(
+        setup=SetupResult(25, ("Bullish majority trend vote (2/3)",)),
+        trigger=TriggerResult(0, reasons=("No candle confirmation",)),
+        momentum=MomentumResult(0, ("RSI is not at an opposing extreme",)),
+        volume=VolumeResult(0),
+        structure=MarketStructureResult(
+            score=20,
+            trend="BULLISH",
+            bos="BULLISH BOS",
+        ),
+        regime=MarketRegimeResult(
+            mtf_confirmed=False,
+            regime="BULLISH",
+            higher_timeframe_available=True,
+            confirmation="HOLD",
+        ),
+        quality=TradeQualityResult(quality=55, approved=True),
+        contextual_gate=ContextualGateResult(
+            enabled=True,
+            approved=False,
+            direction="BUY",
+            trigger="NONE",
+            reasons=("Contextual INVALID_LOCATION",),
+            output=SimpleNamespace(reason_codes=("INVALID_LOCATION",)),
+        ),
+        strict_direction=True,
+    )
+
+    assert decision.signal == "BUY"
+    assert "BOS/CHoCH is the directional entry trigger" in decision.reasons
+
+
+def test_rsi_extreme_remains_hard_veto():
+    failures = ProductionSignalPipeline._eligibility_failures(
+        direction="BUY",
+        trigger=Confirmation(False),
+        momentum=MomentumResult(score=-20),
+        structure=Directional(True),
+        regime=Directional(True),
+        contextual_gate=gate(enabled=False),
+    )
+
+    assert "RSI extreme conflicts with setup" in failures
+
+
 def test_legacy_engine_keeps_legacy_pipeline_and_production_uses_new_policy(monkeypatch):
     monkeypatch.setattr(SignalEngine, "_initialize", lambda self, mtf, pipeline_class=SignalPipeline: setattr(self, "pipeline_class", pipeline_class))
 
