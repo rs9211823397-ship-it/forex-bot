@@ -66,7 +66,13 @@ class MarketData:
             return data
         timestamps = pd.DatetimeIndex(pd.to_datetime(data.index, utc=True, errors="raise"))
         delta_ns = int(timeframe_delta(timeframe).value)
-        offsets = timestamps.asi8 % delta_ns
+        # ``DatetimeIndex.asi8`` follows the index's storage resolution. Pandas
+        # 3 may preserve provider timestamps as microseconds, while Timedelta
+        # ``value`` is expressed in nanoseconds. Comparing those raw integers
+        # made valid hourly candles appear off-grid and dropped most of the
+        # dataset. Normalize the index to nanoseconds before modulo arithmetic.
+        timestamp_ns = timestamps.as_unit("ns").asi8
+        offsets = timestamp_ns % delta_ns
         counts = pd.Series(offsets).value_counts()
         maximum = int(counts.max())
         dominant_offset = int(min(counts[counts == maximum].index))
@@ -271,4 +277,3 @@ class MarketData:
                     logger.error("Fresh market data unavailable for %s %s: %s", symbol, normalize_timeframe(interval or "1d"), exc)
                     print(f"{symbol} ERROR: {exc}")
         return market_data
-
