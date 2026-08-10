@@ -151,7 +151,7 @@ class MarketData:
                 raise MarketDataError(f"Unknown MT5 symbol: {broker_symbol}")
             if not getattr(info, "visible", False) and not mt5.symbol_select(broker_symbol, True):
                 raise MarketDataError(f"Could not select MT5 symbol: {broker_symbol}")
-            rates = mt5.copy_rates_from_pos(broker_symbol, self._mt5_timeframe(mt5, interval), 1, self._mt5_count(interval))
+            rates = mt5.copy_rates_from_pos(broker_symbol, self._mt5_timeframe(mt5, interval), 0, self._mt5_count(interval))
             if rates is None or len(rates) == 0:
                 raise MarketDataError(f"No completed MT5 candles for {symbol} ({broker_symbol}): {mt5.last_error()}")
             frame = pd.DataFrame(rates)
@@ -271,3 +271,4 @@ class MarketData:
                     logger.error("Fresh market data unavailable for %s %s: %s", symbol, normalize_timeframe(interval or "1d"), exc)
                     print(f"{symbol} ERROR: {exc}")
         return market_data
+
