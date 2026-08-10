@@ -128,27 +128,13 @@ class RegimeStrategyRouter:
             # extreme vetoes inside the production pipeline.
             decision = self.trend_engine.generate_analysis(data, symbol, higher_tf)
             signal = decision.get("signal", "HOLD")
-            regime_direction = str(regime.get("direction", "NEUTRAL"))
-            expected_signal = (
-                "BUY" if regime_direction == "BULLISH"
-                else "SELL" if regime_direction == "BEARISH"
-                else None
-            )
-            using_trend_vote = signal == expected_signal
-            if not using_trend_vote:
-                decision = self._range_reversion(data, regime)
-                signal = decision.get("signal", "HOLD")
             if signal in {"BUY", "SELL"} and higher_tf is not None:
                 expected_htf = "BULLISH" if signal == "BUY" else "BEARISH"
                 if htf_regime not in {expected_htf, "NEUTRAL"}:
                     return self._hold(
                         regime=regime_name,
                         regime_confidence=regime_confidence,
-                        strategy=(
-                            "RANGE_TREND_VOTE"
-                            if using_trend_vote
-                            else "RANGE_REVERSION"
-                        ),
+                        strategy="RANGE_TREND_VOTE",
                         reasons=[
                             f"Range {signal} conflicts with {htf_regime} higher timeframe"
                         ],
@@ -158,11 +144,7 @@ class RegimeStrategyRouter:
                 decision,
                 regime=regime_name,
                 regime_confidence=regime_confidence,
-                strategy=(
-                    "RANGE_TREND_VOTE"
-                    if using_trend_vote
-                    else "RANGE_REVERSION"
-                ),
+                strategy="RANGE_TREND_VOTE",
                 risk_multiplier=risk_multiplier if signal in {"BUY", "SELL"} else 0.0,
                 htf_regime=htf_regime,
             )
