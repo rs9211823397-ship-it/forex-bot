@@ -111,6 +111,7 @@ class MarketData:
         if len(candidates) == 1:
             resolved = candidates[0]
             self._resolved_mt5_symbols[data_symbol] = resolved
+            MT5_SYMBOL_MAP[data_symbol] = resolved
             logger.info(
                 "Resolved MT5 symbol %s: %s -> %s",
                 data_symbol,
