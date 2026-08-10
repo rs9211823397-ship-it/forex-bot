@@ -63,6 +63,8 @@ def test_forward_report_requires_real_sample_before_completion():
     assert report["expectancy"] == 0.5
     assert report["max_drawdown_percent"] == pytest.approx(0.9804)
     assert report["ending_equity"] == 101.0
+    assert report["per_symbol"]["EURUSD"]["closed_trades"] == 2
+    assert report["calendar_eta"]["rate_basis"] == "observed_closed_aaqts_deals"
 
 
 def test_chronological_holdout_uses_only_tail_exits_and_prior_equity():
@@ -141,10 +143,22 @@ def test_promotion_is_fail_closed_and_never_auto_enables_live():
         },
         forward_metrics={
             "sample_complete": True,
+            "per_symbol_sample_complete": True,
             "expectancy": 0.1,
             "profit_factor": 1.25,
             "max_drawdown_percent": 7.0,
+            "per_symbol": {
+                "EURUSD": {
+                    "sample_complete": True,
+                    "profit_factor": 1.25,
+                    "expectancy": 0.1,
+                    "max_drawdown_percent": 7.0,
+                }
+            },
         },
+        context_parity_metrics={"passed": True, "sample_complete": True},
+        slippage_metrics={"sample_complete": True, "within_assumption": True},
+        restart_metrics={"passed": True},
     )
     assert report["eligible_for_human_review"] is True
     assert report["automatic_live_enable"] is False
@@ -175,3 +189,29 @@ def test_promotion_fails_closed_without_oos_or_percent_drawdown_evidence():
     assert report["checks"]["backtest_drawdown"] is False
     assert report["checks"]["out_of_sample_sample"] is False
     assert report["checks"]["forward_drawdown"] is False
+
+
+def test_promotion_rejects_weak_symbol_hidden_by_aggregate_profit():
+    report = promotion_report(
+        backtest_metrics={
+            "full": {"Completed Trades": 100, "Profit Factor": 2, "Expectancy": 1, "Max Drawdown %": 5},
+            "out_of_sample": {"Completed Trades": 20, "Profit Factor": 2, "Expectancy": 1, "Max Drawdown %": 5},
+        },
+        parity_metrics={"actionable_agreement_percent": 100, "missing_in_tradingview": 0, "missing_in_aaqts": 0},
+        context_parity_metrics={"passed": True, "sample_complete": True},
+        forward_metrics={
+            "sample_complete": True,
+            "per_symbol_sample_complete": True,
+            "expectancy": 1,
+            "profit_factor": 2,
+            "max_drawdown_percent": 5,
+            "per_symbol": {
+                "GOOD": {"sample_complete": True, "profit_factor": 2, "expectancy": 1, "max_drawdown_percent": 5},
+                "WEAK": {"sample_complete": True, "profit_factor": 0.8, "expectancy": -1, "max_drawdown_percent": 5},
+            },
+        },
+        slippage_metrics={"sample_complete": True, "within_assumption": True},
+        restart_metrics={"passed": True},
+    )
+    assert report["eligible_for_human_review"] is False
+    assert report["checks"]["forward_per_symbol_quality"] is False

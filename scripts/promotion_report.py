@@ -21,6 +21,9 @@ def main():
     parser.add_argument("--backtest", required=True)
     parser.add_argument("--parity", required=True)
     parser.add_argument("--forward", required=True)
+    parser.add_argument("--context-parity", required=True)
+    parser.add_argument("--slippage", required=True)
+    parser.add_argument("--restart-soak", required=True)
     parser.add_argument("--output", default="outputs/validation/promotion.json")
     parser.add_argument("--min-backtest-trades", type=int, default=100)
     parser.add_argument("--min-oos-trades", type=int, default=20)
@@ -33,6 +36,9 @@ def main():
         backtest_metrics=_load(args.backtest),
         parity_metrics=_load(args.parity),
         forward_metrics=_load(args.forward),
+        context_parity_metrics=_load(args.context_parity),
+        slippage_metrics=_load(args.slippage),
+        restart_metrics=_load(args.restart_soak),
         min_backtest_trades=args.min_backtest_trades,
         min_out_of_sample_trades=args.min_oos_trades,
         min_profit_factor=args.min_profit_factor,

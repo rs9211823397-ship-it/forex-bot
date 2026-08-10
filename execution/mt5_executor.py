@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from math import floor, isfinite
 from typing import Any, Optional
 
+from execution.fill_audit import FillAudit
 from mt5_ipc import serialized_mt5_call
 
 
@@ -40,6 +41,7 @@ class ExecutionConfig:
     max_tick_age_seconds: float = 15.0
     max_spread_stop_ratio: float = 0.25
     order_send_price_retries: int = 1
+    fill_audit_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isfinite(float(self.max_tick_age_seconds)) or self.max_tick_age_seconds <= 0:
@@ -62,6 +64,7 @@ class TradeResult:
     order: Optional[int] = None
     deal: Optional[int] = None
     position: Optional[int] = None
+    average_fill_price: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,7 @@ class MT5Executor:
         self.mt5 = adapter
         self.connected = False
         self.accept_new_trades = True
+        self.fill_audit = FillAudit(self.config.fill_audit_path) if self.config.fill_audit_path else None
 
     @serialized_mt5_call
     def connect(self) -> bool:
@@ -389,6 +393,7 @@ class MT5Executor:
         *,
         reference_entry: Optional[float] = None,
         risk_amount: Optional[float] = None,
+        source_symbol: Optional[str] = None,
     ) -> TradeResult:
         self._ensure_connected()
         if not self.accept_new_trades:
@@ -453,7 +458,38 @@ class MT5Executor:
         if check is None or getattr(check, "retcode", None) != 0:
             detail = getattr(check, "comment", self.mt5.last_error())
             raise ExecutionError(f"MT5 order_check rejected the request: {detail}")
-        return self._send_new_market_order(request, side, info)
+        trade_result = self._send_new_market_order(request, side, info)
+        if self.fill_audit is not None:
+            try:
+                fill_price = float(trade_result.average_fill_price or request["price"])
+                request_price = float(request["price"])
+                adverse = max(0.0, fill_price - request_price) if side == "BUY" else max(0.0, request_price - fill_price)
+                assumed = None
+                canonical = str(source_symbol or symbol).strip().upper()
+                try:
+                    from config.instruments import get_instrument_spec
+                    assumed = float(get_instrument_spec(canonical).slippage)
+                except KeyError:
+                    pass
+                self.fill_audit.append({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "source_symbol": canonical,
+                    "broker_symbol": symbol,
+                    "side": side,
+                    "order": trade_result.order,
+                    "deal": trade_result.deal,
+                    "position": trade_result.position,
+                    "reference_price": None if reference_entry is None else float(reference_entry),
+                    "request_price": request_price,
+                    "fill_price": fill_price,
+                    "fill_price_source": "broker_result" if trade_result.average_fill_price else "request_fallback",
+                    "point": float(getattr(info, "point", 0.0) or 0.0),
+                    "adverse_slippage_price": adverse,
+                    "assumed_slippage_price": assumed,
+                })
+            except Exception:  # noqa: BLE001 - a completed broker order must still be returned
+                logger.exception("MT5 order succeeded but fill-audit evidence could not be persisted")
+        return trade_result
 
     @serialized_mt5_call
     def modify_protection(self, position_ticket: int, stop_loss: float, take_profit: float) -> TradeResult:
@@ -707,4 +743,9 @@ class MT5Executor:
             order=getattr(result, "order", None),
             deal=getattr(result, "deal", None),
             position=position or getattr(result, "order", None),
+            average_fill_price=(
+                float(getattr(result, "price", 0.0))
+                if float(getattr(result, "price", 0.0) or 0.0) > 0
+                else None
+            ),
         )

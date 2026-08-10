@@ -12,8 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
     "script",
     (
         "scripts/compare_tradingview_signals.py",
+        "scripts/compare_context_gates.py",
+        "scripts/combine_context_parity.py",
+        "scripts/capture_restart_state.py",
         "scripts/forward_test_report.py",
         "scripts/promotion_report.py",
+        "scripts/restart_soak_report.py",
+        "scripts/slippage_report.py",
     ),
 )
 def test_validation_scripts_are_directly_runnable(script):

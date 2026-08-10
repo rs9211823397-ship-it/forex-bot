@@ -16,6 +16,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--deals", required=True)
     parser.add_argument("--min-trades", type=int, default=100)
+    parser.add_argument("--min-symbol-trades", type=int, default=10)
+    parser.add_argument(
+        "--expected-symbols",
+        default="",
+        help="Comma-separated broker symbols that must each meet the per-symbol sample",
+    )
     parser.add_argument(
         "--starting-equity",
         type=float,
@@ -28,6 +34,8 @@ def main():
         args.deals,
         min_closed_trades=args.min_trades,
         starting_equity=args.starting_equity,
+        min_symbol_trades=args.min_symbol_trades,
+        expected_symbols=[item for item in args.expected_symbols.split(",") if item.strip()] or None,
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

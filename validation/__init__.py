@@ -8,6 +8,9 @@ from validation.workflow import (
     promotion_report,
     write_signal_ledger,
 )
+from validation.context_parity import compare_context_snapshots
+from validation.restart_soak import restart_soak_report
+from validation.slippage import slippage_report
 
 __all__ = [
     "ValidationError",
@@ -16,4 +19,7 @@ __all__ = [
     "forward_test_report",
     "promotion_report",
     "write_signal_ledger",
+    "compare_context_snapshots",
+    "restart_soak_report",
+    "slippage_report",
 ]

@@ -37,6 +37,7 @@ from execution.mt5_executor import (
 )
 from execution.mt5_trade_audit import MT5TradeAudit
 from execution.position_manager import PositionManager
+from runtime_state import RUNTIME_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class ExecutionRouter:
                 max_open_positions=MT5_MAX_OPEN_POSITIONS,
                 max_tick_age_seconds=MT5_MAX_TICK_AGE_SECONDS,
                 max_spread_stop_ratio=MT5_MAX_SPREAD_STOP_RATIO,
+                fill_audit_path=str(RUNTIME_DIR / "mt5_fill_audit.jsonl"),
             )
             self.mt5_executor = (
                 LiveMT5Executor(config) if self.mode == "MT5_LIVE" else MT5Executor(config)
@@ -292,6 +294,7 @@ class ExecutionRouter:
             comment=f"AAQTS {source_symbol}",
             reference_entry=risk_plan["entry"],
             risk_amount=approved_risk_amount,
+            source_symbol=source_symbol,
         )
         managed = None
         if self.position_manager is not None:
