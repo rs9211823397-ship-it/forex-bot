@@ -36,6 +36,7 @@ class ChartObserverConfig:
     """Configuration for the non-executing Phase AI-1 observer."""
 
     enabled: bool = False
+    remote_enabled: bool = False
     mode: str = "OBSERVER"
     model: str = "gpt-5"
     output_root: Path = Path("runtime/ai_chart_analysis")
@@ -75,6 +76,7 @@ class ChartObserverConfig:
             raise ValueError("AAQTS_AI_CHART_ENDPOINT must use https://")
         return cls(
             enabled=_flag("AAQTS_AI_CHART_ENABLED", False),
+            remote_enabled=_flag("AAQTS_AI_CHART_REMOTE_ENABLED", False),
             mode=mode,
             model=model,
             output_root=Path(
