@@ -70,6 +70,9 @@ class ChartObserverConfig:
     outcome_horizons: tuple[int, ...] = (1, 3, 6, 12)
     outcome_stop_r: float = 1.0
     outcome_target_r: float = 2.0
+    analytics_enabled: bool = True
+    analytics_min_finalized_samples: int = 30
+    analytics_min_bucket_samples: int = 10
 
     @classmethod
     def from_env(cls) -> "ChartObserverConfig":
@@ -149,5 +152,12 @@ class ChartObserverConfig:
             ),
             outcome_target_r=_bounded_float(
                 "AAQTS_AI_CHART_OUTCOME_TARGET_R", 2.0, 0.25, 10.0
+            ),
+            analytics_enabled=_flag("AAQTS_AI_CHART_ANALYTICS_ENABLED", True),
+            analytics_min_finalized_samples=_bounded_int(
+                "AAQTS_AI_CHART_ANALYTICS_MIN_FINALIZED", 30, 1, 10000
+            ),
+            analytics_min_bucket_samples=_bounded_int(
+                "AAQTS_AI_CHART_ANALYTICS_MIN_BUCKET", 10, 1, 10000
             ),
         )
