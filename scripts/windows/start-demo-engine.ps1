@@ -10,6 +10,7 @@ $passwordFile = Join-Path $runtime "secrets\mt5_demo_password.dpapi"
 $openaiKeyFile = Join-Path $runtime "secrets\openai_api_key.dpapi"
 $loginFile = Join-Path $runtime "mt5_expected_login.txt"
 $serverFile = Join-Path $runtime "mt5_demo_server.txt"
+$profileFile = Join-Path $runtime "quality_v2_runtime_profile.json"
 
 if (-not (Test-Path -LiteralPath $python)) { throw "AAQTS Python was not found: $python" }
 $certFile = (& $python -m certifi).Trim()
@@ -111,6 +112,32 @@ $env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION = "0.85"
 $env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = "4.0"
 $env:AAQTS_MIN_REGIME_CONFIDENCE = "45"
 $env:PYTHONUNBUFFERED = "1"
+
+# Persist a non-secret startup manifest so operators can verify the exact
+# strategy/risk profile loaded by this engine instance. Never include account
+# credentials, Telegram tokens, or API keys in this file.
+$runtimeProfile = [ordered]@{
+    profile = "quality_v2"
+    generated_utc = (Get-Date).ToUniversalTime().ToString("o")
+    execution_mode = $env:AAQTS_EXECUTION_MODE
+    research_output_root = $env:AAQTS_AI_CHART_OUTPUT_ROOT
+    fixed_lot = [double]$env:AAQTS_MT5_FIXED_LOT
+    risk_percent = [double]$env:AAQTS_RISK_PERCENT
+    max_open_positions = [int]$env:AAQTS_MT5_MAX_OPEN_POSITIONS
+    max_consecutive_losses = [int]$env:AAQTS_MAX_CONSECUTIVE_LOSSES
+    max_daily_trades = [int]$env:AAQTS_MAX_DAILY_TRADES
+    stop_loss_cooldown_minutes = [int]$env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES
+    min_adx = [double]$env:AAQTS_MIN_ADX
+    signal_score_threshold = [int]$env:AAQTS_SIGNAL_SCORE_THRESHOLD
+    min_signal_confirmations = [int]$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS
+    min_trade_quality = [int]$env:AAQTS_MIN_TRADE_QUALITY
+    min_regime_confidence = [double]$env:AAQTS_MIN_REGIME_CONFIDENCE
+    portfolio_max_abs_correlation = [double]$env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION
+    portfolio_max_correlated_risk_percent = [double]$env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT
+    news_filter_enabled = ($env:AAQTS_NEWS_FILTER_ENABLED -eq "true")
+    remote_ai_enabled = ($env:AAQTS_AI_CHART_REMOTE_ENABLED -eq "true")
+}
+$runtimeProfile | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $profileFile -Encoding UTF8
 
 $previousEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
