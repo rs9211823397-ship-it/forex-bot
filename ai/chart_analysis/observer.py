@@ -12,6 +12,7 @@ from indicators.technical import TechnicalIndicators
 
 from .client import OpenAIResponsesChartClient
 from .config import ChartObserverConfig
+from .outcomes import OutcomeEvaluator
 from .renderer import ChartRenderer
 from .snapshot import build_market_snapshot, causal_render_frame
 from .store import ChartObservationStore
@@ -36,11 +37,19 @@ class ChartObserver:
         renderer: ChartRenderer | None = None,
         client: OpenAIResponsesChartClient | None = None,
         store: ChartObservationStore | None = None,
+        outcomes: OutcomeEvaluator | None = None,
     ) -> None:
         self.config = config or ChartObserverConfig.from_env()
         self.renderer = renderer or ChartRenderer()
         self.client = client or OpenAIResponsesChartClient(self.config)
         self.store = store or ChartObservationStore(self.config)
+        self.outcomes = (
+            outcomes
+            if outcomes is not None
+            else OutcomeEvaluator(self.config)
+            if self.config.outcomes_enabled
+            else None
+        )
         self.indicators = TechnicalIndicators()
         self._executor = ThreadPoolExecutor(
             max_workers=self.config.max_inflight,
@@ -82,6 +91,18 @@ class ChartObserver:
 
         if not self.config.enabled:
             return False
+
+        # Outcome updates use only already-completed future candles. They run
+        # for every routed decision, including HOLD, so pending captures mature
+        # even when no new candidate is scheduled on the current scan.
+        if self.outcomes is not None:
+            try:
+                self.outcomes.update_market(str(symbol), lower_frame)
+            except Exception:
+                logger.exception(
+                    "Chart outcome update failed for %s; trading continues",
+                    symbol,
+                )
 
         signal = str(
             deterministic.get("signal")
@@ -208,6 +229,14 @@ class ChartObserver:
                 lower_image_name=lower_image.name,
                 higher_image_name=higher_image.name,
             )
+            if self.outcomes is not None:
+                try:
+                    self.outcomes.register(snapshot, deterministic)
+                except Exception:
+                    logger.exception(
+                        "Could not register chart outcome for %s; capture continues",
+                        symbol,
+                    )
 
             if not self.config.remote_enabled:
                 self.store.write_capture(snapshot, deterministic=deterministic)
@@ -254,7 +283,7 @@ class ChartObserver:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return {
+            result = {
                 "enabled": self.config.enabled,
                 "remote_enabled": self.config.remote_enabled,
                 "mode": self.config.mode,
@@ -270,6 +299,12 @@ class ChartObserver:
                 "prompt_version": self.config.prompt_version,
                 "schema_version": self.config.schema_version,
             }
+        result["outcomes"] = (
+            self.outcomes.status()
+            if self.outcomes is not None
+            else {"enabled": False, "pending": 0}
+        )
+        return result
 
     def shutdown(self, *, wait: bool = False) -> None:
         self._executor.shutdown(wait=wait, cancel_futures=not wait)
