@@ -51,3 +51,26 @@ def test_quality_v2_does_not_enable_remote_ai_or_disable_news_filter():
     assert 'AAQTS_AI_CHART_REMOTE_ENABLED = "false"' in launcher
     assert "Remove-Item Env:OPENAI_API_KEY" in launcher
     assert 'AAQTS_NEWS_FILTER_ENABLED = "true"' in launcher
+
+
+def test_quality_v2_writes_non_secret_runtime_profile_manifest():
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "windows" / "start-demo-engine.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'quality_v2_runtime_profile.json' in launcher
+    assert '$runtimeProfile = [ordered]@{' in launcher
+    assert 'profile = "quality_v2"' in launcher
+    assert 'min_adx = [double]$env:AAQTS_MIN_ADX' in launcher
+    assert 'signal_score_threshold = [int]$env:AAQTS_SIGNAL_SCORE_THRESHOLD' in launcher
+    assert 'min_signal_confirmations = [int]$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS' in launcher
+    assert 'min_trade_quality = [int]$env:AAQTS_MIN_TRADE_QUALITY' in launcher
+    assert 'Set-Content -LiteralPath $profileFile -Encoding UTF8' in launcher
+
+    profile_block = launcher.split('$runtimeProfile = [ordered]@{', 1)[1].split(
+        '$runtimeProfile | ConvertTo-Json', 1
+    )[0]
+    assert 'AAQTS_MT5_PASSWORD' not in profile_block
+    assert 'TELEGRAM_BOT_TOKEN' not in profile_block
+    assert 'OPENAI_API_KEY' not in profile_block
