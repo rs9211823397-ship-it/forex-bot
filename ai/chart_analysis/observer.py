@@ -149,8 +149,22 @@ class ChartObserver:
     ) -> None:
         snapshot = None
         try:
-            lower_analyzed = self.indicators.add_indicators(lower_frame)
-            higher_analyzed = self.indicators.add_indicators(higher_frame)
+            # Truncate raw frames before indicator calculation. This makes the
+            # observer robust even if a future indicator implementation becomes
+            # centered/non-causal: future H1 candles never enter that function.
+            as_of_utc = self._completed_close(lower_frame)
+            lower_causal = causal_render_frame(
+                lower_frame,
+                as_of_utc=as_of_utc,
+                bars=len(lower_frame),
+            )
+            higher_causal = causal_render_frame(
+                higher_frame,
+                as_of_utc=as_of_utc,
+                bars=len(higher_frame),
+            )
+            lower_analyzed = self.indicators.add_indicators(lower_causal)
+            higher_analyzed = self.indicators.add_indicators(higher_causal)
             snapshot = build_market_snapshot(
                 symbol=symbol,
                 lower_frame=lower_analyzed,
