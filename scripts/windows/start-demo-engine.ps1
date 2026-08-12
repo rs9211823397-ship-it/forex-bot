@@ -44,17 +44,20 @@ if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $loginFi
     $env:AAQTS_MT5_SERVER = ""
 }
 
-# Phase AI-1 is observer-only. The OpenAI key is stored as user-bound DPAPI
-# ciphertext under runtime/secrets and is decrypted only into this process.
-# Missing key material disables the observer without affecting trading.
-if (Test-Path -LiteralPath $openaiKeyFile) {
+# Phase AI-1 local evidence collection is enabled, but remote model calls are
+# intentionally disabled while the account has no API credits. The saved DPAPI
+# key remains on disk and is not decrypted into this process in capture-only mode.
+$env:AAQTS_AI_CHART_ENABLED = "true"
+$env:AAQTS_AI_CHART_REMOTE_ENABLED = "false"
+Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
+
+# When remote analysis is deliberately re-enabled later, the existing DPAPI key
+# can be loaded without re-entering it.
+if ($env:AAQTS_AI_CHART_REMOTE_ENABLED -eq "true" -and (Test-Path -LiteralPath $openaiKeyFile)) {
     $secureOpenAIKey = Get-Content -LiteralPath $openaiKeyFile -Raw | ConvertTo-SecureString
     $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secureOpenAIKey).Password
-    $env:AAQTS_AI_CHART_ENABLED = "true"
-} else {
-    Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
-    $env:AAQTS_AI_CHART_ENABLED = "false"
 }
+
 $env:AAQTS_AI_CHART_MODE = "OBSERVER"
 $env:AAQTS_AI_CHART_MODEL = "gpt-5"
 $env:AAQTS_AI_CHART_ONLY_ACTIONABLE = "true"
