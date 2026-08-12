@@ -1,0 +1,2 @@
+-r requirements-mt5.txt
+Pillow>=10,<13
