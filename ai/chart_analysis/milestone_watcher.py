@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,8 +70,9 @@ def plan_research_events(
 ) -> list[ResearchEvent]:
     """Return only newly crossed research milestones.
 
-    This function is deliberately pure so milestone semantics can be tested
-    without Telegram, market data, OpenAI, or the trading engine.
+    Catch-up is intentionally compact: if the watcher was offline while several
+    milestones were crossed, only the newest meaningful milestone is emitted.
+    This avoids Telegram spam after a restart or delayed task installation.
     """
 
     sent = set(sent_events or ())
@@ -89,49 +89,8 @@ def plan_research_events(
     h12_samples = int((horizons.get("12") or {}).get("samples", 0) or 0)
     ready = bool(readiness.get("ready_for_overall_conclusions"))
 
-    events: list[ResearchEvent] = []
-
-    if h6_samples >= 1 and "horizon_6_first" not in sent:
-        events.append(
-            ResearchEvent(
-                "horizon_6_first",
-                "🧪 AAQTS AI RESEARCH UPDATE\n\n"
-                "First +6 M15 horizon label is now available.\n"
-                f"Captures: {captures}\nPending: {pending}\n"
-                f"+6 samples: {h6_samples}\n"
-                "No OpenAI call was used; capture-only research remains active.",
-            )
-        )
-
-    if h12_samples >= 1 and "horizon_12_first" not in sent:
-        events.append(
-            ResearchEvent(
-                "horizon_12_first",
-                "✅ AAQTS FIRST FULL OUTCOME\n\n"
-                "The first capture has completed the full +12 M15 forward window.\n"
-                f"Finalized: {finalized}\nPending: {pending}\n"
-                f"+12 samples: {h12_samples}\n"
-                "The result was produced from completed future candles only.",
-            )
-        )
-
-    for milestone in (10, 20):
-        event_id = f"finalized_{milestone}"
-        if finalized >= milestone and event_id not in sent:
-            events.append(
-                ResearchEvent(
-                    event_id,
-                    "📊 AAQTS AI RESEARCH MILESTONE\n\n"
-                    f"{milestone} forward outcomes are now finalized.\n"
-                    f"Captures: {captures}\nPending: {pending}\nErrors: {errors}\n"
-                    f"Expectancy: {_finite_text(overall.get('expectancy_r'), suffix='R')}\n"
-                    f"Profit factor: {_finite_text(overall.get('profit_factor'))}\n"
-                    "Statistics remain descriptive until the 30-sample guardrail is met.",
-                )
-            )
-
     if ready and "dataset_ready" not in sent:
-        events.append(
+        return [
             ResearchEvent(
                 "dataset_ready",
                 "🚀 AAQTS AI RESEARCH DATASET READY\n\n"
@@ -143,9 +102,52 @@ def plan_research_events(
                 f"Positive-R rate: {_finite_text((overall.get('positive_r_rate') or 0) * 100, suffix='%')}\n\n"
                 "The 30-finalized-sample overall guardrail is met. Bucket conclusions still require their own sample guardrails."
             )
-        )
+        ]
 
-    return events
+    crossed = [
+        milestone
+        for milestone in (10, 20)
+        if finalized >= milestone and f"finalized_{milestone}" not in sent
+    ]
+    if crossed:
+        milestone = max(crossed)
+        return [
+            ResearchEvent(
+                f"finalized_{milestone}",
+                "📊 AAQTS AI RESEARCH MILESTONE\n\n"
+                f"{milestone} forward outcomes are now finalized.\n"
+                f"Captures: {captures}\nPending: {pending}\nErrors: {errors}\n"
+                f"Expectancy: {_finite_text(overall.get('expectancy_r'), suffix='R')}\n"
+                f"Profit factor: {_finite_text(overall.get('profit_factor'))}\n"
+                "Statistics remain descriptive until the 30-sample guardrail is met.",
+            )
+        ]
+
+    if h12_samples >= 1 and "horizon_12_first" not in sent:
+        return [
+            ResearchEvent(
+                "horizon_12_first",
+                "✅ AAQTS FIRST FULL OUTCOME\n\n"
+                "The first capture has completed the full +12 M15 forward window.\n"
+                f"Finalized: {finalized}\nPending: {pending}\n"
+                f"+12 samples: {h12_samples}\n"
+                "The result was produced from completed future candles only.",
+            )
+        ]
+
+    if h6_samples >= 1 and "horizon_6_first" not in sent:
+        return [
+            ResearchEvent(
+                "horizon_6_first",
+                "🧪 AAQTS AI RESEARCH UPDATE\n\n"
+                "First +6 M15 horizon label is now available.\n"
+                f"Captures: {captures}\nPending: {pending}\n"
+                f"+6 samples: {h6_samples}\n"
+                "No OpenAI call was used; capture-only research remains active.",
+            )
+        ]
+
+    return []
 
 
 class ResearchMilestoneWatcher:
