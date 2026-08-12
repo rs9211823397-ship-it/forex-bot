@@ -117,11 +117,25 @@ class ChartObserver:
                 str(lower_timeframe),
                 str(higher_timeframe),
             )
-        except Exception:
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
             with self._lock:
-                self._pending -= 1
+                self._pending = max(0, self._pending - 1)
+                self._errors += 1
+                self._last_error = message[:1000]
+                if self._last_candle_by_symbol.get(str(symbol)) == close_time:
+                    self._last_candle_by_symbol.pop(str(symbol), None)
             self._slots.release()
-            raise
+            logger.exception("Could not schedule AI chart observer for %s", symbol)
+            try:
+                self.store.write_error(
+                    error_message=message,
+                    symbol=str(symbol),
+                    deterministic=deterministic_copy,
+                )
+            except Exception:
+                logger.exception("Could not persist AI chart scheduling error")
+            return False
         return True
 
     def _run(
