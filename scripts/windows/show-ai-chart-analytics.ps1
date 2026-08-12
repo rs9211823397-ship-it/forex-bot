@@ -58,20 +58,48 @@ $horizonRows = foreach ($property in $s.horizons.PSObject.Properties) {
 }
 $horizonRows | Sort-Object Bars | Format-Table -AutoSize
 
-Write-Host "BY SYMBOL"
-$symbolRows = foreach ($property in $s.by_symbol.PSObject.Properties) {
-    $b = $property.Value
-    [PSCustomObject]@{
-        Symbol = $property.Name
-        Captures = $b.captures
-        Pending = $b.pending
-        Finalized = $b.final.samples
-        ExpectancyR = $b.final.expectancy_r
-        ProfitFactor = $b.final.profit_factor
-        Guardrail = if ($b.sample_guardrail_met) { "READY" } else { "NOT_READY" }
+function Show-BucketSection {
+    param(
+        [string]$Title,
+        [object]$Section,
+        [string]$NameColumn
+    )
+    Write-Host $Title
+    $rows = foreach ($property in $Section.PSObject.Properties) {
+        $b = $property.Value
+        [PSCustomObject]@{
+            Name = $property.Name
+            Captures = $b.captures
+            Pending = $b.pending
+            Finalized = $b.final.samples
+            ExpectancyR = $b.final.expectancy_r
+            ProfitFactor = $b.final.profit_factor
+            Guardrail = if ($b.sample_guardrail_met) { "READY" } else { "NOT_READY" }
+        }
+    }
+    if ($rows) {
+        $rows | Sort-Object Name | Format-Table -Property @{Label=$NameColumn;Expression={$_.Name}},Captures,Pending,Finalized,ExpectancyR,ProfitFactor,Guardrail -AutoSize
+    } else {
+        Write-Host "No data"
     }
 }
-$symbolRows | Sort-Object Symbol | Format-Table -AutoSize
+
+Show-BucketSection -Title "BY SYMBOL" -Section $s.by_symbol -NameColumn "Symbol"
+Show-BucketSection -Title "BY SIGNAL" -Section $s.by_signal -NameColumn "Signal"
+Show-BucketSection -Title "BY CONFIDENCE" -Section $s.by_confidence -NameColumn "Confidence"
+Show-BucketSection -Title "BY REGIME" -Section $s.by_regime -NameColumn "Regime"
+Show-BucketSection -Title "BY STRATEGY" -Section $s.by_strategy -NameColumn "Strategy"
+
+Write-Host "AI COMPARISON"
+[PSCustomObject]@{
+    Analyzed = $s.ai_comparison.analyzed
+    NotAnalyzed = $s.ai_comparison.not_analyzed
+} | Format-List
+if ($s.ai_comparison.analyzed -gt 0) {
+    Show-BucketSection -Title "AAQTS vs AI" -Section $s.ai_comparison.by_relation -NameColumn "Relation"
+} else {
+    Write-Host "No AI analyses yet; capture-only mode remains active."
+}
 
 Write-Host ""
 Write-Host $s.readiness.warning
