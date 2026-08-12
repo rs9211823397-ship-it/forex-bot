@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,7 @@ from ai.chart_analysis.snapshot import build_market_snapshot
 from ai.chart_analysis.store import ChartObservationStore
 
 
-def _frame(start: str, periods: int, frequency: str, close_delta: str) -> pd.DataFrame:
+def _frame(start: str, periods: int, frequency: str, close_delta: timedelta) -> pd.DataFrame:
     index = pd.date_range(start=start, periods=periods, freq=frequency, tz="UTC")
     base = pd.Series(range(periods), dtype=float).to_numpy() * 0.001 + 1.1
     frame = pd.DataFrame(
@@ -28,7 +29,7 @@ def _frame(start: str, periods: int, frequency: str, close_delta: str) -> pd.Dat
         index=index,
     )
     frame.index.name = "open_time"
-    frame["close_time"] = frame.index + pd.Timedelta(close_delta)
+    frame["close_time"] = frame.index + close_delta
     frame.attrs["source"] = "MT5"
     frame.attrs["broker_symbol"] = "EURUSDm"
     return frame
@@ -63,8 +64,8 @@ def _analysis(snapshot) -> ChartAnalysis:
 
 
 def test_snapshot_truncates_higher_timeframe_to_lower_as_of():
-    lower = _frame("2026-08-12T00:00:00Z", 3, "15min", "15min")
-    higher = _frame("2026-08-11T23:00:00Z", 3, "1h", "1h")
+    lower = _frame("2026-08-12T00:00:00Z", 3, "15min", timedelta(minutes=15))
+    higher = _frame("2026-08-11T23:00:00Z", 3, "1h", timedelta(hours=1))
 
     snapshot = build_market_snapshot(
         symbol="EURUSD=X",
@@ -82,8 +83,8 @@ def test_snapshot_truncates_higher_timeframe_to_lower_as_of():
 
 
 def test_chart_analysis_rejects_snapshot_identity_mismatch():
-    lower = _frame("2026-08-12T00:00:00Z", 3, "15min", "15min")
-    higher = _frame("2026-08-11T22:00:00Z", 3, "1h", "1h")
+    lower = _frame("2026-08-12T00:00:00Z", 3, "15min", timedelta(minutes=15))
+    higher = _frame("2026-08-11T22:00:00Z", 3, "1h", timedelta(hours=1))
     snapshot = build_market_snapshot(
         symbol="EURUSD=X",
         lower_frame=lower,
@@ -154,8 +155,8 @@ def test_observer_is_deduplicated_and_blind_to_deterministic_decision(tmp_path):
         client=client,
         store=store,
     )
-    lower = _frame("2026-08-12T00:00:00Z", 40, "15min", "15min")
-    higher = _frame("2026-08-11T12:00:00Z", 12, "1h", "1h")
+    lower = _frame("2026-08-12T00:00:00Z", 40, "15min", timedelta(minutes=15))
+    higher = _frame("2026-08-11T12:00:00Z", 12, "1h", timedelta(hours=1))
     deterministic = {
         "signal": "BUY",
         "confidence": 55,
@@ -212,8 +213,8 @@ def test_observer_actionable_gate_skips_hold_without_remote_work(tmp_path):
         client=client,
         store=ChartObservationStore(config),
     )
-    lower = _frame("2026-08-12T00:00:00Z", 40, "15min", "15min")
-    higher = _frame("2026-08-11T12:00:00Z", 12, "1h", "1h")
+    lower = _frame("2026-08-12T00:00:00Z", 40, "15min", timedelta(minutes=15))
+    higher = _frame("2026-08-11T12:00:00Z", 12, "1h", timedelta(hours=1))
     try:
         assert observer.observe(
             symbol="EURUSD=X",
