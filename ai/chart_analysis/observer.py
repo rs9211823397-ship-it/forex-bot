@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 class ChartObserver:
     """Asynchronous, fail-open Phase AI-1 observer.
 
-    The observer receives market frames and a deterministic comparison record,
-    but only market data is supplied to the remote model. No observer output is
-    returned to strategy, risk, or execution code.
+    Local evidence capture is independent from remote model usage. When
+    ``remote_enabled`` is false, causal snapshots and charts are still written
+    but no network request is made. No observer output is returned to strategy,
+    risk, or execution code.
     """
 
     def __init__(
@@ -49,6 +50,7 @@ class ChartObserver:
         self._lock = threading.RLock()
         self._last_candle_by_symbol: dict[str, str] = {}
         self._submitted = 0
+        self._captured = 0
         self._completed = 0
         self._errors = 0
         self._pending = 0
@@ -206,6 +208,15 @@ class ChartObserver:
                 lower_image_name=lower_image.name,
                 higher_image_name=higher_image.name,
             )
+
+            if not self.config.remote_enabled:
+                self.store.write_capture(snapshot, deterministic=deterministic)
+                with self._lock:
+                    self._captured += 1
+                    self._last_completed_utc = datetime.now(timezone.utc).isoformat()
+                    self._last_error = None
+                return
+
             analysis, metadata = self.client.analyze(
                 snapshot,
                 lower_image,
@@ -245,10 +256,12 @@ class ChartObserver:
         with self._lock:
             return {
                 "enabled": self.config.enabled,
+                "remote_enabled": self.config.remote_enabled,
                 "mode": self.config.mode,
                 "model": self.config.model,
                 "only_actionable": self.config.only_actionable,
                 "submitted": self._submitted,
+                "captured": self._captured,
                 "completed": self._completed,
                 "errors": self._errors,
                 "pending": self._pending,
