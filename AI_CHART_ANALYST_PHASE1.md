@@ -2,7 +2,7 @@
 
 ## Scope
 
-Phase AI-1 is an **observer only**. It may create chart images, call a vision-capable model, validate structured analysis, and persist evidence for later evaluation. It has no authority to place, size, modify, delay, approve, reject, or close a trade.
+Phase AI-1 is an **observer only**. It may create chart images, optionally call a vision-capable model, validate structured analysis, and persist evidence for later evaluation. It has no authority to place, size, modify, delay, approve, reject, or close a trade.
 
 The existing deterministic AAQTS strategy, portfolio-risk, execution, and position-management paths remain authoritative.
 
@@ -41,7 +41,7 @@ The renderer uses completed candles and overlays EMA 20/50/200 and Bollinger-ban
 
 ## Model output contract
 
-The model must return one strict structured record containing:
+When remote analysis is enabled, the model must return one strict structured record containing:
 
 - snapshot identity and timestamp
 - market regime
@@ -67,7 +67,7 @@ Confidence is treated as an uncalibrated evidence-strength score in Phase AI-1, 
 
 Prompt version: `aaqts_chart_v1.0`
 
-The model is instructed to:
+When remote analysis is enabled, the model is instructed to:
 
 - remain observational
 - use no data after `as_of_utc`
@@ -79,11 +79,23 @@ Prompt versions are persisted with every observation so prompt experiments can b
 
 ## Scheduling policy
 
-Phase AI-1 deduplicates by symbol and completed M15 candle. Repeated five-minute engine scans must not call the model repeatedly for the same completed candle.
+Phase AI-1 deduplicates by symbol and completed M15 candle. Repeated five-minute engine scans must not create duplicate evidence or duplicate remote calls for the same completed candle.
 
-Default policy is `only_actionable=true`: only deterministic BUY/SELL candidates are submitted to the observer. HOLD candles are marked seen and skipped. This default controls cost and concurrency while the evaluation dataset is being established.
+Default policy is `only_actionable=true`: only deterministic BUY/SELL candidates are submitted to the observer. HOLD candles are marked seen and skipped. This default controls storage, cost, and concurrency while the evaluation dataset is being established.
 
 The observer uses a bounded worker pool. When all observer workers are busy, the deterministic trading loop is never made to wait.
+
+## Capture-only mode
+
+AAQTS now separates local evidence collection from paid remote model usage:
+
+- `AAQTS_AI_CHART_ENABLED=true` enables local observer work.
+- `AAQTS_AI_CHART_REMOTE_ENABLED=false` hard-disables all OpenAI/API requests.
+- In capture-only mode, actionable candidates still produce the causal M15/H1 charts and `input.json`.
+- `capture.json` and a `CAPTURED` row in `observations.jsonl` confirm successful local collection.
+- No `analysis.json` is expected until remote analysis is deliberately re-enabled.
+
+The Windows demo launcher currently runs in **capture-only mode** so dataset collection continues with zero API usage.
 
 ## Evidence layout
 
@@ -97,20 +109,22 @@ runtime/ai_chart_analysis/
         ├── input.json
         ├── m15.png
         ├── h1.png
-        ├── analysis.json
+        ├── capture.json        # capture-only mode
+        ├── analysis.json       # remote mode only
         └── error.json          # only when an observation fails
 ```
 
-`input.json` stores the causal snapshot and deterministic comparison record separately. `analysis.json` stores the validated AI result plus response metadata/usage. `observations.jsonl` is an append-only compact index for later evaluation.
+`input.json` stores the causal snapshot and deterministic comparison record separately. `capture.json` marks successful local-only evidence collection. `analysis.json` stores the validated AI result plus response metadata/usage when remote analysis is enabled. `observations.jsonl` is an append-only compact index for later evaluation.
 
 Secrets and API keys are never written to these evidence files.
 
 ## Configuration
 
-The reusable package remains disabled by default, but the Windows demo launcher enables it only when a local DPAPI-protected OpenAI key exists.
+The reusable package remains disabled by default. Remote API usage is also independently disabled by default.
 
 ```text
 AAQTS_AI_CHART_ENABLED=false
+AAQTS_AI_CHART_REMOTE_ENABLED=false
 AAQTS_AI_CHART_MODE=OBSERVER
 AAQTS_AI_CHART_MODEL=gpt-5
 AAQTS_AI_CHART_ONLY_ACTIONABLE=true
@@ -132,7 +146,7 @@ For Windows demo runtime, `scripts/windows/set-openai-api-key.ps1` prompts with 
 runtime/secrets/openai_api_key.dpapi
 ```
 
-`start-demo-engine.ps1` decrypts that value into the `OPENAI_API_KEY` process environment only for the running engine. If the DPAPI file is absent, the launcher sets `AAQTS_AI_CHART_ENABLED=false` and deterministic trading continues normally.
+In capture-only mode, `start-demo-engine.ps1` does **not** decrypt that saved key into the process environment. The encrypted key remains stored for a future deliberate remote-analysis activation.
 
 Do not commit a real API key.
 
@@ -148,11 +162,11 @@ The remote client intentionally uses Python's standard HTTP library so Phase AI-
 
 ## Current implementation boundary
 
-The Phase AI-1 package, causal snapshot contract, renderer, structured schema, Responses API client, evidence store, async observer, lazy integration bridge, Windows DPAPI key loader, router hook, and regression tests are implemented.
+The Phase AI-1 package, causal snapshot contract, renderer, structured schema, Responses API client, evidence store, async observer, capture-only switch, lazy integration bridge, Windows DPAPI key storage, router hook, and regression tests are implemented.
 
 The observer hook runs **after** `RegimeStrategyRouter` has produced the deterministic routed decision. The bridge receives the exact lower/higher frames and a copy of the deterministic decision for local comparison evidence. The observer return value is ignored; no AI result is returned to strategy, portfolio risk, execution, or position management.
 
-Only when all of the following are true can a remote observation be scheduled:
+Only when all of the following are true can an observation be scheduled:
 
 1. `AAQTS_AI_CHART_ENABLED=true`.
 2. A higher-timeframe frame is available.
@@ -160,21 +174,23 @@ Only when all of the following are true can a remote observation be scheduled:
 4. With the default policy, the deterministic result is BUY or SELL.
 5. The completed M15 candle has not already been observed for that symbol.
 
+A remote request additionally requires `AAQTS_AI_CHART_REMOTE_ENABLED=true` and a usable local API key.
+
 ## Activation acceptance criteria
 
-Before treating the VPS observer as active:
+Before treating the VPS capture observer as active:
 
 1. Existing deterministic test suite remains green.
 2. Phase AI-1 tests prove H1 data is causally truncated to the M15 snapshot timestamp.
 3. Duplicate scans of one completed M15 candle create at most one observation.
-4. HOLD candidates create no remote work with the default actionable-only policy.
-5. The deterministic comparison record is absent from the model input.
-6. Invalid response identity/schema is rejected and logged.
-7. Observer failure cannot interrupt or reject a deterministic trade.
-8. No execution or risk module imports the AI chart-analysis result.
-9. Windows demo launcher loads the API key from DPAPI without printing it.
-10. At least one actionable VPS observation produces `analysis.json` and a `COMPLETED` row in `observations.jsonl`.
+4. HOLD candidates create no observer work with the default actionable-only policy.
+5. Capture-only mode never calls the remote client.
+6. The deterministic comparison record remains separated from remote model input.
+7. Invalid response identity/schema is rejected and logged when remote mode is used.
+8. Observer failure cannot interrupt or reject a deterministic trade.
+9. No execution or risk module imports the AI chart-analysis result.
+10. At least one actionable VPS candidate produces `input.json`, both chart PNGs, `capture.json`, and a `CAPTURED` row in `observations.jsonl` without a new quota error.
 
-## Next phase after activation
+## Next phase after data collection
 
-Once sufficient observations exist, an outcome evaluator will attach forward-only labels such as 1/3/6/12-bar returns, MFE, MAE, TP/SL ordering, and realized/normalized R. AAQTS-alone performance will then be compared with AI-agreement/disagreement buckets before any confirmation-mode authority is considered.
+Once sufficient observations exist, an outcome evaluator will attach forward-only labels such as 1/3/6/12-bar returns, MFE, MAE, TP/SL ordering, and realized/normalized R. AAQTS-alone performance can then be compared with later AI agreement/disagreement buckets before any confirmation-mode authority is considered.
