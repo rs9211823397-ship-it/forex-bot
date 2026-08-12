@@ -20,7 +20,7 @@ class OutcomeAnalytics:
     or otherwise influence AAQTS trading decisions.
     """
 
-    SCHEMA_VERSION = "1.0"
+    SCHEMA_VERSION = "1.1"
 
     def __init__(self, config: ChartObserverConfig) -> None:
         self.config = config
@@ -67,6 +67,31 @@ class OutcomeAnalytics:
             return None
         return payload if isinstance(payload, dict) else None
 
+    @staticmethod
+    def _ai_relation(
+        deterministic_signal: str,
+        analysis_payload: dict[str, Any] | None,
+    ) -> tuple[str, str | None, float | None, bool | None]:
+        if not isinstance(analysis_payload, dict):
+            return "NOT_ANALYZED", None, None, None
+        analysis = analysis_payload.get("analysis") or {}
+        if not isinstance(analysis, dict):
+            return "NOT_ANALYZED", None, None, None
+        ai_signal = str(analysis.get("signal") or "HOLD").upper().strip()
+        ai_confidence = OutcomeAnalytics._finite(analysis.get("confidence"))
+        ai_abstain = bool(analysis.get("abstain") is True)
+        if ai_abstain:
+            relation = "ABSTAIN"
+        elif ai_signal == "HOLD":
+            relation = "AI_HOLD"
+        elif ai_signal == deterministic_signal:
+            relation = "AGREE"
+        elif ai_signal in {"BUY", "SELL"}:
+            relation = "DISAGREE"
+        else:
+            relation = "UNKNOWN"
+        return relation, ai_signal, ai_confidence, ai_abstain
+
     def _rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         if not self.root.exists():
@@ -93,6 +118,13 @@ class OutcomeAnalytics:
             if not isinstance(horizons, dict):
                 horizons = {}
 
+            analysis_path = input_path.parent / "analysis.json"
+            analysis_payload = self._read_json(analysis_path) if analysis_path.exists() else None
+            ai_relation, ai_signal, ai_confidence, ai_abstain = self._ai_relation(
+                signal,
+                analysis_payload,
+            )
+
             record_type = str(outcome.get("record_type", "")) if isinstance(outcome, dict) else ""
             error = bool(
                 outcome
@@ -113,6 +145,10 @@ class OutcomeAnalytics:
                     "confidence_bucket": self._confidence_bucket(deterministic.get("confidence")),
                     "strategy": str(deterministic.get("strategy") or "UNKNOWN"),
                     "regime": str(deterministic.get("regime") or "UNKNOWN"),
+                    "ai_relation": ai_relation,
+                    "ai_signal": ai_signal,
+                    "ai_confidence": ai_confidence,
+                    "ai_abstain": ai_abstain,
                     "finalized": finalized,
                     "error": error,
                     "status": str(final.get("status") or ("ERROR" if error else "PENDING")),
@@ -214,6 +250,8 @@ class OutcomeAnalytics:
         pending_count = sum(1 for row in rows if not row["finalized"] and not row["error"])
         min_total = int(self.config.analytics_min_finalized_samples)
         min_bucket = int(self.config.analytics_min_bucket_samples)
+        ai_counts = Counter(row["ai_relation"] for row in rows)
+        analyzed_rows = [row for row in rows if row["ai_relation"] != "NOT_ANALYZED"]
 
         summary = {
             "record_type": "AAQTS_CHART_OUTCOME_ANALYTICS",
@@ -247,6 +285,16 @@ class OutcomeAnalytics:
             "by_confidence": self._bucket(rows, "confidence_bucket"),
             "by_regime": self._bucket(rows, "regime"),
             "by_strategy": self._bucket(rows, "strategy"),
+            "ai_comparison": {
+                "analyzed": len(analyzed_rows),
+                "not_analyzed": ai_counts.get("NOT_ANALYZED", 0),
+                "relation_counts": {
+                    key: value
+                    for key, value in sorted(ai_counts.items())
+                    if key != "NOT_ANALYZED"
+                },
+                "by_relation": self._bucket(analyzed_rows, "ai_relation"),
+            },
         }
 
         for section_name in (
@@ -260,6 +308,8 @@ class OutcomeAnalytics:
                 bucket["sample_guardrail_met"] = (
                     bucket["final"]["samples"] >= min_bucket
                 )
+        for bucket in summary["ai_comparison"]["by_relation"].values():
+            bucket["sample_guardrail_met"] = bucket["final"]["samples"] >= min_bucket
         return summary
 
     @staticmethod
@@ -284,5 +334,6 @@ class OutcomeAnalytics:
             "enabled": self.config.analytics_enabled,
             "summary_path": str(self.summary_path),
             "counts": summary["counts"],
+            "ai_comparison": summary["ai_comparison"],
             "ready_for_overall_conclusions": summary["readiness"]["ready_for_overall_conclusions"],
         }
