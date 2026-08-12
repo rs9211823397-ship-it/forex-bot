@@ -95,6 +95,8 @@ def test_windows_launcher_uses_capture_only_observer_mode():
     assert 'AAQTS_AI_CHART_ONLY_ACTIONABLE = "true"' in launcher
     assert 'AAQTS_AI_CHART_ENABLED = "true"' in launcher
     assert 'AAQTS_AI_CHART_REMOTE_ENABLED = "false"' in launcher
+    assert 'AAQTS_AI_CHART_OUTCOMES_ENABLED = "true"' in launcher
+    assert 'AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"' in launcher
     assert "Remove-Item Env:OPENAI_API_KEY" in launcher
     assert "ConvertTo-SecureString" in launcher
     assert "ConvertFrom-SecureString" in setter
