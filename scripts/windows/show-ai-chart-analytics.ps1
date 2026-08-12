@@ -1,6 +1,6 @@
 param(
     [string]$Repository = "$env:USERPROFILE\forex-bot",
-    [string]$OutputRoot = "runtime/ai_chart_analysis_quality_v2"
+    [string]$OutputRoot = "runtime/ai_chart_analysis_quality_v3_balanced"
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,7 +15,6 @@ if (-not (Test-Path -LiteralPath $python)) {
 Set-Location $Repository
 $env:AAQTS_AI_CHART_OUTPUT_ROOT = $OutputRoot
 
-# Refresh from persisted capture/outcome evidence. This makes no network calls.
 & $python -c "from ai.chart_analysis.analytics import OutcomeAnalytics; from ai.chart_analysis.config import ChartObserverConfig; OutcomeAnalytics(ChartObserverConfig.from_env()).refresh()" | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "Could not refresh AAQTS chart analytics"
