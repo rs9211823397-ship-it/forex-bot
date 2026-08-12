@@ -138,6 +138,7 @@ def _wait_idle(observer: ChartObserver) -> None:
 def test_observer_is_deduplicated_and_blind_to_deterministic_decision(tmp_path):
     config = ChartObserverConfig(
         enabled=True,
+        remote_enabled=True,
         output_root=tmp_path,
         only_actionable=True,
         max_inflight=1,
