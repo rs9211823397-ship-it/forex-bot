@@ -31,6 +31,20 @@ def _bounded_float(name: str, default: float, lower: float, upper: float) -> flo
     return value
 
 
+def _horizons(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    values = tuple(int(item.strip()) for item in raw.split(",") if item.strip())
+    if not values:
+        raise ValueError(f"{name} must contain at least one positive integer")
+    if any(item <= 0 or item > 96 for item in values):
+        raise ValueError(f"{name} values must be between 1 and 96")
+    if tuple(sorted(set(values))) != values:
+        raise ValueError(f"{name} values must be unique and strictly increasing")
+    return values
+
+
 @dataclass(frozen=True)
 class ChartObserverConfig:
     """Configuration for the non-executing Phase AI-1 observer."""
@@ -52,6 +66,10 @@ class ChartObserverConfig:
     schema_version: str = "1.0"
     api_key_env: str = "OPENAI_API_KEY"
     endpoint: str = "https://api.openai.com/v1/responses"
+    outcomes_enabled: bool = True
+    outcome_horizons: tuple[int, ...] = (1, 3, 6, 12)
+    outcome_stop_r: float = 1.0
+    outcome_target_r: float = 2.0
 
     @classmethod
     def from_env(cls) -> "ChartObserverConfig":
@@ -121,4 +139,15 @@ class ChartObserverConfig:
             ).strip()
             or "OPENAI_API_KEY",
             endpoint=endpoint,
+            outcomes_enabled=_flag("AAQTS_AI_CHART_OUTCOMES_ENABLED", True),
+            outcome_horizons=_horizons(
+                "AAQTS_AI_CHART_OUTCOME_HORIZONS",
+                (1, 3, 6, 12),
+            ),
+            outcome_stop_r=_bounded_float(
+                "AAQTS_AI_CHART_OUTCOME_STOP_R", 1.0, 0.25, 5.0
+            ),
+            outcome_target_r=_bounded_float(
+                "AAQTS_AI_CHART_OUTCOME_TARGET_R", 2.0, 0.25, 10.0
+            ),
         )
