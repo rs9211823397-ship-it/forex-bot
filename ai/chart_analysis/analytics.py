@@ -130,13 +130,13 @@ class OutcomeAnalytics:
         positives = sum(value for value in values if value > 0)
         negatives = abs(sum(value for value in values if value < 0))
         if negatives == 0:
-            return None if positives == 0 else float("inf")
+            return None
         return positives / negatives
 
     @staticmethod
     def _rounded(value: float | None) -> float | None:
         if value is None or not math.isfinite(value):
-            return value
+            return None
         return round(float(value), 6)
 
     def _final_metrics(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
