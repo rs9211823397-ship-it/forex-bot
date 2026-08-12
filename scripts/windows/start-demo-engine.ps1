@@ -71,6 +71,13 @@ $env:AAQTS_AI_CHART_MAX_OUTPUT_TOKENS = "1400"
 $env:AAQTS_AI_CHART_PROMPT_VERSION = "aaqts_chart_v1.0"
 $env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis"
 
+# Forward-only local outcome labels. These do not use OpenAI and do not affect
+# strategy, risk, execution, or position management.
+$env:AAQTS_AI_CHART_OUTCOMES_ENABLED = "true"
+$env:AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"
+$env:AAQTS_AI_CHART_OUTCOME_STOP_R = "1.0"
+$env:AAQTS_AI_CHART_OUTCOME_TARGET_R = "2.0"
+
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "5"
 $env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
