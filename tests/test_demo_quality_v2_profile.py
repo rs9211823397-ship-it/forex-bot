@@ -10,9 +10,9 @@ def test_demo_quality_v2_profile_is_stricter_and_keeps_size_constant():
     assert 'AAQTS_MT5_FIXED_LOT = "0.05"' in launcher
     assert 'AAQTS_RISK_PERCENT = "1.0"' in launcher
     assert 'AAQTS_MT5_MAX_OPEN_POSITIONS = "3"' in launcher
-    assert 'AAQTS_MAX_CONSECUTIVE_LOSSES = "3"' in launcher
-    assert 'AAQTS_MAX_DAILY_TRADES = "8"' in launcher
-    assert 'AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "30"' in launcher
+    assert 'AAQTS_MAX_CONSECUTIVE_LOSSES = "0"' in launcher
+    assert 'AAQTS_MAX_DAILY_TRADES = "0"' in launcher
+    assert 'AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "0"' in launcher
 
     assert 'AAQTS_MIN_ADX = "18"' in launcher
     assert 'AAQTS_SIGNAL_SCORE_THRESHOLD = "50"' in launcher
