@@ -20,12 +20,10 @@ $encryptedToken = [System.IO.File]::ReadAllText($tokenFile).Trim()
 $secureToken = ConvertTo-SecureString -String $encryptedToken
 $env:TELEGRAM_BOT_TOKEN = [System.Net.NetworkCredential]::new('', $secureToken).Password
 
-# Research watcher is local analytics + Telegram notification only. It must not
-# load or use the OpenAI API key while capture-only mode is active.
 Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
 $env:AAQTS_AI_CHART_ENABLED = "true"
 $env:AAQTS_AI_CHART_REMOTE_ENABLED = "false"
-$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v2"
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v3_balanced"
 $env:AAQTS_AI_CHART_OUTCOMES_ENABLED = "true"
 $env:AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"
 $env:AAQTS_AI_CHART_ANALYTICS_ENABLED = "true"
