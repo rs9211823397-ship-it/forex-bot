@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -40,9 +41,10 @@ def _snapshot(snapshot_id: str = "EURUSD_X_test") -> MarketSnapshot:
 def _future_frame(count: int, *, ambiguous_first: bool = False) -> pd.DataFrame:
     rows = []
     index = []
+    start = pd.Timestamp("2026-08-12T00:00:00Z")
     for i in range(count + 1):
-        open_time = pd.Timestamp("2026-08-12T00:00:00Z") + pd.Timedelta(minutes=15 * i)
-        close_time = open_time + pd.Timedelta(minutes=15)
+        open_time = start + timedelta(minutes=15 * i)
+        close_time = open_time + timedelta(minutes=15)
         if i == 0:
             # This candle closes exactly at capture time and must be ignored.
             open_price = 9.0
