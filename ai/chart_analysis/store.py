@@ -47,6 +47,7 @@ class ChartObservationStore:
             "record_type": "AAQTS_AI_CHART_INPUT",
             "recorded_utc": datetime.now(timezone.utc).isoformat(),
             "observer_mode": self.config.mode,
+            "remote_enabled": self.config.remote_enabled,
             "model": self.config.model,
             "prompt_version": self.config.prompt_version,
             "schema_version": self.config.schema_version,
@@ -61,6 +62,47 @@ class ChartObservationStore:
         }
         self._write_json(directory / "input.json", payload)
         return directory
+
+    def write_capture(
+        self,
+        snapshot: MarketSnapshot,
+        *,
+        deterministic: dict[str, Any],
+    ) -> Path:
+        """Mark a local-only evidence capture without making a remote API call."""
+        directory = self.observation_dir(snapshot)
+        recorded_utc = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "record_type": "AAQTS_AI_CHART_CAPTURE",
+            "recorded_utc": recorded_utc,
+            "snapshot_id": snapshot.snapshot_id,
+            "symbol": snapshot.symbol,
+            "as_of_utc": snapshot.as_of_utc,
+            "remote_enabled": False,
+            "deterministic_comparison": dict(deterministic),
+            "prompt_version": self.config.prompt_version,
+            "schema_version": self.config.schema_version,
+        }
+        path = directory / "capture.json"
+        self._write_json(path, payload)
+        self._append_index(
+            {
+                "status": "CAPTURED",
+                "recorded_utc": recorded_utc,
+                "snapshot_id": snapshot.snapshot_id,
+                "symbol": snapshot.symbol,
+                "as_of_utc": snapshot.as_of_utc,
+                "deterministic_signal": str(
+                    deterministic.get("signal")
+                    or deterministic.get("strategy_signal")
+                    or "UNKNOWN"
+                ),
+                "deterministic_confidence": deterministic.get("confidence"),
+                "prompt_version": self.config.prompt_version,
+                "schema_version": self.config.schema_version,
+            }
+        )
+        return path
 
     def write_result(
         self,
