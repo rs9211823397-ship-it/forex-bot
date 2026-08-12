@@ -10,6 +10,7 @@ import pandas as pd
 
 from indicators.technical import TechnicalIndicators
 
+from .analytics import OutcomeAnalytics
 from .client import OpenAIResponsesChartClient
 from .config import ChartObserverConfig
 from .outcomes import OutcomeEvaluator
@@ -38,6 +39,7 @@ class ChartObserver:
         client: OpenAIResponsesChartClient | None = None,
         store: ChartObservationStore | None = None,
         outcomes: OutcomeEvaluator | None = None,
+        analytics: OutcomeAnalytics | None = None,
     ) -> None:
         self.config = config or ChartObserverConfig.from_env()
         self.renderer = renderer or ChartRenderer()
@@ -48,6 +50,13 @@ class ChartObserver:
             if outcomes is not None
             else OutcomeEvaluator(self.config)
             if self.config.outcomes_enabled
+            else None
+        )
+        self.analytics = (
+            analytics
+            if analytics is not None
+            else OutcomeAnalytics(self.config)
+            if self.config.analytics_enabled
             else None
         )
         self.indicators = TechnicalIndicators()
@@ -77,6 +86,14 @@ class ChartObserver:
             value = value.tz_convert("UTC")
         return value.isoformat()
 
+    def _refresh_analytics(self) -> None:
+        if self.analytics is None:
+            return
+        try:
+            self.analytics.refresh()
+        except Exception:
+            logger.exception("Chart outcome analytics refresh failed; trading continues")
+
     def observe(
         self,
         *,
@@ -95,14 +112,17 @@ class ChartObserver:
         # Outcome updates use only already-completed future candles. They run
         # for every routed decision, including HOLD, so pending captures mature
         # even when no new candidate is scheduled on the current scan.
+        outcome_updates = 0
         if self.outcomes is not None:
             try:
-                self.outcomes.update_market(str(symbol), lower_frame)
+                outcome_updates = self.outcomes.update_market(str(symbol), lower_frame)
             except Exception:
                 logger.exception(
                     "Chart outcome update failed for %s; trading continues",
                     symbol,
                 )
+        if outcome_updates:
+            self._refresh_analytics()
 
         signal = str(
             deterministic.get("signal")
@@ -240,6 +260,7 @@ class ChartObserver:
 
             if not self.config.remote_enabled:
                 self.store.write_capture(snapshot, deterministic=deterministic)
+                self._refresh_analytics()
                 with self._lock:
                     self._captured += 1
                     self._last_completed_utc = datetime.now(timezone.utc).isoformat()
@@ -257,6 +278,7 @@ class ChartObserver:
                 deterministic=deterministic,
                 metadata=metadata,
             )
+            self._refresh_analytics()
             with self._lock:
                 self._completed += 1
                 self._last_completed_utc = datetime.now(timezone.utc).isoformat()
@@ -304,6 +326,16 @@ class ChartObserver:
             if self.outcomes is not None
             else {"enabled": False, "pending": 0}
         )
+        if self.analytics is None:
+            result["analytics"] = {"enabled": False}
+        else:
+            try:
+                result["analytics"] = self.analytics.status()
+            except Exception as exc:
+                result["analytics"] = {
+                    "enabled": True,
+                    "error": f"{type(exc).__name__}: {exc}"[:1000],
+                }
         return result
 
     def shutdown(self, *, wait: bool = False) -> None:
