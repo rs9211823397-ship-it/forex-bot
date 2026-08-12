@@ -15,6 +15,7 @@ from typing import Any, Optional
 from config.settings import (
     EXECUTION_MODE,
     MT5_EXPECTED_LOGIN,
+    MT5_FIXED_LOT,
     MT5_LOGIN,
     MT5_MAX_OPEN_POSITIONS,
     MT5_MAX_SPREAD_STOP_RATIO,
@@ -47,7 +48,7 @@ LIVE_ACK_VALUE = "I_UNDERSTAND_REAL_MONEY"
 
 
 def _stop_loss_cooldown_minutes() -> int:
-    raw = os.getenv("AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES", "60").strip()
+    raw = os.getenv("AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES", "0").strip()
     try:
         value = int(raw)
     except ValueError as exc:
@@ -288,12 +289,12 @@ class ExecutionRouter:
         result = self.mt5_executor.place_market_order(
             symbol=mt5_symbol,
             side=side,
-            volume=None,
+            volume=MT5_FIXED_LOT,
             stop_loss=risk_plan["stop_loss"],
             take_profit=risk_plan["take_profit"],
             comment=f"AAQTS {source_symbol}",
             reference_entry=risk_plan["entry"],
-            risk_amount=approved_risk_amount,
+            risk_amount=None,
             source_symbol=source_symbol,
         )
         managed = None
