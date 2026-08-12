@@ -17,6 +17,7 @@ def _write_record(
     regime: str,
     strategy: str,
     outcome: dict | None,
+    analysis: dict | None = None,
 ) -> None:
     directory = root / "2026-08-12" / snapshot_id
     directory.mkdir(parents=True, exist_ok=True)
@@ -40,6 +41,19 @@ def _write_record(
     )
     if outcome is not None:
         (directory / "outcome.json").write_text(json.dumps(outcome), encoding="utf-8")
+    if analysis is not None:
+        (directory / "analysis.json").write_text(
+            json.dumps({"analysis": analysis}),
+            encoding="utf-8",
+        )
+
+
+def _analysis(signal: str, confidence: int, *, abstain: bool = False) -> dict:
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "abstain": abstain,
+    }
 
 
 def _outcome(*, realized_r: float | None, status: str, mtm: float) -> dict:
@@ -77,7 +91,7 @@ def _outcome(*, realized_r: float | None, status: str, mtm: float) -> dict:
     }
 
 
-def test_analytics_builds_final_and_bucket_metrics(tmp_path):
+def test_analytics_builds_final_bucket_and_ai_comparison_metrics(tmp_path):
     _write_record(
         tmp_path,
         snapshot_id="gbp-buy",
@@ -87,6 +101,7 @@ def test_analytics_builds_final_and_bucket_metrics(tmp_path):
         regime="TREND_UP",
         strategy="TREND",
         outcome=_outcome(realized_r=2.0, status="TP", mtm=1.4),
+        analysis=_analysis("BUY", 78),
     )
     _write_record(
         tmp_path,
@@ -97,6 +112,7 @@ def test_analytics_builds_final_and_bucket_metrics(tmp_path):
         regime="TREND_DOWN",
         strategy="TREND",
         outcome=_outcome(realized_r=-1.0, status="SL", mtm=-0.8),
+        analysis=_analysis("BUY", 62),
     )
     _write_record(
         tmp_path,
@@ -107,6 +123,7 @@ def test_analytics_builds_final_and_bucket_metrics(tmp_path):
         regime="RANGE",
         strategy="BREAKOUT",
         outcome=None,
+        analysis=_analysis("HOLD", 35, abstain=True),
     )
 
     config = ChartObserverConfig(
@@ -134,6 +151,18 @@ def test_analytics_builds_final_and_bucket_metrics(tmp_path):
     assert summary["by_strategy"]["TREND"]["captures"] == 2
     assert summary["readiness"]["ready_for_overall_conclusions"] is False
     assert summary["by_symbol"]["GBPUSD=X"]["sample_guardrail_met"] is False
+
+    comparison = summary["ai_comparison"]
+    assert comparison["analyzed"] == 3
+    assert comparison["not_analyzed"] == 0
+    assert comparison["relation_counts"] == {
+        "ABSTAIN": 1,
+        "AGREE": 1,
+        "DISAGREE": 1,
+    }
+    assert comparison["by_relation"]["AGREE"]["final"]["samples"] == 1
+    assert comparison["by_relation"]["DISAGREE"]["final"]["samples"] == 1
+    assert comparison["by_relation"]["ABSTAIN"]["final"]["samples"] == 0
     assert (tmp_path / "analytics_summary.json").exists()
 
 
@@ -153,6 +182,8 @@ def test_analytics_never_writes_infinity_when_only_winners_exist(tmp_path):
     summary = analytics.refresh()
 
     assert summary["overall"]["profit_factor"] is None
+    assert summary["ai_comparison"]["analyzed"] == 0
+    assert summary["ai_comparison"]["not_analyzed"] == 1
     persisted = json.loads((tmp_path / "analytics_summary.json").read_text(encoding="utf-8"))
     assert persisted["overall"]["profit_factor"] is None
 
