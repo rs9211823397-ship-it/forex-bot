@@ -1,16 +1,19 @@
 param(
-    [string]$Repository = "$env:USERPROFILE\forex-bot"
+    [string]$Repository = "$env:USERPROFILE\forex-bot",
+    [string]$OutputRoot = "runtime/ai_chart_analysis_quality_v2"
 )
 
 $ErrorActionPreference = "Stop"
 $python = Join-Path $Repository ".venv\Scripts\python.exe"
-$summaryPath = Join-Path $Repository "runtime\ai_chart_analysis\analytics_summary.json"
+$outputRootPath = Join-Path $Repository $OutputRoot
+$summaryPath = Join-Path $outputRootPath "analytics_summary.json"
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "AAQTS Python was not found: $python"
 }
 
 Set-Location $Repository
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = $OutputRoot
 
 # Refresh from persisted capture/outcome evidence. This makes no network calls.
 & $python -c "from ai.chart_analysis.analytics import OutcomeAnalytics; from ai.chart_analysis.config import ChartObserverConfig; OutcomeAnalytics(ChartObserverConfig.from_env()).refresh()" | Out-Null
@@ -27,6 +30,7 @@ $readiness = if ($s.readiness.ready_for_overall_conclusions) { "READY" } else { 
 
 Write-Host ""
 Write-Host "AAQTS CHART OUTCOME ANALYTICS"
+Write-Host "Dataset: $OutputRoot"
 Write-Host "Generated UTC: $($s.generated_utc)"
 Write-Host "Readiness: $readiness"
 Write-Host "Guardrail: $($s.readiness.minimum_finalized_samples) finalized overall / $($s.readiness.minimum_bucket_samples) per bucket"
