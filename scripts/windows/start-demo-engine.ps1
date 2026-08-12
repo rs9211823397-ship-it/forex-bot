@@ -45,6 +45,7 @@ if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $loginFi
 
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "5"
+$env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
 $env:AAQTS_RISK_PERCENT = "1.0"
 $env:AAQTS_MAX_CONSECUTIVE_LOSSES = "0"
 $env:AAQTS_MAX_DAILY_TRADES = "0"
