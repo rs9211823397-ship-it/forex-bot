@@ -22,6 +22,7 @@ The observer consumes the same completed broker-market frames used by AAQTS.
 - Higher timeframe: H1
 - Authoritative `as_of_utc`: close time of the newest completed M15 candle
 - Both M15 and H1 frames are truncated to `close_time <= as_of_utc`
+- H1 data is truncated before indicator calculation as an extra look-ahead guard
 - No candle closing after `as_of_utc` may appear in numeric input or chart rendering
 - Snapshot IDs include symbol, timeframe identity, timestamp, and a deterministic digest
 
@@ -106,7 +107,7 @@ Secrets and API keys are never written to these evidence files.
 
 ## Configuration
 
-Phase AI-1 is disabled by default.
+The reusable package remains disabled by default, but the Windows demo launcher enables it only when a local DPAPI-protected OpenAI key exists.
 
 ```text
 AAQTS_AI_CHART_ENABLED=false
@@ -123,8 +124,15 @@ AAQTS_AI_CHART_MAX_OUTPUT_TOKENS=1400
 AAQTS_AI_CHART_PROMPT_VERSION=aaqts_chart_v1.0
 AAQTS_AI_CHART_OUTPUT_ROOT=runtime/ai_chart_analysis
 AAQTS_AI_CHART_API_KEY_ENV=OPENAI_API_KEY
-OPENAI_API_KEY=<local secret only>
 ```
+
+For Windows demo runtime, `scripts/windows/set-openai-api-key.ps1` prompts with hidden input and stores only Windows-DPAPI ciphertext at:
+
+```text
+runtime/secrets/openai_api_key.dpapi
+```
+
+`start-demo-engine.ps1` decrypts that value into the `OPENAI_API_KEY` process environment only for the running engine. If the DPAPI file is absent, the launcher sets `AAQTS_AI_CHART_ENABLED=false` and deterministic trading continues normally.
 
 Do not commit a real API key.
 
@@ -140,13 +148,21 @@ The remote client intentionally uses Python's standard HTTP library so Phase AI-
 
 ## Current implementation boundary
 
-The Phase AI-1 package, causal snapshot contract, renderer, structured schema, API client, evidence store, async observer, and unit/regression tests are implemented as isolated components.
+The Phase AI-1 package, causal snapshot contract, renderer, structured schema, Responses API client, evidence store, async observer, lazy integration bridge, Windows DPAPI key loader, router hook, and regression tests are implemented.
 
-**The live `TradingApplication` hook remains intentionally disabled/not wired during the current one-day deterministic demo observation window.** No API request is made merely by pulling these files. Activation should be a separate controlled step after the current trading window so AI scaffolding cannot contaminate the baseline being measured.
+The observer hook runs **after** `RegimeStrategyRouter` has produced the deterministic routed decision. The bridge receives the exact lower/higher frames and a copy of the deterministic decision for local comparison evidence. The observer return value is ignored; no AI result is returned to strategy, portfolio risk, execution, or position management.
+
+Only when all of the following are true can a remote observation be scheduled:
+
+1. `AAQTS_AI_CHART_ENABLED=true`.
+2. A higher-timeframe frame is available.
+3. The configured bounded worker pool has capacity.
+4. With the default policy, the deterministic result is BUY or SELL.
+5. The completed M15 candle has not already been observed for that symbol.
 
 ## Activation acceptance criteria
 
-Before wiring the observer into `main.py`:
+Before treating the VPS observer as active:
 
 1. Existing deterministic test suite remains green.
 2. Phase AI-1 tests prove H1 data is causally truncated to the M15 snapshot timestamp.
@@ -156,6 +172,8 @@ Before wiring the observer into `main.py`:
 6. Invalid response identity/schema is rejected and logged.
 7. Observer failure cannot interrupt or reject a deterministic trade.
 8. No execution or risk module imports the AI chart-analysis result.
+9. Windows demo launcher loads the API key from DPAPI without printing it.
+10. At least one actionable VPS observation produces `analysis.json` and a `COMPLETED` row in `observations.jsonl`.
 
 ## Next phase after activation
 
