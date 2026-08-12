@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from config.settings import MT5_SYMBOL_MAP, MT5_SYMBOL_SUFFIX
+from config.settings import MT5_FIXED_LOT, MT5_SYMBOL_MAP, MT5_SYMBOL_SUFFIX
 from config.symbols import executable_symbol_map
 from execution.execution_router import ExecutionRouter
 from execution.mt5_executor import ExecutionError
@@ -122,7 +122,7 @@ def test_paper_mode_routes_to_paper_trader():
     assert len(paper.open_trades) == 1
 
 
-def test_mt5_demo_routes_to_mapped_broker_symbol():
+def test_mt5_demo_routes_to_mapped_broker_symbol_with_fixed_lot():
     paper = FakePaperTrader()
     mt5 = FakeMT5Executor()
     positions = FakePositionManager()
@@ -139,10 +139,10 @@ def test_mt5_demo_routes_to_mapped_broker_symbol():
     assert mt5.connected is True
     assert recovered[0].ticket == 11
     assert result["symbol"] == MT5_SYMBOL_MAP["EURUSD=X"]
-    assert result["volume"] is None
+    assert result["volume"] == MT5_FIXED_LOT
     assert result["stop_loss"] == 1.0950
     assert result["reference_entry"] == 1.1000
-    assert result["risk_amount"] == 10.0
+    assert result["risk_amount"] is None
     assert paper.open_trades == []
     assert positions.recovered is True
     assert positions.registered == [result]
