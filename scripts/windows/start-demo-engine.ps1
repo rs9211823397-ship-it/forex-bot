@@ -78,6 +78,12 @@ $env:AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"
 $env:AAQTS_AI_CHART_OUTCOME_STOP_R = "1.0"
 $env:AAQTS_AI_CHART_OUTCOME_TARGET_R = "2.0"
 
+# Automatic descriptive analytics. Guardrails prevent small samples from being
+# presented as strategy conclusions.
+$env:AAQTS_AI_CHART_ANALYTICS_ENABLED = "true"
+$env:AAQTS_AI_CHART_ANALYTICS_MIN_FINALIZED = "30"
+$env:AAQTS_AI_CHART_ANALYTICS_MIN_BUCKET = "10"
+
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "5"
 $env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
