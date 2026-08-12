@@ -14,6 +14,7 @@ import logging
 from math import isfinite
 from typing import Any
 
+from ai.chart_analysis.integration import observe_routed_decision
 from ai.decision_analyzer import AIDecisionAnalyzer
 from data.timeframes import frame_decision_time
 from strategy.multi_timeframe import MultiTimeframeAnalyzer
@@ -75,6 +76,18 @@ class RegimeStrategyRouter:
                 result.get("higher_timeframe_regime", "UNKNOWN"),
                 reasons or "none",
             )
+
+        # Phase AI-1 observer hook. The bridge is asynchronous and fail-open;
+        # its return value is intentionally ignored so AI can never approve,
+        # reject, size, delay, modify, or execute this deterministic decision.
+        observe_routed_decision(
+            symbol=symbol,
+            lower_frame=data,
+            higher_frame=higher_tf,
+            deterministic=result,
+            lower_timeframe=self.lower_timeframe,
+            higher_timeframe=self.higher_timeframe,
+        )
         return result
 
     def _generate_analysis(self, data, symbol, higher_tf=None) -> dict[str, Any]:
