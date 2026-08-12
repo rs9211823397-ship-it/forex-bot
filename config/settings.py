@@ -34,6 +34,14 @@ def _positive_int(name, default):
     return value
 
 
+def _optional_positive_int(name, default=0):
+    """Return None when a zero value explicitly disables a count-based limit."""
+    value = int(os.getenv(name, str(default)))
+    if value < 0:
+        raise ValueError(f"{name} must be zero (disabled) or greater than zero")
+    return None if value == 0 else value
+
+
 def _positive_float(name, default):
     value = float(os.getenv(name, str(default)))
     if not math.isfinite(value) or value <= 0:
@@ -155,13 +163,14 @@ RSI_BAND_VETO_OVERSOLD = _bounded_float(
     "AAQTS_RSI_BAND_VETO_OVERSOLD", 22.0, 0.0, 50.0
 )
 
-# Coherent protection limits for a 3% maximum per-trade risk budget. Two full
-# independent positions can coexist, while correlated exposure is reduced first.
+# Count-based trade-frequency limits are disabled by default (0 = disabled).
+# Hard portfolio protections remain active: daily/weekly loss, equity drawdown,
+# maximum open positions, portfolio heat, correlation, spread and news gates.
 MAX_DAILY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_DAILY_LOSS_PERCENT", 6.0, 0.1, 100.0)
 MAX_WEEKLY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_WEEKLY_LOSS_PERCENT", 12.0, 0.1, 100.0)
 MAX_EQUITY_DRAWDOWN_PERCENT = _bounded_float("AAQTS_MAX_EQUITY_DRAWDOWN_PERCENT", 15.0, 0.1, 100.0)
-MAX_CONSECUTIVE_LOSSES = _bounded_int("AAQTS_MAX_CONSECUTIVE_LOSSES", 3, 1, 20)
-MAX_DAILY_TRADES = _bounded_int("AAQTS_MAX_DAILY_TRADES", 40, 1, 500)
+MAX_CONSECUTIVE_LOSSES = _optional_positive_int("AAQTS_MAX_CONSECUTIVE_LOSSES", 0)
+MAX_DAILY_TRADES = _optional_positive_int("AAQTS_MAX_DAILY_TRADES", 0)
 MAX_PORTFOLIO_RISK_PERCENT = _bounded_float("AAQTS_MAX_PORTFOLIO_RISK_PERCENT", 6.0, 0.1, 100.0)
 
 # ==========================
@@ -206,7 +215,7 @@ MT5_RISK_BASELINE_UTC = _read_risk_baseline()
 MT5_RISK_BASELINE_FILE = str(_risk_baseline_file())
 MT5_PASSWORD = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_PASSWORD
 MT5_SERVER = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_SERVER
-MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.01)
+MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.05)
 MT5_MAX_OPEN_POSITIONS = _bounded_int("AAQTS_MT5_MAX_OPEN_POSITIONS", 3, 1, 20)
 BOT_INTERVAL_SECONDS = _bounded_int("AAQTS_BOT_INTERVAL_SECONDS", 300, 15, 86400)
 POSITION_MANAGEMENT_INTERVAL_SECONDS = _bounded_int(
