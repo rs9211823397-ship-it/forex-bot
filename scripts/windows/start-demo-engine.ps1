@@ -10,7 +10,7 @@ $passwordFile = Join-Path $runtime "secrets\mt5_demo_password.dpapi"
 $openaiKeyFile = Join-Path $runtime "secrets\openai_api_key.dpapi"
 $loginFile = Join-Path $runtime "mt5_expected_login.txt"
 $serverFile = Join-Path $runtime "mt5_demo_server.txt"
-$profileFile = Join-Path $runtime "quality_v2_runtime_profile.json"
+$profileFile = Join-Path $runtime "quality_v3_balanced_runtime_profile.json"
 
 if (-not (Test-Path -LiteralPath $python)) { throw "AAQTS Python was not found: $python" }
 $certFile = (& $python -m certifi).Trim()
@@ -37,23 +37,16 @@ if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $loginFi
     $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
     $env:AAQTS_MT5_USE_PREAUTHENTICATED_SESSION = "false"
 } else {
-    # This is explicit and overrides stale credentials in .env. It is suitable
-    # only while the desktop MT5 session remains authenticated.
     $env:AAQTS_MT5_USE_PREAUTHENTICATED_SESSION = "true"
     $env:AAQTS_MT5_LOGIN = ""
     $env:AAQTS_MT5_PASSWORD = ""
     $env:AAQTS_MT5_SERVER = ""
 }
 
-# Phase AI-1 local evidence collection is enabled, but remote model calls are
-# intentionally disabled while the account has no API credits. The saved DPAPI
-# key remains on disk and is not decrypted into this process in capture-only mode.
 $env:AAQTS_AI_CHART_ENABLED = "true"
 $env:AAQTS_AI_CHART_REMOTE_ENABLED = "false"
 Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
 
-# When remote analysis is deliberately re-enabled later, the existing DPAPI key
-# can be loaded without re-entering it.
 if ($env:AAQTS_AI_CHART_REMOTE_ENABLED -eq "true" -and (Test-Path -LiteralPath $openaiKeyFile)) {
     $secureOpenAIKey = Get-Content -LiteralPath $openaiKeyFile -Raw | ConvertTo-SecureString
     $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secureOpenAIKey).Password
@@ -71,30 +64,22 @@ $env:AAQTS_AI_CHART_IMAGE_DETAIL = "high"
 $env:AAQTS_AI_CHART_MAX_OUTPUT_TOKENS = "1400"
 $env:AAQTS_AI_CHART_PROMPT_VERSION = "aaqts_chart_v1.0"
 
-# Keep the original negative cohort intact and collect the post-remediation
-# sample separately. This prevents old and new strategy policies from being
-# mixed into one expectancy/profit-factor estimate.
-$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v2"
+# Balanced-v3 is a distinct execution policy, so keep its forward-outcome
+# evidence separate from the baseline and strict quality-v2 cohorts.
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v3_balanced"
 
-# Forward-only local outcome labels. These do not use OpenAI and do not affect
-# strategy, risk, execution, or position management.
 $env:AAQTS_AI_CHART_OUTCOMES_ENABLED = "true"
 $env:AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"
 $env:AAQTS_AI_CHART_OUTCOME_STOP_R = "1.0"
 $env:AAQTS_AI_CHART_OUTCOME_TARGET_R = "2.0"
 
-# Automatic descriptive analytics. Guardrails prevent small samples from being
-# presented as strategy conclusions.
 $env:AAQTS_AI_CHART_ANALYTICS_ENABLED = "true"
 $env:AAQTS_AI_CHART_ANALYTICS_MIN_FINALIZED = "30"
 $env:AAQTS_AI_CHART_ANALYTICS_MIN_BUCKET = "10"
 
-# Quality-v2 demo profile. The first research cohort was materially negative,
-# so do not loosen indicators or increase size. Require stronger trend/score,
-# two confirmations, better trade quality and more conservative portfolio
-# concentration while leaving the core strategy architecture unchanged.
-# Count-based and post-loss cooldown stoppages remain disabled; hard safety
-# protections such as news, drawdown, margin, spread and portfolio risk stay active.
+# Quality-v3-balanced demo profile: lower blunt threshold pressure while
+# requiring three confirmations for execution. Count/cooldown stoppages stay
+# disabled; hard news, drawdown, margin, spread and portfolio protections stay on.
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "3"
 $env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
@@ -106,20 +91,17 @@ $env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD"
 $env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "0"
 $env:AAQTS_BOT_INTERVAL_SECONDS = "300"
 $env:AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS = "10"
-$env:AAQTS_MIN_ADX = "18"
-$env:AAQTS_SIGNAL_SCORE_THRESHOLD = "50"
-$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS = "2"
-$env:AAQTS_MIN_TRADE_QUALITY = "50"
+$env:AAQTS_MIN_ADX = "16"
+$env:AAQTS_SIGNAL_SCORE_THRESHOLD = "45"
+$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS = "3"
+$env:AAQTS_MIN_TRADE_QUALITY = "45"
 $env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION = "0.85"
 $env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = "4.0"
-$env:AAQTS_MIN_REGIME_CONFIDENCE = "45"
+$env:AAQTS_MIN_REGIME_CONFIDENCE = "40"
 $env:PYTHONUNBUFFERED = "1"
 
-# Persist a non-secret startup manifest so operators can verify the exact
-# strategy/risk profile loaded by this engine instance. Never include account
-# credentials, Telegram tokens, or API keys in this file.
 $runtimeProfile = [ordered]@{
-    profile = "quality_v2"
+    profile = "quality_v3_balanced"
     generated_utc = (Get-Date).ToUniversalTime().ToString("o")
     execution_mode = $env:AAQTS_EXECUTION_MODE
     research_output_root = $env:AAQTS_AI_CHART_OUTPUT_ROOT
