@@ -81,7 +81,7 @@ def test_router_observer_return_value_cannot_change_decision(monkeypatch):
     assert captured["deterministic"] is routed
 
 
-def test_windows_launcher_uses_dpapi_key_and_observer_only_mode():
+def test_windows_launcher_uses_capture_only_observer_mode():
     root = Path(__file__).resolve().parents[1]
     launcher = (root / "scripts" / "windows" / "start-demo-engine.ps1").read_text(
         encoding="utf-8"
@@ -94,6 +94,8 @@ def test_windows_launcher_uses_dpapi_key_and_observer_only_mode():
     assert 'AAQTS_AI_CHART_MODE = "OBSERVER"' in launcher
     assert 'AAQTS_AI_CHART_ONLY_ACTIONABLE = "true"' in launcher
     assert 'AAQTS_AI_CHART_ENABLED = "true"' in launcher
+    assert 'AAQTS_AI_CHART_REMOTE_ENABLED = "false"' in launcher
+    assert "Remove-Item Env:OPENAI_API_KEY" in launcher
     assert "ConvertTo-SecureString" in launcher
     assert "ConvertFrom-SecureString" in setter
     assert "Read-Host" in setter
