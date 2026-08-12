@@ -69,7 +69,11 @@ $env:AAQTS_AI_CHART_TIMEOUT_SECONDS = "30"
 $env:AAQTS_AI_CHART_IMAGE_DETAIL = "high"
 $env:AAQTS_AI_CHART_MAX_OUTPUT_TOKENS = "1400"
 $env:AAQTS_AI_CHART_PROMPT_VERSION = "aaqts_chart_v1.0"
-$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis"
+
+# Keep the original negative cohort intact and collect the post-remediation
+# sample separately. This prevents old and new strategy policies from being
+# mixed into one expectancy/profit-factor estimate.
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v2"
 
 # Forward-only local outcome labels. These do not use OpenAI and do not affect
 # strategy, risk, execution, or position management.
@@ -84,24 +88,28 @@ $env:AAQTS_AI_CHART_ANALYTICS_ENABLED = "true"
 $env:AAQTS_AI_CHART_ANALYTICS_MIN_FINALIZED = "30"
 $env:AAQTS_AI_CHART_ANALYTICS_MIN_BUCKET = "10"
 
+# Quality-v2 demo profile. The first research cohort was materially negative,
+# so do not loosen indicators or increase size. Require stronger trend/score,
+# two confirmations, better trade quality and more conservative portfolio
+# concentration while leaving the core strategy architecture unchanged.
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
-$env:AAQTS_MT5_MAX_OPEN_POSITIONS = "5"
+$env:AAQTS_MT5_MAX_OPEN_POSITIONS = "3"
 $env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
 $env:AAQTS_RISK_PERCENT = "1.0"
-$env:AAQTS_MAX_CONSECUTIVE_LOSSES = "0"
-$env:AAQTS_MAX_DAILY_TRADES = "0"
+$env:AAQTS_MAX_CONSECUTIVE_LOSSES = "3"
+$env:AAQTS_MAX_DAILY_TRADES = "8"
 $env:AAQTS_NEWS_FILTER_ENABLED = "true"
 $env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD"
-$env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "0"
+$env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "30"
 $env:AAQTS_BOT_INTERVAL_SECONDS = "300"
 $env:AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS = "10"
-$env:AAQTS_MIN_ADX = "12"
-$env:AAQTS_SIGNAL_SCORE_THRESHOLD = "35"
-$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS = "1"
-$env:AAQTS_MIN_TRADE_QUALITY = "35"
-$env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION = "0.95"
-$env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = "5.0"
-$env:AAQTS_MIN_REGIME_CONFIDENCE = "35"
+$env:AAQTS_MIN_ADX = "18"
+$env:AAQTS_SIGNAL_SCORE_THRESHOLD = "50"
+$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS = "2"
+$env:AAQTS_MIN_TRADE_QUALITY = "50"
+$env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION = "0.85"
+$env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = "4.0"
+$env:AAQTS_MIN_REGIME_CONFIDENCE = "45"
 $env:PYTHONUNBUFFERED = "1"
 
 $previousEAP = $ErrorActionPreference
