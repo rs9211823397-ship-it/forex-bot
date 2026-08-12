@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -10,7 +11,7 @@ from ai.chart_analysis.observer import ChartObserver
 from ai.chart_analysis.store import ChartObservationStore
 
 
-def _frame(start: str, periods: int, frequency: str, close_delta: str) -> pd.DataFrame:
+def _frame(start: str, periods: int, frequency: str, close_delta: timedelta) -> pd.DataFrame:
     index = pd.date_range(start=start, periods=periods, freq=frequency, tz="UTC")
     base = pd.Series(range(periods), dtype=float).to_numpy() * 0.001 + 1.1
     frame = pd.DataFrame(
@@ -24,7 +25,7 @@ def _frame(start: str, periods: int, frequency: str, close_delta: str) -> pd.Dat
         index=index,
     )
     frame.index.name = "open_time"
-    frame["close_time"] = frame.index + pd.Timedelta(close_delta)
+    frame["close_time"] = frame.index + close_delta
     frame.attrs["source"] = "MT5"
     frame.attrs["broker_symbol"] = "EURUSDm"
     return frame
@@ -69,8 +70,8 @@ def test_capture_only_writes_evidence_without_remote_call(tmp_path):
         client=_ForbiddenClient(),
         store=ChartObservationStore(config),
     )
-    lower = _frame("2026-08-12T00:00:00Z", 40, "15min", "15min")
-    higher = _frame("2026-08-11T12:00:00Z", 12, "1h", "1h")
+    lower = _frame("2026-08-12T00:00:00Z", 40, "15min", timedelta(minutes=15))
+    higher = _frame("2026-08-11T12:00:00Z", 12, "1h", timedelta(hours=1))
 
     try:
         assert observer.observe(
@@ -89,12 +90,14 @@ def test_capture_only_writes_evidence_without_remote_call(tmp_path):
         assert status["captured"] == 1
         assert status["completed"] == 0
         assert status["errors"] == 0
+        assert status["analytics"]["enabled"] is True
 
         assert len(list(tmp_path.glob("*/*/input.json"))) == 1
         assert len(list(tmp_path.glob("*/*/capture.json"))) == 1
         assert len(list(tmp_path.glob("*/*/m15.png"))) == 1
         assert len(list(tmp_path.glob("*/*/h1.png"))) == 1
         assert len(list(tmp_path.glob("*/*/analysis.json"))) == 0
+        assert (tmp_path / "analytics_summary.json").exists()
         index = (tmp_path / "observations.jsonl").read_text(encoding="utf-8")
         assert '"status":"CAPTURED"' in index
         assert '"status":"ERROR"' not in index
