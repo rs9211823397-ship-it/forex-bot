@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -253,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=os.getenv("AAQTS_AI_RESEARCH_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        stream=sys.stdout,
     )
     watcher = ResearchMilestoneWatcher()
     if args.once:
