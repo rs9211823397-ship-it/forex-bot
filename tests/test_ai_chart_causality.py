@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +12,7 @@ from ai.chart_analysis.schema import ChartAnalysis
 from ai.chart_analysis.store import ChartObservationStore
 
 
-def _frame(start: str, periods: int, frequency: str, close_delta: str) -> pd.DataFrame:
+def _frame(start: str, periods: int, frequency: str, close_delta: timedelta) -> pd.DataFrame:
     index = pd.date_range(start=start, periods=periods, freq=frequency, tz="UTC")
     values = [1.10 + index * 0.001 for index in range(periods)]
     frame = pd.DataFrame(
@@ -24,7 +25,7 @@ def _frame(start: str, periods: int, frequency: str, close_delta: str) -> pd.Dat
         },
         index=index,
     )
-    frame["close_time"] = frame.index + pd.Timedelta(close_delta)
+    frame["close_time"] = frame.index + close_delta
     frame.attrs["source"] = "MT5"
     return frame
 
@@ -91,10 +92,10 @@ def test_observer_removes_future_h1_rows_before_indicator_calculation(tmp_path):
     guard = _GuardIndicators()
     observer.indicators = guard
 
-    lower = _frame("2026-08-12T00:00:00Z", 3, "15min", "15min")
+    lower = _frame("2026-08-12T00:00:00Z", 3, "15min", timedelta(minutes=15))
     # Two of these H1 candles close after the M15 as_of=00:45 and must never
     # enter the indicator function.
-    higher = _frame("2026-08-11T22:00:00Z", 4, "1h", "1h")
+    higher = _frame("2026-08-11T22:00:00Z", 4, "1h", timedelta(hours=1))
 
     try:
         assert observer.observe(
