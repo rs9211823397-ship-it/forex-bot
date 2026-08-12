@@ -93,15 +93,17 @@ $env:AAQTS_AI_CHART_ANALYTICS_MIN_BUCKET = "10"
 # so do not loosen indicators or increase size. Require stronger trend/score,
 # two confirmations, better trade quality and more conservative portfolio
 # concentration while leaving the core strategy architecture unchanged.
+# Count-based and post-loss cooldown stoppages remain disabled; hard safety
+# protections such as news, drawdown, margin, spread and portfolio risk stay active.
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "3"
 $env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
 $env:AAQTS_RISK_PERCENT = "1.0"
-$env:AAQTS_MAX_CONSECUTIVE_LOSSES = "3"
-$env:AAQTS_MAX_DAILY_TRADES = "8"
+$env:AAQTS_MAX_CONSECUTIVE_LOSSES = "0"
+$env:AAQTS_MAX_DAILY_TRADES = "0"
 $env:AAQTS_NEWS_FILTER_ENABLED = "true"
 $env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD"
-$env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "30"
+$env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "0"
 $env:AAQTS_BOT_INTERVAL_SECONDS = "300"
 $env:AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS = "10"
 $env:AAQTS_MIN_ADX = "18"
