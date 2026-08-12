@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $python = Join-Path $Repository ".venv\Scripts\python.exe"
 $runtime = Join-Path $Repository "runtime"
 $passwordFile = Join-Path $runtime "secrets\mt5_demo_password.dpapi"
+$openaiKeyFile = Join-Path $runtime "secrets\openai_api_key.dpapi"
 $loginFile = Join-Path $runtime "mt5_expected_login.txt"
 $serverFile = Join-Path $runtime "mt5_demo_server.txt"
 
@@ -42,6 +43,30 @@ if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $loginFi
     $env:AAQTS_MT5_PASSWORD = ""
     $env:AAQTS_MT5_SERVER = ""
 }
+
+# Phase AI-1 is observer-only. The OpenAI key is stored as user-bound DPAPI
+# ciphertext under runtime/secrets and is decrypted only into this process.
+# Missing key material disables the observer without affecting trading.
+if (Test-Path -LiteralPath $openaiKeyFile) {
+    $secureOpenAIKey = Get-Content -LiteralPath $openaiKeyFile -Raw | ConvertTo-SecureString
+    $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secureOpenAIKey).Password
+    $env:AAQTS_AI_CHART_ENABLED = "true"
+} else {
+    Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
+    $env:AAQTS_AI_CHART_ENABLED = "false"
+}
+$env:AAQTS_AI_CHART_MODE = "OBSERVER"
+$env:AAQTS_AI_CHART_MODEL = "gpt-5"
+$env:AAQTS_AI_CHART_ONLY_ACTIONABLE = "true"
+$env:AAQTS_AI_CHART_MAX_INFLIGHT = "2"
+$env:AAQTS_AI_CHART_LOWER_RENDER_BARS = "96"
+$env:AAQTS_AI_CHART_HIGHER_RENDER_BARS = "96"
+$env:AAQTS_AI_CHART_NUMERIC_BARS = "24"
+$env:AAQTS_AI_CHART_TIMEOUT_SECONDS = "30"
+$env:AAQTS_AI_CHART_IMAGE_DETAIL = "high"
+$env:AAQTS_AI_CHART_MAX_OUTPUT_TOKENS = "1400"
+$env:AAQTS_AI_CHART_PROMPT_VERSION = "aaqts_chart_v1.0"
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis"
 
 $env:AAQTS_MT5_FIXED_LOT = "0.05"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "5"
