@@ -35,6 +35,7 @@ $env:AAQTS_RUNTIME_DIR = $runtime
 $env:AAQTS_MT5_TERMINAL_PATH = $TerminalPath
 $env:AAQTS_MT5_SYMBOL_SUFFIX = "m"
 $env:AAQTS_MT5_EXPECTED_LOGIN_FILE = $loginFile
+$env:PYTHONPATH = $Repository
 
 if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $serverFile)) {
     $securePassword = Get-Content -LiteralPath $passwordFile -Raw | ConvertTo-SecureString
