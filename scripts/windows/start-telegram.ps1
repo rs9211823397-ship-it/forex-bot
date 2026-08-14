@@ -34,7 +34,7 @@ $env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD"
 
 $previousEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& $python -m telegram_bot.bot 1>> (Join-Path $runtime "telegram.log") 2>> (Join-Path $runtime "telegram-error.log")
+& $python -m telegram_bot.native_24h_entry 1>> (Join-Path $runtime "telegram.log") 2>> (Join-Path $runtime "telegram-error.log")
 $pythonExitCode = $LASTEXITCODE
 $ErrorActionPreference = $previousEAP
 exit $pythonExitCode
