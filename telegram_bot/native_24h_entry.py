@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from telegram.error import TelegramError
+from telegram.ext import CommandHandler
 
 from telegram_bot import bot as base
 from telegram_bot.alert_monitor import load_subscribers
@@ -27,6 +28,7 @@ _BASE_HOME_TEXT = base._home_text
 _BASE_STATUS_COMMAND = base.status_command
 _BASE_POST_INIT = base.post_init
 _BASE_POST_SHUTDOWN = base.post_shutdown
+_BASE_MAIN = base.main
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -55,7 +57,8 @@ def native_state() -> dict[str, Any]:
     age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
     if age < -5 or age > FRESH_SECONDS:
         return {}
-    if str(state.get("mode", "")).upper() != "INDICATOR_NATIVE_24H":
+    mode = str(state.get("mode", "")).upper()
+    if mode not in {"INDICATOR_NATIVE_24H", "INDICATOR_NATIVE_24H_CONFIRMED"}:
         return {}
     return state
 
@@ -93,11 +96,11 @@ def _native_summary(role_name: str) -> str:
     return (
         "🧪 AAQTS INDICATOR 24H\n\n"
         "Account: Exness Demo · MT5 DEMO\n"
-        f"Mode: {state.get('mode', 'INDICATOR_NATIVE_24H')}\n"
+        f"Mode: {state.get('mode', 'INDICATOR_NATIVE_24H_CONFIRMED')}\n"
         f"State: {state.get('state', 'UNKNOWN')}\n"
         f"Symbol: {state.get('broker_symbol', 'BTCUSDm')}\n"
         f"Timeframe: {state.get('timeframe', '15m')}\n"
-        "Execution: confirmed 15m Half Trend signals\n"
+        "Execution: confirmed closed-15m Half Trend signals\n"
         "LuxAlgo: liquidity context only\n"
         f"Last event: {last_event}\n"
         f"Last signal: {side} · {indicator} · {subtype}\n"
@@ -234,7 +237,43 @@ def main() -> None:
     base.status_command = patched_status_command
     base.post_init = patched_post_init
     base.post_shutdown = patched_post_shutdown
-    base.main()
+
+    # base.main() registers handlers using function objects captured from the
+    # base module. Replace the status handler after Application construction by
+    # wrapping Application.add_handler during startup so /status is guaranteed
+    # to point at this overlay rather than the stale base handler.
+    original_builder = base.Application.builder
+
+    class _BuilderProxy:
+        def __init__(self, builder):
+            self._builder = builder
+
+        def __getattr__(self, name):
+            attr = getattr(self._builder, name)
+            if callable(attr):
+                def wrapped(*args, **kwargs):
+                    result = attr(*args, **kwargs)
+                    return self if result is self._builder else result
+                return wrapped
+            return attr
+
+        def build(self):
+            app = self._builder.build()
+            original_add_handler = app.add_handler
+
+            def add_handler(handler, group=0):
+                if isinstance(handler, CommandHandler) and "status" in handler.commands:
+                    handler = CommandHandler("status", patched_status_command)
+                return original_add_handler(handler, group)
+
+            app.add_handler = add_handler
+            return app
+
+    base.Application.builder = classmethod(lambda cls: _BuilderProxy(original_builder()))
+    try:
+        _BASE_MAIN()
+    finally:
+        base.Application.builder = original_builder
 
 
 if __name__ == "__main__":
