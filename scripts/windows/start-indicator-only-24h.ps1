@@ -51,8 +51,14 @@ if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $serverF
 
 if (-not (Test-Path -LiteralPath $secretFile)) {
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    Set-Content -LiteralPath $secretFile -Value ([Convert]::ToHexString($bytes).ToLowerInvariant()) -Encoding ascii -NoNewline
+    $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
+    $secret = ([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLowerInvariant()
+    Set-Content -LiteralPath $secretFile -Value $secret -Encoding ascii -NoNewline
 }
 $env:AAQTS_INDICATOR_WEBHOOK_SECRET = (Get-Content -LiteralPath $secretFile -Raw).Trim()
 $env:AAQTS_INDICATOR_ALLOWED_SYMBOLS = $AllowedSymbols
