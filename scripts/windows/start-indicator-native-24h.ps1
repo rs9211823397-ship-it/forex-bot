@@ -22,9 +22,16 @@ New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 Set-Location $Repository
 $env:PYTHONPATH = $Repository
 
-# Stop standard AAQTS engine and any prior indicator-only workers.
+# Stop and disable the standard AAQTS engine for the full indicator-only test.
+# Disabling prevents another launcher/finally block or a scheduled trigger from
+# accidentally re-starting main.py while this isolated experiment is active.
 $task = Get-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
-if ($task) { Stop-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue }
+$taskWasEnabled = $false
+if ($task) {
+    $taskWasEnabled = ($task.State -ne 'Disabled')
+    Stop-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
+    Disable-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue | Out-Null
+}
 Get-CimInstance Win32_Process |
     Where-Object {
         $_.Name -eq "python.exe" -and (
@@ -62,7 +69,7 @@ Write-Host "Timeframe: 15m HARD LOCK"
 Write-Host "LuxAlgo: Swings 5 | Wicks + Outbreaks & Retest | Extend ON | Max bars 300"
 Write-Host "AlgoAlpha: Amplitude 2 | Channel Deviation 2 | Linear Regression 7"
 Write-Host "Poll interval: 1 second"
-Write-Host "Normal AAQTS Demo Engine: PAUSED"
+Write-Host "Normal AAQTS Demo Engine: DISABLED for isolated test"
 Write-Host "TP rule: next opposite signal closes current trade and immediately opens next trade"
 
 $previous = $ErrorActionPreference
@@ -72,6 +79,9 @@ try {
     $exitCode = $LASTEXITCODE
 } finally {
     $ErrorActionPreference = $previous
-    if ($task) { Start-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue }
+    if ($task -and $taskWasEnabled) {
+        Enable-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue | Out-Null
+        Start-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
+    }
 }
 exit $exitCode
