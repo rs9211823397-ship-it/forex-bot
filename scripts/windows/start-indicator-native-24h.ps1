@@ -22,9 +22,7 @@ New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 Set-Location $Repository
 $env:PYTHONPATH = $Repository
 
-# Stop and disable the standard AAQTS engine for the full indicator-only test.
-# Disabling prevents another launcher/finally block or a scheduled trigger from
-# accidentally re-starting main.py while this isolated experiment is active.
+# Stop and disable standard AAQTS for the isolated 24h indicator test.
 $task = Get-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
 $taskWasEnabled = $false
 if ($task) {
@@ -37,7 +35,8 @@ Get-CimInstance Win32_Process |
         $_.Name -eq "python.exe" -and (
             $_.CommandLine -match "forex-bot.*main\.py" -or
             $_.CommandLine -match "indicator_only_24h\.py" -or
-            $_.CommandLine -match "indicator_native_24h\.py"
+            $_.CommandLine -match "indicator_native_24h\.py" -or
+            $_.CommandLine -match "indicator_native_24h_confirmed\.py"
         )
     } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
@@ -55,7 +54,6 @@ $env:AAQTS_MT5_PASSWORD = [System.Net.NetworkCredential]::new('', $securePasswor
 $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
 $env:AAQTS_MT5_USE_PREAUTHENTICATED_SESSION = "false"
 
-# Native indicator test settings.
 $env:AAQTS_INDICATOR_DURATION_HOURS = "24"
 $env:AAQTS_INDICATOR_NATIVE_POLL_SECONDS = "1.0"
 $env:AAQTS_INDICATOR_NATIVE_HISTORY_BARS = "500"
@@ -63,19 +61,18 @@ $env:AAQTS_INDICATOR_FIXED_LOT = "0.05"
 $env:AAQTS_INDICATOR_STOP_PERCENT = "1.0"
 $env:AAQTS_INDICATOR_MAX_SPREAD_STOP_RATIO = "0.35"
 
-Write-Host "AAQTS INDICATOR_NATIVE_24H"
-Write-Host "Data: Exness MT5 BTCUSDm live M15 candles"
-Write-Host "Timeframe: 15m HARD LOCK"
-Write-Host "LuxAlgo: Swings 5 | Wicks + Outbreaks & Retest | Extend ON | Max bars 300"
-Write-Host "AlgoAlpha: Amplitude 2 | Channel Deviation 2 | Linear Regression 7"
-Write-Host "Poll interval: 1 second"
+Write-Host "AAQTS INDICATOR_NATIVE_24H CONFIRMED"
+Write-Host "Data: Exness MT5 BTCUSDm M15 candles"
+Write-Host "Execution: CLOSED 15m CANDLES ONLY"
+Write-Host "LuxAlgo: Swings 5 | Wicks + Outbreaks & Retest | Extend ON | Max bars 300 | CONTEXT ONLY"
+Write-Host "AlgoAlpha: Amplitude 2 | Channel Deviation 2 | Linear Regression 7 | ENTRY/REVERSAL SIGNAL"
 Write-Host "Normal AAQTS Demo Engine: DISABLED for isolated test"
-Write-Host "TP rule: next opposite signal closes current trade and immediately opens next trade"
+Write-Host "TP rule: next opposite confirmed Half Trend signal closes current trade and opens next trade"
 
 $previous = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
-    & $python .\scripts\indicator_native_24h.py 1>> $logFile 2>> $errorFile
+    & $python .\scripts\indicator_native_24h_confirmed.py 1>> $logFile 2>> $errorFile
     $exitCode = $LASTEXITCODE
 } finally {
     $ErrorActionPreference = $previous
