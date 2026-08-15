@@ -1,8 +1,7 @@
 param(
     [string]$Repository = "$env:USERPROFILE\forex-bot",
     [string]$TerminalPath = "C:\Program Files\Exness JO MT5 Terminal\terminal64.exe",
-    [string]$AllowedSymbols = "BTCUSD",
-    [int]$WebhookPort = 80
+    [string]$AllowedSymbols = "BTCUSD"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,7 +10,6 @@ $runtime = Join-Path $Repository "runtime"
 $passwordFile = Join-Path $runtime "secrets\mt5_demo_password.dpapi"
 $loginFile = Join-Path $runtime "mt5_expected_login.txt"
 $serverFile = Join-Path $runtime "mt5_demo_server.txt"
-$secretFile = Join-Path $runtime "indicator_only_webhook_secret.txt"
 $logFile = Join-Path $runtime "indicator-only-24h.log"
 $errorFile = Join-Path $runtime "indicator-only-24h-error.log"
 
@@ -21,8 +19,7 @@ if (-not (Test-Path -LiteralPath $loginFile)) { throw "Pinned demo login file mi
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 Set-Location $Repository
 
-# Pause the normal signal engine for this experiment. Position execution will
-# be owned exclusively by scripts/indicator_only_24h.py.
+# Pause the normal AAQTS engine so this temporary experiment owns execution.
 $task = Get-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
 if ($task) {
     Stop-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
@@ -57,28 +54,23 @@ if ((Test-Path -LiteralPath $passwordFile) -and (Test-Path -LiteralPath $serverF
     $env:AAQTS_MT5_SERVER = ""
 }
 
-if (-not (Test-Path -LiteralPath $secretFile)) {
-    $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    $secret = [Convert]::ToHexString($bytes).ToLowerInvariant()
-    Set-Content -LiteralPath $secretFile -Value $secret -Encoding ascii -NoNewline
-}
-$env:AAQTS_INDICATOR_WEBHOOK_SECRET = (Get-Content -LiteralPath $secretFile -Raw).Trim()
 $env:AAQTS_INDICATOR_ALLOWED_SYMBOLS = $AllowedSymbols
 $env:AAQTS_INDICATOR_DURATION_HOURS = "24"
-$env:AAQTS_INDICATOR_WEBHOOK_HOST = "0.0.0.0"
-$env:AAQTS_INDICATOR_WEBHOOK_PORT = "$WebhookPort"
+$env:AAQTS_INDICATOR_POLL_SECONDS = "5"
 $env:AAQTS_INDICATOR_FIXED_LOT = "0.05"
 $env:AAQTS_INDICATOR_STOP_PERCENT = "1.0"
 $env:AAQTS_INDICATOR_MAX_SPREAD_STOP_RATIO = "0.35"
 
-Write-Host "AAQTS INDICATOR_ONLY_24H"
-Write-Host "Timeframe: 15m HARD LOCK"
+Write-Host "AAQTS UTBOT_EMA200_24H"
+Write-Host "Timeframe: 15m CLOSED CANDLES"
+Write-Host "UT Bot: Key Value 3 / ATR Period 10"
+Write-Host "EMA filter: 200"
 Write-Host "Symbols: $AllowedSymbols"
-Write-Host "Webhook port: $WebhookPort"
-Write-Host "Webhook secret file: $secretFile"
 Write-Host "Normal AAQTS Demo Engine: PAUSED"
-Write-Host "TP rule: current trade closes at next opposite signal; same event opens next trade"
+Write-Host "Entry: BUY only above EMA200; SELL only below EMA200"
+Write-Host "Exit: next opposite UT Bot signal"
+Write-Host "Reverse entry: only if new side passes EMA200 filter"
+Write-Host "Emergency broker stop: 1% catastrophe protection"
 
 $previous = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
@@ -87,8 +79,7 @@ try {
     $exitCode = $LASTEXITCODE
 } finally {
     $ErrorActionPreference = $previous
-    # Restore the normal engine when the 24-hour experiment ends or the service
-    # is intentionally stopped. This does not hide a non-zero experiment exit.
+    # Restore normal AAQTS after the 24-hour experiment ends or is stopped.
     if ($task) {
         Start-ScheduledTask -TaskName "AAQTS-Demo-Engine" -ErrorAction SilentlyContinue
     }
