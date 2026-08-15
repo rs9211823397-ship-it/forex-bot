@@ -1,76 +1,57 @@
-# AAQTS Indicator-Only 24H Experiment
+# AAQTS UT Bot + EMA200 24H Experiment
 
-This temporary mode pauses the normal AAQTS strategy engine and accepts only TradingView alerts from these exact chart settings:
+This temporary mode pauses the normal AAQTS strategy engine and runs one simple BTCUSD strategy directly from MT5 15-minute closed candles.
 
-- **LuxAlgo - Liquidity Sweeps**: Swings `5`, Options `Only Wicks`, Extend `On`, Max bars `300`.
-- **AlgoAlpha - Half Trend**: Amplitude `2`, Channel Deviation `2`, Linear Regression Length `7`.
-- **Timeframe**: hard-locked to `15m`.
+## Strategy
 
-The direction comes only from the TradingView alert. Existing AAQTS regime/ADX/RSI/EMA/HTF/quality/context filters do not participate in direction selection during this experiment.
+- **Timeframe:** `15m`
+- **UT Bot Key Value / Sensitivity:** `3`
+- **UT Bot ATR Period:** `10`
+- **EMA filter:** `200`
+- **BUY:** only on a fresh UT Bot BUY signal when the closed candle is above EMA200.
+- **SELL:** only on a fresh UT Bot SELL signal when the closed candle is below EMA200.
+- A BUY below EMA200 is ignored for entry.
+- A SELL above EMA200 is ignored for entry.
 
-Safety checks remain active in the dedicated executor: MT5 demo identity pinning, fresh quote validation, duplicate-direction blocking, spread/stop ratio limit, free-margin validation, broker minimum stop distance, a protective broker-side stop, and a separate magic number so experiment positions are isolated from normal AAQTS positions.
+No TradingView webhook is required. The Python service calculates ATR(10), the UT Bot trailing stop, signal flips and EMA200 directly from Exness MT5 candle data every few seconds, acting only once per newly closed 15-minute bar.
 
-## Dynamic TP rule
+## Exit / next-entry rule
 
-A future opposite signal cannot be known when the original order is opened, so no fixed broker TP is submitted. Instead, the next opposite valid 15m alert closes the current position at market and immediately opens the new opposite position. The close price of the old trade and the entry event of the new trade are logged together. This implements the requested rule: **the current trade exits/targets at the next trade's entry event**.
+The normal exit is the **next opposite UT Bot signal**.
 
-Same-direction duplicate alerts do not stack positions; they are logged and ignored.
+If a SELL is open and the next UT Bot signal is BUY, the SELL is closed even if the BUY is still below EMA200. The BUY is opened only when the BUY signal also passes the EMA200 filter. The mirror rule applies to a BUY followed by a SELL.
 
-## TradingView alert payloads
+No fixed broker TP is submitted. The next opposite UT Bot signal is the logical exit event. A separate 1% broker-side catastrophe stop remains enabled only as emergency protection against connectivity/process failure or an extreme move; it is not the intended strategy exit.
 
-Create four alerts (BUY/SELL for each indicator) on the 15-minute chart. Use the webhook URL:
+Same-direction signals never stack positions.
 
-`http://<VPS_PUBLIC_IP>/webhook/tradingview`
+## Safety retained
 
-The service only accepts JSON. Read the secret from `runtime/indicator_only_webhook_secret.txt` after the launcher creates it and replace `<SECRET>` below.
+The temporary executor keeps MT5 demo-account identity pinning, fresh quote validation, one managed position per symbol, spread/stop ratio validation, free-margin validation, broker minimum-stop validation and a dedicated magic number. Normal AAQTS regime, RSI, ADX, HTF, quality and contextual strategy filters do not participate in this 24-hour test.
 
-### LuxAlgo bullish sweep
+## Windows launch
 
-```json
-{"secret":"<SECRET>","indicator":"LuxAlgo - Liquidity Sweeps","symbol":"{{ticker}}","timeframe":"{{interval}}","side":"BUY","bar_time":"{{time}}","alert_id":"LUX_BUY_{{ticker}}_{{time}}"}
-```
-
-### LuxAlgo bearish sweep
-
-```json
-{"secret":"<SECRET>","indicator":"LuxAlgo - Liquidity Sweeps","symbol":"{{ticker}}","timeframe":"{{interval}}","side":"SELL","bar_time":"{{time}}","alert_id":"LUX_SELL_{{ticker}}_{{time}}"}
-```
-
-### AlgoAlpha Half Trend bullish signal
-
-```json
-{"secret":"<SECRET>","indicator":"AlgoAlpha - Half Trend","symbol":"{{ticker}}","timeframe":"{{interval}}","side":"BUY","bar_time":"{{time}}","alert_id":"HALF_BUY_{{ticker}}_{{time}}"}
-```
-
-### AlgoAlpha Half Trend bearish signal
-
-```json
-{"secret":"<SECRET>","indicator":"AlgoAlpha - Half Trend","symbol":"{{ticker}}","timeframe":"{{interval}}","side":"SELL","bar_time":"{{time}}","alert_id":"HALF_SELL_{{ticker}}_{{time}}"}
-```
-
-If TradingView displays a different exact alert-condition label, select the indicator's bullish/bearish condition in the TradingView alert dialog; the JSON message above determines the side sent to AAQTS.
-
-## VPS launch
-
-Run from an Administrator PowerShell in the repository after switching to the experiment branch:
+Switch to branch `agent/indicator-only-24h`, pull the latest commits, then run from Administrator PowerShell:
 
 ```powershell
 .\scripts\windows\start-indicator-only-24h.ps1
 ```
 
-By default it allows `BTCUSD`, listens on port `80`, uses fixed lot `0.05`, and uses a 1% protective catastrophe stop. These are execution protections, not signal-generation filters.
+Defaults:
 
-The launcher pauses `AAQTS-Demo-Engine`, runs this mode for at most 24 hours, and starts the normal engine again when the experiment process exits.
+- Symbol: `BTCUSD`
+- Fixed lot: `0.05`
+- Duration: maximum `24` hours
+- Poll interval: `5` seconds
+- Emergency catastrophe stop: `1%`
 
-## AWS
-
-TradingView must be able to reach the VPS. The EC2 security group therefore needs an inbound TCP rule for the webhook port from the internet or from an appropriately restricted source. Keep RDP/3389 restricted to the operator IP; do not broaden RDP because of this experiment.
+The launcher pauses `AAQTS-Demo-Engine` for the experiment and starts the normal engine again when the temporary process exits.
 
 ## Runtime evidence
 
 - Status: `runtime/indicator_only_24h_status.json`
-- Event/trade log: `runtime/indicator_only_24h.jsonl`
+- Bar/signal/trade events: `runtime/indicator_only_24h.jsonl`
 - Standard output: `runtime/indicator-only-24h.log`
 - Errors: `runtime/indicator-only-24h-error.log`
 
-The service records accepted/rejected alerts, execution blocks, execution latency, prior-trade close fill, and new-trade entry fill for later comparison with `quality_v3_balanced`.
+Each newly closed 15m candle records the close, EMA200, ATR10, UT trailing stop, generated signal and whether the EMA entry filter passed. Trade events record the prior position close and any new entry so the 24-hour test can be reviewed afterward.
