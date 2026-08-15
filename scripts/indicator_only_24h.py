@@ -1,23 +1,18 @@
-"""Temporary 24-hour TradingView indicator-only execution mode.
+"""Temporary 24-hour UT Bot + EMA200 execution mode.
 
-Direction is supplied by TradingView alerts from the two approved indicators:
-- LuxAlgo - Liquidity Sweeps (Swings 5, Only Wicks, Max bars 300)
-- AlgoAlpha - Half Trend (Amplitude 2, Channel Deviation 2, Linear Regression 7)
+Strategy (hard-locked to 15-minute closed candles):
+- UT Bot sensitivity/key value: 3
+- ATR period: 10
+- EMA trend filter: 200
+- BUY entry only when a fresh UT Bot BUY signal occurs and close > EMA200.
+- SELL entry only when a fresh UT Bot SELL signal occurs and close < EMA200.
+- A fresh opposite UT Bot signal ALWAYS closes the current managed position.
+- After that close, the opposite position is opened only if its EMA200 filter passes.
+- No fixed broker TP is used. The next opposite UT Bot signal is the normal exit.
 
-The service hard-locks alerts to a 15-minute timeframe. AAQTS strategy/regime
-filters are intentionally bypassed for this temporary mode, while broker/demo
-identity checks, spread, margin, duplicate-direction and protective-stop checks
-remain active.
-
-The user's dynamic TP rule is implemented as a signal-to-signal reversal:
-when the next opposite valid alert arrives, the current position is closed at
-market and the new opposite position is opened immediately. The close fill of
-that prior position is therefore its logical TP/exit and the next trade's entry
-is taken from the same reversal event. No fixed broker TP is submitted because
-that future price is unknowable at the time of the original entry.
-
-This module is deliberately standalone so the normal AAQTS engine can be
-stopped for the 24-hour experiment without altering production strategy logic.
+The mode reads MT5 candles directly; no TradingView webhook is required. A broker-side
+catastrophe stop remains as an emergency execution protection and is not part of the
+normal strategy exit logic.
 """
 
 from __future__ import annotations
@@ -25,18 +20,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-import queue
-import secrets
 import signal
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from config.settings import (
     MT5_EXPECTED_LOGIN,
@@ -53,15 +44,14 @@ from config.symbols import symbol_by_broker
 from mt5_ipc import serialized_mt5_call
 
 
-LOGGER = logging.getLogger("aaqts.indicator_only")
-MAGIC = 20260814
-MODE_NAME = "INDICATOR_ONLY_24H"
-APPROVED_INDICATORS = {
-    "LUXALGO_LIQUIDITY_SWEEPS": "LuxAlgo - Liquidity Sweeps",
-    "ALGOALPHA_HALF_TREND": "AlgoAlpha - Half Trend",
-}
-VALID_SIDES = {"BUY", "SELL"}
-EXPECTED_TIMEFRAME = "15"
+LOGGER = logging.getLogger("aaqts.utbot_ema_24h")
+MAGIC = 20260815
+MODE_NAME = "UTBOT_EMA200_24H"
+TIMEFRAME = "15m"
+UT_KEY_VALUE = 3.0
+UT_ATR_PERIOD = 10
+EMA_PERIOD = 200
+MIN_BARS = 260
 
 
 def _utc_now() -> datetime:
@@ -90,12 +80,6 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
-def _normalize_timeframe(value: object) -> str:
-    text = str(value or "").strip().lower()
-    aliases = {"15m": "15", "15min": "15", "15minute": "15", "15minutes": "15"}
-    return aliases.get(text, text)
-
-
 def _normalize_symbol(value: object) -> str:
     text = str(value or "").strip().upper().replace("/", "")
     for prefix in ("BITSTAMP:", "BINANCE:", "COINBASE:", "OANDA:", "FOREXCOM:"):
@@ -104,29 +88,135 @@ def _normalize_symbol(value: object) -> str:
     return text
 
 
-def _normalize_indicator(value: object) -> str:
-    text = " ".join(str(value or "").strip().upper().replace("_", " ").split())
-    if "LUXALGO" in text and "LIQUIDITY" in text and "SWEEP" in text:
-        return "LUXALGO_LIQUIDITY_SWEEPS"
-    if "ALGOALPHA" in text and "HALF" in text and "TREND" in text:
-        return "ALGOALPHA_HALF_TREND"
-    return str(value or "").strip().upper()
+def _ema(values: Sequence[float], period: int) -> list[float]:
+    if period <= 0 or not values:
+        return []
+    alpha = 2.0 / (period + 1.0)
+    result = [float(values[0])]
+    for value in values[1:]:
+        result.append(alpha * float(value) + (1.0 - alpha) * result[-1])
+    return result
+
+
+def _true_ranges(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float]) -> list[float]:
+    if not (len(highs) == len(lows) == len(closes)):
+        raise ValueError("OHLC arrays must have equal length")
+    if not closes:
+        return []
+    out: list[float] = []
+    for i in range(len(closes)):
+        if i == 0:
+            out.append(float(highs[i]) - float(lows[i]))
+            continue
+        prev_close = float(closes[i - 1])
+        out.append(
+            max(
+                float(highs[i]) - float(lows[i]),
+                abs(float(highs[i]) - prev_close),
+                abs(float(lows[i]) - prev_close),
+            )
+        )
+    return out
+
+
+def _rma(values: Sequence[float], period: int) -> list[float]:
+    """TradingView-style Wilder RMA seeded with an SMA once enough values exist."""
+    if period <= 0 or not values:
+        return []
+    result = [float("nan")] * len(values)
+    if len(values) < period:
+        return result
+    seed = sum(float(v) for v in values[:period]) / period
+    result[period - 1] = seed
+    alpha = 1.0 / period
+    for i in range(period, len(values)):
+        result[i] = alpha * float(values[i]) + (1.0 - alpha) * result[i - 1]
+    return result
 
 
 @dataclass(frozen=True)
-class Alert:
-    alert_id: str
-    indicator: str
-    symbol: str
-    timeframe: str
-    side: str
-    received_at: datetime
-    bar_time: str
-    raw: dict[str, Any]
+class StrategySnapshot:
+    bar_time: int
+    close: float
+    ema200: float
+    atr: float
+    trailing_stop: float
+    signal: str | None
+    entry_allowed: bool
+
+
+def calculate_utbot_ema_snapshot(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    times: Sequence[int],
+    *,
+    key_value: float = UT_KEY_VALUE,
+    atr_period: int = UT_ATR_PERIOD,
+    ema_period: int = EMA_PERIOD,
+) -> StrategySnapshot:
+    """Calculate the latest closed-bar UT Bot signal and EMA200 filter state."""
+    if not (len(highs) == len(lows) == len(closes) == len(times)):
+        raise ValueError("OHLC/time arrays must have equal length")
+    if len(closes) < max(atr_period + 3, ema_period + 3):
+        raise ValueError("not enough closed candles")
+
+    closes_f = [float(v) for v in closes]
+    atrs = _rma(_true_ranges(highs, lows, closes_f), atr_period)
+    ema_values = _ema(closes_f, ema_period)
+    stops = [float("nan")] * len(closes_f)
+
+    first = atr_period - 1
+    if not isfinite(atrs[first]):
+        raise ValueError("ATR seed unavailable")
+    stops[first] = closes_f[first] - key_value * atrs[first]
+
+    for i in range(first + 1, len(closes_f)):
+        atr = atrs[i]
+        if not isfinite(atr):
+            continue
+        nloss = key_value * atr
+        prev_stop = stops[i - 1]
+        if not isfinite(prev_stop):
+            prev_stop = closes_f[i - 1] - nloss
+        src = closes_f[i]
+        prev_src = closes_f[i - 1]
+        if src > prev_stop and prev_src > prev_stop:
+            stops[i] = max(prev_stop, src - nloss)
+        elif src < prev_stop and prev_src < prev_stop:
+            stops[i] = min(prev_stop, src + nloss)
+        elif src > prev_stop:
+            stops[i] = src - nloss
+        else:
+            stops[i] = src + nloss
+
+    i = len(closes_f) - 1
+    prev = i - 1
+    signal: str | None = None
+    if closes_f[i] > stops[i] and closes_f[prev] <= stops[prev]:
+        signal = "BUY"
+    elif closes_f[i] < stops[i] and closes_f[prev] >= stops[prev]:
+        signal = "SELL"
+
+    ema200 = float(ema_values[i])
+    close = closes_f[i]
+    entry_allowed = bool(
+        (signal == "BUY" and close > ema200)
+        or (signal == "SELL" and close < ema200)
+    )
+    return StrategySnapshot(
+        bar_time=int(times[i]),
+        close=close,
+        ema200=ema200,
+        atr=float(atrs[i]),
+        trailing_stop=float(stops[i]),
+        signal=signal,
+        entry_allowed=entry_allowed,
+    )
 
 
 class IndicatorOnlyBroker:
-    """Minimal demo-only execution adapter for the temporary indicator test."""
+    """Minimal demo-only execution adapter for the temporary strategy test."""
 
     def __init__(self) -> None:
         try:
@@ -135,12 +225,8 @@ class IndicatorOnlyBroker:
             raise RuntimeError("MetaTrader5 package is required on the VPS") from exc
         self.mt5 = mt5
         self.fixed_lot = _env_float(
-            "AAQTS_INDICATOR_FIXED_LOT",
-            float(MT5_FIXED_LOT),
-            minimum=0.01,
-            maximum=100.0,
+            "AAQTS_INDICATOR_FIXED_LOT", float(MT5_FIXED_LOT), minimum=0.01, maximum=100.0
         )
-        # Protective catastrophe stop only; it does not create direction.
         self.stop_percent = _env_float(
             "AAQTS_INDICATOR_STOP_PERCENT", 1.0, minimum=0.05, maximum=20.0
         )
@@ -161,9 +247,7 @@ class IndicatorOnlyBroker:
         if not MT5_USE_PREAUTHENTICATED_SESSION and MT5_LOGIN:
             if not MT5_PASSWORD or not MT5_SERVER:
                 raise RuntimeError("MT5 explicit login requires password and server")
-            kwargs.update(
-                login=int(MT5_LOGIN), password=MT5_PASSWORD, server=MT5_SERVER
-            )
+            kwargs.update(login=int(MT5_LOGIN), password=MT5_PASSWORD, server=MT5_SERVER)
         if not self.mt5.initialize(**kwargs):
             raise RuntimeError(f"MT5 initialize failed: {self.mt5.last_error()}")
         self.connected = True
@@ -179,7 +263,7 @@ class IndicatorOnlyBroker:
         demo_mode = getattr(self.mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
         if getattr(account, "trade_mode", None) != demo_mode:
             self.shutdown()
-            raise RuntimeError("Indicator-only mode is locked to MT5 DEMO")
+            raise RuntimeError("24h strategy mode is locked to MT5 DEMO")
         if not getattr(terminal, "trade_allowed", False):
             self.shutdown()
             raise RuntimeError("Algorithmic trading is disabled in MT5 terminal")
@@ -203,9 +287,8 @@ class IndicatorOnlyBroker:
         self.connected = False
         self.connect()
 
-    def _broker_symbol(self, tv_symbol: str) -> str:
-        canonical = _normalize_symbol(tv_symbol)
-        # Validate against the AAQTS catalog, then append configured Exness suffix.
+    def _broker_symbol(self, symbol: str) -> str:
+        canonical = _normalize_symbol(symbol)
         definition = symbol_by_broker(canonical)
         if definition.entry_policy != "OPEN":
             raise RuntimeError(f"{canonical} is not open-entry eligible")
@@ -233,6 +316,14 @@ class IndicatorOnlyBroker:
         if tick_s <= 0 or age < -5 or age > 15:
             raise RuntimeError(f"Stale MT5 quote for {symbol}: {age:.1f}s")
         return info, tick
+
+    def closed_m15_rates(self, symbol: str, count: int = 350) -> list[Any]:
+        broker_symbol = self._broker_symbol(symbol)
+        self._info_tick(broker_symbol)
+        rates = self.mt5.copy_rates_from_pos(broker_symbol, self.mt5.TIMEFRAME_M15, 1, count)
+        if rates is None or len(rates) < MIN_BARS:
+            raise RuntimeError(f"Need at least {MIN_BARS} closed M15 bars for {broker_symbol}")
+        return list(rates)
 
     def _normalize_volume(self, volume: float, info: Any) -> float:
         minimum = float(info.volume_min)
@@ -296,7 +387,7 @@ class IndicatorOnlyBroker:
             "price": round(price, int(info.digits)),
             "deviation": self.deviation,
             "magic": MAGIC,
-            "comment": f"IND24H EXIT {reason}"[:31],
+            "comment": f"UTEMA EXIT {reason}"[:31],
             "type_time": self.mt5.ORDER_TIME_GTC,
             "type_filling": self._filling(info),
         }
@@ -308,12 +399,12 @@ class IndicatorOnlyBroker:
             "deal": int(getattr(result, "deal", 0) or 0),
         }
 
-    def open_position(self, tv_symbol: str, side: str, *, indicator: str) -> dict[str, Any]:
-        broker_symbol = self._broker_symbol(tv_symbol)
+    def open_position(self, symbol: str, side: str) -> dict[str, Any]:
+        broker_symbol = self._broker_symbol(symbol)
         info, tick = self._info_tick(broker_symbol)
         existing = self._managed_positions(broker_symbol)
         if existing:
-            raise RuntimeError("Indicator position still open; refusing duplicate entry")
+            raise RuntimeError("24h strategy position still open; refusing duplicate entry")
         is_buy = side == "BUY"
         entry = float(tick.ask if is_buy else tick.bid)
         stop_distance = entry * (self.stop_percent / 100.0)
@@ -337,76 +428,81 @@ class IndicatorOnlyBroker:
             "type": order_type,
             "price": round(entry, int(info.digits)),
             "sl": round(stop, int(info.digits)),
-            # Intentionally no fixed broker TP: next opposite signal is logical TP.
             "tp": 0.0,
             "deviation": self.deviation,
             "magic": MAGIC,
-            "comment": f"IND24H {indicator[:12]}"[:31],
+            "comment": "UTBOT3-10 EMA200"[:31],
             "type_time": self.mt5.ORDER_TIME_GTC,
             "type_filling": self._filling(info),
         }
         result = self._send(request)
         return {
             "side": side,
-            "symbol": tv_symbol,
+            "symbol": symbol,
             "broker_symbol": broker_symbol,
             "entry_price": float(getattr(result, "price", 0.0) or entry),
-            "stop_loss": float(request["sl"]),
+            "emergency_stop": float(request["sl"]),
             "volume": volume,
             "deal": int(getattr(result, "deal", 0) or 0),
             "order": int(getattr(result, "order", 0) or 0),
         }
 
-    def reverse_on_signal(self, alert: Alert) -> dict[str, Any]:
-        broker_symbol = self._broker_symbol(alert.symbol)
+    def act_on_signal(self, symbol: str, snapshot: StrategySnapshot) -> dict[str, Any]:
+        if snapshot.signal not in {"BUY", "SELL"}:
+            return {"action": "NO_SIGNAL"}
+        broker_symbol = self._broker_symbol(symbol)
         positions = self._managed_positions(broker_symbol)
-        same_side = [p for p in positions if self._side(p) == alert.side]
-        opposite = [p for p in positions if self._side(p) != alert.side]
-        if same_side and not opposite:
-            return {"action": "IGNORED_DUPLICATE_DIRECTION", "side": alert.side}
         if len(positions) > 1:
-            raise RuntimeError("More than one indicator-only position exists; fail-closed")
+            raise RuntimeError("More than one 24h strategy position exists; fail-closed")
+
+        current = positions[0] if positions else None
+        if current is not None and self._side(current) == snapshot.signal:
+            return {"action": "IGNORED_SAME_DIRECTION", "side": snapshot.signal}
 
         closed: dict[str, Any] | None = None
-        if opposite:
-            closed = self.close_position(opposite[0], reason="NEXT_SIGNAL_TP")
+        if current is not None:
+            closed = self.close_position(current, reason="NEXT_UT_SIGNAL")
 
-        opened = self.open_position(alert.symbol, alert.side, indicator=alert.indicator)
+        if not snapshot.entry_allowed:
+            return {
+                "action": "CLOSED_THEN_EMA_BLOCKED" if closed else "EMA_BLOCKED_ENTRY",
+                "closed": closed,
+                "signal": snapshot.signal,
+                "close": snapshot.close,
+                "ema200": snapshot.ema200,
+            }
+
+        opened = self.open_position(symbol, snapshot.signal)
         return {
             "action": "REVERSED" if closed else "OPENED",
             "closed": closed,
             "opened": opened,
-            "logical_tp_rule": "previous exit = next opposite signal entry event",
+            "normal_exit_rule": "next opposite UT Bot signal",
         }
 
 
-class IndicatorOnlyService:
+class StrategyService:
     def __init__(self) -> None:
         self.root = Path(__file__).resolve().parents[1]
         self.runtime = self.root / "runtime"
         self.runtime.mkdir(parents=True, exist_ok=True)
         self.log_path = self.runtime / "indicator_only_24h.jsonl"
         self.status_path = self.runtime / "indicator_only_24h_status.json"
-        self.secret = os.getenv("AAQTS_INDICATOR_WEBHOOK_SECRET", "").strip()
-        if len(self.secret) < 16:
-            raise RuntimeError("AAQTS_INDICATOR_WEBHOOK_SECRET must be at least 16 characters")
         allowed_raw = os.getenv("AAQTS_INDICATOR_ALLOWED_SYMBOLS", "BTCUSD")
-        self.allowed_symbols = {
-            _normalize_symbol(item) for item in allowed_raw.split(",") if item.strip()
-        }
+        self.allowed_symbols = [_normalize_symbol(x) for x in allowed_raw.split(",") if x.strip()]
         if not self.allowed_symbols:
-            raise RuntimeError("At least one indicator-only symbol must be configured")
+            raise RuntimeError("At least one 24h strategy symbol must be configured")
+        self.poll_seconds = _env_float(
+            "AAQTS_INDICATOR_POLL_SECONDS", 5.0, minimum=1.0, maximum=60.0
+        )
         self.started_at = _utc_now()
         duration_hours = _env_float(
             "AAQTS_INDICATOR_DURATION_HOURS", 24.0, minimum=0.1, maximum=24.0
         )
         self.expires_at = self.started_at + timedelta(hours=duration_hours)
-        self.queue: queue.Queue[Alert | None] = queue.Queue(maxsize=1000)
-        self.seen: dict[str, float] = {}
-        self.seen_lock = threading.RLock()
         self.broker = IndicatorOnlyBroker()
         self._stop = threading.Event()
-        self._worker = threading.Thread(target=self._worker_loop, name="indicator-executor", daemon=True)
+        self.last_bar: dict[str, int] = {}
         self._write_status(state="STARTING")
 
     def _append(self, event: dict[str, Any]) -> None:
@@ -423,24 +519,21 @@ class IndicatorOnlyService:
         current.update(
             {
                 "mode": MODE_NAME,
-                "timeframe": "15m",
+                "timeframe": TIMEFRAME,
                 "started_utc": self.started_at.isoformat(),
                 "expires_utc": self.expires_at.isoformat(),
-                "allowed_symbols": sorted(self.allowed_symbols),
-                "indicator_settings": {
-                    "LuxAlgo - Liquidity Sweeps": {
-                        "swings": 5,
-                        "options": "Only Wicks",
-                        "extend": True,
-                        "max_bars": 300,
-                    },
-                    "AlgoAlpha - Half Trend": {
-                        "amplitude": 2,
-                        "channel_deviation": 2,
-                        "linear_regression_length": 7,
-                    },
+                "allowed_symbols": self.allowed_symbols,
+                "strategy": {
+                    "ut_bot_key_value": UT_KEY_VALUE,
+                    "ut_bot_atr_period": UT_ATR_PERIOD,
+                    "ema_period": EMA_PERIOD,
+                    "buy_entry": "fresh UT BUY and closed candle > EMA200",
+                    "sell_entry": "fresh UT SELL and closed candle < EMA200",
+                    "normal_exit": "next opposite UT Bot signal regardless of EMA",
+                    "reverse_entry": "only if opposite signal also passes EMA200 filter",
+                    "fixed_tp": False,
+                    "emergency_broker_stop": True,
                 },
-                "tp_rule": "close current trade on next opposite valid signal; same event opens next trade",
                 "heartbeat_utc": _utc_now().isoformat(),
             }
         )
@@ -449,211 +542,90 @@ class IndicatorOnlyService:
         temp.write_text(json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")
         temp.replace(self.status_path)
 
-    def _validate_payload(self, payload: dict[str, Any]) -> Alert:
-        if not secrets.compare_digest(str(payload.get("secret", "")), self.secret):
-            raise ValueError("invalid webhook secret")
-        indicator = _normalize_indicator(payload.get("indicator"))
-        if indicator not in APPROVED_INDICATORS:
-            raise ValueError("indicator is not approved for this 24h mode")
-        symbol = _normalize_symbol(payload.get("symbol") or payload.get("ticker"))
-        if symbol not in self.allowed_symbols:
-            raise ValueError(f"symbol {symbol!r} is not enabled for indicator-only mode")
-        timeframe = _normalize_timeframe(payload.get("timeframe") or payload.get("interval"))
-        if timeframe != EXPECTED_TIMEFRAME:
-            raise ValueError("only 15-minute alerts are accepted")
-        side = str(payload.get("side") or payload.get("signal") or "").strip().upper()
-        if side not in VALID_SIDES:
-            raise ValueError("side/signal must be BUY or SELL")
-        bar_time = str(payload.get("bar_time") or payload.get("time") or "").strip()
-        explicit_id = str(payload.get("alert_id") or "").strip()
-        alert_id = explicit_id or f"{indicator}|{symbol}|{timeframe}|{side}|{bar_time}"
-        if not bar_time and not explicit_id:
-            # Last-resort small time bucket prevents accidental double POSTs while
-            # still allowing a later signal from the other indicator.
-            alert_id += f"|{int(time.time() // 5)}"
-        return Alert(
-            alert_id=alert_id,
-            indicator=indicator,
-            symbol=symbol,
-            timeframe=timeframe,
-            side=side,
-            received_at=_utc_now(),
-            bar_time=bar_time,
-            raw=dict(payload),
-        )
+    @staticmethod
+    def _snapshot(rates: Sequence[Any]) -> StrategySnapshot:
+        highs = [float(row["high"]) for row in rates]
+        lows = [float(row["low"]) for row in rates]
+        closes = [float(row["close"]) for row in rates]
+        times = [int(row["time"]) for row in rates]
+        return calculate_utbot_ema_snapshot(highs, lows, closes, times)
 
-    def accept(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        if _utc_now() >= self.expires_at:
-            return HTTPStatus.GONE, {"ok": False, "error": "24-hour mode expired"}
-        try:
-            alert = self._validate_payload(payload)
-        except ValueError as exc:
-            self._append({"event": "REJECTED_ALERT", "error": str(exc), "payload": payload})
-            return HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)}
+    def _process_symbol(self, symbol: str) -> None:
+        rates = self.broker.closed_m15_rates(symbol)
+        snapshot = self._snapshot(rates)
+        if self.last_bar.get(symbol) == snapshot.bar_time:
+            return
+        self.last_bar[symbol] = snapshot.bar_time
+        bar_iso = datetime.fromtimestamp(snapshot.bar_time, timezone.utc).isoformat()
+        event = {
+            "event": "CLOSED_BAR",
+            "symbol": symbol,
+            "bar_time": bar_iso,
+            "close": snapshot.close,
+            "ema200": snapshot.ema200,
+            "atr10": snapshot.atr,
+            "ut_trailing_stop": snapshot.trailing_stop,
+            "signal": snapshot.signal,
+            "entry_allowed": snapshot.entry_allowed,
+        }
+        self._append(event)
+        self._write_status(state="RUNNING", last_bar=event)
+        if snapshot.signal is None:
+            return
+        started = time.perf_counter()
+        result = self.broker.act_on_signal(symbol, snapshot)
+        latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
+        execution = {
+            "event": "EXECUTED_SIGNAL",
+            "symbol": symbol,
+            "bar_time": bar_iso,
+            "signal": snapshot.signal,
+            "close": snapshot.close,
+            "ema200": snapshot.ema200,
+            "entry_allowed": snapshot.entry_allowed,
+            "latency_ms": latency_ms,
+            "result": result,
+        }
+        self._append(execution)
+        self._write_status(state="RUNNING", last_execution=execution)
 
-        with self.seen_lock:
-            cutoff = time.time() - 86400
-            self.seen = {key: ts for key, ts in self.seen.items() if ts >= cutoff}
-            if alert.alert_id in self.seen:
-                return HTTPStatus.OK, {"ok": True, "status": "duplicate_ignored", "alert_id": alert.alert_id}
-            self.seen[alert.alert_id] = time.time()
-        try:
-            self.queue.put_nowait(alert)
-        except queue.Full:
-            self._append({"event": "QUEUE_FULL", "alert_id": alert.alert_id})
-            return HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "execution queue full"}
-        self._append(
-            {
-                "event": "ALERT_ACCEPTED",
-                "alert_id": alert.alert_id,
-                "indicator": alert.indicator,
-                "symbol": alert.symbol,
-                "side": alert.side,
-                "bar_time": alert.bar_time,
-            }
-        )
-        self._write_status(state="RUNNING", last_alert_id=alert.alert_id)
-        return HTTPStatus.ACCEPTED, {"ok": True, "status": "queued", "alert_id": alert.alert_id}
+    def stop(self, *_args: object) -> None:
+        self._stop.set()
 
-    def _worker_loop(self) -> None:
+    def run(self) -> None:
         try:
             self.broker.connect()
         except Exception as exc:
-            LOGGER.exception("Indicator-only MT5 connection failed")
+            LOGGER.exception("UT Bot + EMA200 MT5 connection failed")
             self._append({"event": "BROKER_CONNECT_FAILED", "error": str(exc)})
             self._write_status(state="BROKER_ERROR", error=str(exc))
-            return
+            raise
+
         self._write_status(state="RUNNING")
-        while not self._stop.is_set():
-            try:
-                alert = self.queue.get(timeout=0.5)
-            except queue.Empty:
+        LOGGER.info(
+            "%s started; symbols=%s; expires=%s",
+            MODE_NAME,
+            self.allowed_symbols,
+            self.expires_at.isoformat(),
+        )
+        try:
+            while not self._stop.is_set() and _utc_now() < self.expires_at:
+                for symbol in self.allowed_symbols:
+                    if self._stop.is_set():
+                        break
+                    try:
+                        self._process_symbol(symbol)
+                    except Exception as exc:
+                        LOGGER.exception("24h strategy processing failed for %s", symbol)
+                        self._append({"event": "PROCESSING_ERROR", "symbol": symbol, "error": str(exc)})
+                        self._write_status(state="RUNNING", last_error=str(exc))
                 self._write_status(state="RUNNING")
-                continue
-            if alert is None:
-                break
-            if _utc_now() >= self.expires_at:
-                self._append({"event": "EXPIRED_ALERT_DROPPED", "alert_id": alert.alert_id})
-                continue
-            started = time.perf_counter()
-            try:
-                result = self.broker.reverse_on_signal(alert)
-                latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
-                self._append(
-                    {
-                        "event": "EXECUTED_SIGNAL",
-                        "alert_id": alert.alert_id,
-                        "indicator": alert.indicator,
-                        "symbol": alert.symbol,
-                        "side": alert.side,
-                        "latency_ms": latency_ms,
-                        "result": result,
-                    }
-                )
-                self._write_status(
-                    state="RUNNING",
-                    last_execution={
-                        "alert_id": alert.alert_id,
-                        "side": alert.side,
-                        "symbol": alert.symbol,
-                        "latency_ms": latency_ms,
-                        "result": result,
-                    },
-                )
-            except Exception as exc:
-                LOGGER.exception("Indicator-only execution failed")
-                self._append(
-                    {
-                        "event": "EXECUTION_BLOCKED",
-                        "alert_id": alert.alert_id,
-                        "indicator": alert.indicator,
-                        "symbol": alert.symbol,
-                        "side": alert.side,
-                        "error": str(exc),
-                    }
-                )
-                self._write_status(state="RUNNING", last_error=str(exc))
-            finally:
-                self.queue.task_done()
-        try:
-            self.broker.shutdown()
+                self._stop.wait(self.poll_seconds)
         finally:
-            self._write_status(state="STOPPED")
-
-    def start_worker(self) -> None:
-        self._worker.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        try:
-            self.queue.put_nowait(None)
-        except queue.Full:
-            pass
-        self._worker.join(timeout=5)
-
-
-class WebhookHandler(BaseHTTPRequestHandler):
-    server_version = "AAQTSIndicatorOnly/1.0"
-
-    @property
-    def service(self) -> IndicatorOnlyService:
-        return self.server.service  # type: ignore[attr-defined]
-
-    def _json(self, status: int, body: dict[str, Any]) -> None:
-        encoded = json.dumps(body).encode("utf-8")
-        self.send_response(int(status))
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
-
-    def do_GET(self) -> None:  # noqa: N802
-        if self.path.rstrip("/") == "/health":
-            self._json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "mode": MODE_NAME,
-                    "timeframe": "15m",
-                    "expires_utc": self.service.expires_at.isoformat(),
-                },
-            )
-            return
-        self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
-
-    def do_POST(self) -> None:  # noqa: N802
-        if self.path.rstrip("/") != "/webhook/tradingview":
-            self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
-            return
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if length <= 0 or length > 32_768:
-            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid payload size"})
-            return
-        try:
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid JSON"})
-            return
-        if not isinstance(payload, dict):
-            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "JSON object required"})
-            return
-        status, body = self.service.accept(payload)
-        self._json(status, body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        LOGGER.info("webhook %s", format % args)
-
-
-class ServiceHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def __init__(self, address: tuple[str, int], service: IndicatorOnlyService):
-        super().__init__(address, WebhookHandler)
-        self.service = service
+            self.broker.shutdown()
+            final_state = "EXPIRED" if _utc_now() >= self.expires_at else "STOPPED"
+            self._write_status(state=final_state)
+            LOGGER.info("%s %s", MODE_NAME, final_state.lower())
 
 
 def main() -> None:
@@ -661,33 +633,10 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
-    service = IndicatorOnlyService()
-    service.start_worker()
-    host = os.getenv("AAQTS_INDICATOR_WEBHOOK_HOST", "0.0.0.0").strip() or "0.0.0.0"
-    port = _env_int("AAQTS_INDICATOR_WEBHOOK_PORT", 80, minimum=1, maximum=65535)
-    server = ServiceHTTPServer((host, port), service)
-
-    def request_stop(*_args: object) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGINT, request_stop)
-    signal.signal(signal.SIGTERM, request_stop)
-    expiry_seconds = max(0.0, (service.expires_at - _utc_now()).total_seconds())
-    threading.Timer(expiry_seconds, request_stop).start()
-    LOGGER.info(
-        "%s listening on %s:%s; expires %s; symbols=%s",
-        MODE_NAME,
-        host,
-        port,
-        service.expires_at.isoformat(),
-        sorted(service.allowed_symbols),
-    )
-    try:
-        server.serve_forever(poll_interval=0.25)
-    finally:
-        server.server_close()
-        service.stop()
-        LOGGER.info("%s stopped", MODE_NAME)
+    service = StrategyService()
+    signal.signal(signal.SIGINT, service.stop)
+    signal.signal(signal.SIGTERM, service.stop)
+    service.run()
 
 
 if __name__ == "__main__":
