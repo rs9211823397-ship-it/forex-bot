@@ -253,6 +253,11 @@ accounting; it is not evidence of future profitability.
 
 ## Research data and reproducibility
 
+For the isolated M15 comparison of UT Bot + EMA200 against daily VWAP + EMA9,
+including exact entry/exit rules and the broker-native MT5 command, see
+[`INDICATOR_COMPARISON.md`](INDICATOR_COMPARISON.md). The comparison does not
+alter or invoke the production AAQTS decision engine.
+
 Yahoo downloads can be cached under ignored `data/cache/` storage with a
 content-addressed dataset version and SHA-256 manifest. Deterministic CSV
 replay supports explicit version validation. Experiment reports record the

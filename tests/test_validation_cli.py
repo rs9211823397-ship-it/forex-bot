@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
         "scripts/promotion_report.py",
         "scripts/restart_soak_report.py",
         "scripts/slippage_report.py",
+        "scripts/compare_utbot_vwap.py",
     ),
 )
 def test_validation_scripts_are_directly_runnable(script):
