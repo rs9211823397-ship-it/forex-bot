@@ -80,3 +80,16 @@ def test_winprofx_launcher_supports_non_trading_preflight_only_mode():
     assert "[switch]$PreflightOnly" in text
     assert "WINPROFX_LIVE_PREFLIGHT_PASSED" in text
     assert text.index("if ($PreflightOnly)") < text.index("& $python main.py")
+
+
+def test_winprofx_launchers_disable_unavailable_usd_crypto_symbols():
+    expected = (
+        'AAQTS_DISABLED_BROKER_SYMBOLS = '
+        '"XAUUSD,XAGUSD,XPTUSD,XPDUSD,BTCUSD,ETHUSD"'
+    )
+    engine = (WINDOWS / "start-winprofx-live-engine.ps1").read_text(encoding="utf-8")
+    telegram = (WINDOWS / "start-winprofx-live-telegram.ps1").read_text(encoding="utf-8")
+
+    assert expected in engine
+    assert expected in telegram
+    assert "disabled_broker_symbols = $env:AAQTS_DISABLED_BROKER_SYMBOLS" in engine
