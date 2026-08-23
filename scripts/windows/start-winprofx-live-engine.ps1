@@ -2,7 +2,8 @@ param(
     [string]$Repository = "$env:USERPROFILE\forex-bot",
     [Parameter(Mandatory=$true)][string]$TerminalPath,
     [string]$SymbolSuffix = "",
-    [string]$AccountId = "winprofx_live"
+    [string]$AccountId = "winprofx_live",
+    [switch]$PreflightOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +20,9 @@ foreach ($required in @($python, $TerminalPath, $passwordFile, $loginFile, $serv
 
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 Set-Location $Repository
-$securePassword = Get-Content -LiteralPath $passwordFile -Raw | ConvertTo-SecureString
+$encryptedPassword = [System.IO.File]::ReadAllText($passwordFile).Trim()
+if ([string]::IsNullOrWhiteSpace($encryptedPassword)) { throw "WinProFX password secret is empty" }
+$securePassword = ConvertTo-SecureString -String $encryptedPassword
 
 $env:AAQTS_EXECUTION_MODE = "MT5_LIVE"
 $env:AAQTS_LIVE_TRADING_ACK = "I_UNDERSTAND_REAL_MONEY"
@@ -79,6 +82,11 @@ $profile | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $profileFile -Enco
 
 & $python scripts\preflight.py
 if ($LASTEXITCODE -ne 0) { throw "WinProFX live preflight failed; no engine was started" }
+
+if ($PreflightOnly) {
+    "WINPROFX_LIVE_PREFLIGHT_PASSED"
+    exit 0
+}
 
 $previousEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
