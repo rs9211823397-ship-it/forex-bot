@@ -23,6 +23,8 @@ $env:AAQTS_SINGLE_ACCOUNT_MODE = "true"
 $env:AAQTS_PRIMARY_ACCOUNT_ID = "exness_demo"
 $env:AAQTS_ACCOUNT_ID = "exness_demo"
 $env:AAQTS_EXECUTION_MODE = "MT5_DEMO"
+$env:AAQTS_STRATEGY_MODE = "UT_BOT"
+$env:AAQTS_UTBOT_EXIT_MODE = "ATR_TRAIL"
 $env:AAQTS_MARKET_DATA_PROVIDER = "MT5"
 $env:AAQTS_MT5_TERMINAL_PATH = "C:\Program Files\Exness JO MT5 Terminal\terminal64.exe"
 $env:AAQTS_MT5_SYMBOL_SUFFIX = "m"
@@ -34,7 +36,7 @@ $env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD"
 
 $previousEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& $python -m telegram_bot.native_24h_entry 1>> (Join-Path $runtime "telegram.log") 2>> (Join-Path $runtime "telegram-error.log")
+& $python -m telegram_bot.bot 1>> (Join-Path $runtime "telegram.log") 2>> (Join-Path $runtime "telegram-error.log")
 $pythonExitCode = $LASTEXITCODE
 $ErrorActionPreference = $previousEAP
 exit $pythonExitCode
