@@ -1,7 +1,8 @@
 """AAQTS application entry point.
 
 PAPER is the default execution mode. MT5_DEMO requires an explicit environment
-setting, and MT5_LIVE remains blocked by :class:`ExecutionRouter`.
+setting. MT5_LIVE additionally requires pinned credentials, protected UT Bot
+mode and the explicit real-money acknowledgement.
 """
 
 from __future__ import annotations
@@ -44,7 +45,17 @@ from config.settings import (
     PORTFOLIO_MAX_CORRELATED_RISK_PERCENT,
     POSITION_MANAGEMENT_INTERVAL_SECONDS,
     RISK_PERCENT,
+    STRATEGY_MODE,
     TRADING_TIMEFRAME,
+    UTBOT_ATR_PERIOD,
+    UTBOT_BREAK_EVEN_TRIGGER_R,
+    UTBOT_EXIT_MODE,
+    UTBOT_INITIAL_SL_ATR_MULTIPLIER,
+    UTBOT_KEY_VALUE,
+    UTBOT_SIGNAL_CONFIDENCE,
+    UTBOT_TEST_LOT,
+    UTBOT_TRAILING_ATR_MULTIPLIER,
+    UTBOT_TRAILING_START_R,
 )
 from control_plane import ControlAction, ControlCommandStore, ControlRequest
 from data.market_data import MarketData
@@ -67,6 +78,7 @@ from risk.risk_manager import RiskManager
 from runtime_state import engine_instance_lock, read_runtime_state, write_runtime_state
 from strategy.signal_engine import SignalEngine
 from strategy.regime_router import RegimeStrategyRouter
+from strategy.ut_bot_ema200 import UTBotConfig, UTBotStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -81,17 +93,43 @@ class TradingApplication:
         command_root = os.getenv("AAQTS_CONTROL_QUEUE_DIR", "runtime/control").strip()
         self.control_commands = ControlCommandStore(command_root)
         self.market = MarketData()
-        self.indicators = TechnicalIndicators()
-        self.signal_engine = SignalEngine.production(
-            higher_timeframe=HIGHER_TIMEFRAME,
-            lower_timeframe=TRADING_TIMEFRAME,
+        self.strategy_mode = STRATEGY_MODE
+        self.utbot_signal_exit_mode = (
+            self.strategy_mode == "UT_BOT"
+            and UTBOT_EXIT_MODE == "OPPOSITE_SIGNAL"
         )
-        self.strategy_router = RegimeStrategyRouter(
-            self.signal_engine,
-            higher_timeframe=HIGHER_TIMEFRAME,
-            lower_timeframe=TRADING_TIMEFRAME,
-            minimum_regime_confidence=MIN_REGIME_CONFIDENCE,
+        self.utbot_protected_mode = (
+            self.strategy_mode == "UT_BOT"
+            and UTBOT_EXIT_MODE == "ATR_TRAIL"
         )
+        self.utbot_opposite_signal_exit = (
+            self.utbot_signal_exit_mode or self.utbot_protected_mode
+        )
+        if self.strategy_mode == "UT_BOT":
+            strategy = UTBotStrategy(
+                UTBotConfig(
+                    key_value=UTBOT_KEY_VALUE,
+                    atr_period=UTBOT_ATR_PERIOD,
+                    signal_confidence=UTBOT_SIGNAL_CONFIDENCE,
+                )
+            )
+            self.indicators = strategy
+            self.signal_engine = strategy
+            self.strategy_router = strategy
+            self.requires_higher_timeframe = False
+        else:
+            self.indicators = TechnicalIndicators()
+            self.signal_engine = SignalEngine.production(
+                higher_timeframe=HIGHER_TIMEFRAME,
+                lower_timeframe=TRADING_TIMEFRAME,
+            )
+            self.strategy_router = RegimeStrategyRouter(
+                self.signal_engine,
+                higher_timeframe=HIGHER_TIMEFRAME,
+                lower_timeframe=TRADING_TIMEFRAME,
+                minimum_regime_confidence=MIN_REGIME_CONFIDENCE,
+            )
+            self.requires_higher_timeframe = True
         self.trade_manager = TradeManager()
         self.risk_manager = RiskManager()
         self.portfolio_risk = PortfolioRiskManager(
@@ -125,6 +163,16 @@ class TradingApplication:
         self.trade_logger = TradeLogger()
         self.equity_history: list[EquityPoint] = []
         self._previous_runtime_state = read_runtime_state()
+        saved_signal_ids = self._previous_runtime_state.get("executed_signal_ids", {})
+        self._executed_signal_ids = (
+            {
+                str(symbol): str(signal_id)
+                for symbol, signal_id in saved_signal_ids.items()
+                if str(symbol).strip() and str(signal_id).strip()
+            }
+            if isinstance(saved_signal_ids, dict)
+            else {}
+        )
         self._risk_state_identity = ""
         self._cycle_stages: Counter[str] = Counter()
         self._session_stages: Counter[str] = Counter()
@@ -226,6 +274,7 @@ class TradingApplication:
                     entry is not None
                     and stop_loss is not None
                     and take_profit is not None
+                    and float(take_profit) > 0
                 ):
                     risk = abs(float(entry) - float(stop_loss))
                     reward = abs(float(take_profit) - float(entry))
@@ -558,7 +607,7 @@ class TradingApplication:
         if self.execution.mode in {"MT5_DEMO", "MT5_LIVE"}:
             if not self._frame_is_demo_safe(data):
                 raise RuntimeError(f"Unsafe/stale lower-timeframe data blocked for {symbol}")
-            if not self._frame_is_demo_safe(higher_tf):
+            if self.requires_higher_timeframe and not self._frame_is_demo_safe(higher_tf):
                 raise RuntimeError(f"Unsafe/stale higher-timeframe data blocked for {symbol}")
         analyzed = self.indicators.add_indicators(data)
         signal = self.strategy_router.generate_analysis(analyzed, symbol, higher_tf)
@@ -570,6 +619,40 @@ class TradingApplication:
         self.trade_logger.log_signal(symbol, signal["signal"], signal["confidence"])
         if self.execution.mode == "PAPER":
             self.paper_trader.check_trade(symbol, current_price)
+        exit_signal = str(signal.get("exit_signal") or "").upper().strip()
+        if self.utbot_opposite_signal_exit and exit_signal in {"BUY", "SELL"}:
+            try:
+                closed = self.execution.close_on_opposite_signal(
+                    symbol,
+                    exit_signal,
+                    current_price=current_price,
+                )
+            except Exception as exc:
+                self._record_decision_stage(
+                    "SIGNAL_EXIT_FAILED",
+                    f"{type(exc).__name__}: {exc}",
+                )
+                self._record_runtime_analysis(
+                    symbol,
+                    signal,
+                    final_decision="BLOCKED",
+                    final_reason=f"Opposite-signal close failed: {exc}",
+                    execution_status="SIGNAL_EXIT_FAILED",
+                )
+                raise
+            if closed:
+                self._record_decision_stage("SIGNAL_EXIT_EXECUTED", exit_signal)
+                self._record_runtime_analysis(
+                    symbol,
+                    signal,
+                    final_decision=(
+                        "PENDING_REVERSAL"
+                        if signal["signal"] in {"BUY", "SELL"}
+                        else "EXITED"
+                    ),
+                    final_reason=f"Closed on opposite UT Bot {exit_signal} signal",
+                    execution_status="SIGNAL_EXIT_EXECUTED",
+                )
         if signal["signal"] not in {"BUY", "SELL"}:
             report = signal.get("decision_report") or {}
             primary = report.get("primary_reason") or "NO_ACTIONABLE_SETUP"
@@ -582,9 +665,84 @@ class TradingApplication:
                 execution_status="NOT_ACTIONABLE",
             )
             return current_price
+        signal_id = str(signal.get("signal_id") or "").strip()
+        if signal_id and self._executed_signal_ids.get(str(symbol)) == signal_id:
+            reason = "UT Bot crossover was already executed for this candle"
+            self._record_decision_stage("DUPLICATE_SIGNAL_BLOCKED", reason)
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="BLOCKED",
+                final_reason=reason,
+                execution_status="DUPLICATE_SIGNAL_BLOCKED",
+            )
+            return current_price
         self._record_decision_stage("STRATEGY_ACTIONABLE", signal["signal"])
+        if self.utbot_signal_exit_mode:
+            signal_plan = {
+                "entry": current_price,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+            }
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="APPROVED",
+                final_reason="UT Bot entry approved",
+                risk_plan=signal_plan,
+                execution_status="SIGNAL_ENTRY_ATTEMPT",
+            )
+            self._record_decision_stage("EXECUTION_ATTEMPT", signal["signal"])
+            try:
+                result = self.execution.execute(
+                    source_symbol=symbol,
+                    signal=signal["signal"],
+                    risk_plan=signal_plan,
+                    paper_position_size=UTBOT_TEST_LOT,
+                    approved_risk_amount=None,
+                )
+            except Exception as exc:
+                self._record_decision_stage(
+                    "EXECUTION_REJECTED",
+                    f"{type(exc).__name__}: {exc}",
+                )
+                self._record_runtime_analysis(
+                    symbol,
+                    signal,
+                    final_decision="BLOCKED",
+                    final_reason=f"{type(exc).__name__}: {exc}",
+                    risk_plan=signal_plan,
+                    execution_status="EXECUTION_REJECTED",
+                )
+                raise
+            if result is None:
+                self._record_decision_stage(
+                    "EXECUTION_REJECTED",
+                    "EXECUTOR_RETURNED_NO_POSITION",
+                )
+                return current_price
+            if signal_id:
+                self._executed_signal_ids[str(symbol)] = signal_id
+            self._record_decision_stage("EXECUTED", signal["signal"])
+            self._record_runtime_analysis(
+                symbol,
+                signal,
+                final_decision="EXECUTED",
+                final_reason="Trade opened; next opposite UT signal is the exit",
+                risk_plan=signal_plan,
+                execution_status="EXECUTED_SIGNAL_LIFECYCLE",
+            )
+            logger.info("Signal-lifecycle execution result for %s: %r", symbol, result)
+            return current_price
         risk_plan = self.risk_manager.calculate_trade_levels(
-            signal["signal"], current_price, trade["atr"]
+            signal["signal"],
+            current_price,
+            trade["atr"],
+            stop_atr_multiplier=(
+                UTBOT_INITIAL_SL_ATR_MULTIPLIER
+                if self.utbot_protected_mode
+                else None
+            ),
         )
         if not risk_plan:
             self._record_decision_stage("TRADE_LEVEL_REJECTED", "INVALID_RISK_PLAN")
@@ -596,6 +754,14 @@ class TradingApplication:
                 execution_status="RISK_PLAN_REJECTED",
             )
             return current_price
+        if self.utbot_protected_mode:
+            # No fixed TP caps a strong trend. The broker-side SL bounds the
+            # initial loss, then the management loop moves it to break-even
+            # and advances an ATR trail. A confirmed opposite UT crossover
+            # remains the final signal exit.
+            risk_plan["take_profit"] = 0.0
+            risk_plan["reward_distance"] = 0.0
+            risk_plan["risk_reward"] = 0.0
         equity = self._account_equity()
         risk_multiplier = float(signal.get("risk_multiplier", 1.0))
         requested_risk = equity * (RISK_PERCENT / 100.0) * risk_multiplier
@@ -720,6 +886,8 @@ class TradingApplication:
             logger.warning("Execution produced no new position for %s", symbol)
             return current_price
         self._record_decision_stage("EXECUTED", signal["signal"])
+        if signal_id:
+            self._executed_signal_ids[str(symbol)] = signal_id
         self._record_runtime_analysis(
             symbol,
             signal,
@@ -755,19 +923,51 @@ class TradingApplication:
             status=self.controller.status(),
             execution_mode=EXECUTION_MODE,
             phase="DOWNLOADING_MARKET_DATA",
+            strategy_mode=self.strategy_mode,
+            utbot_exit_mode=UTBOT_EXIT_MODE,
+            utbot_test_lot=(UTBOT_TEST_LOT if self.utbot_signal_exit_mode else None),
+            utbot_initial_sl_atr=(
+                UTBOT_INITIAL_SL_ATR_MULTIPLIER
+                if self.utbot_protected_mode
+                else None
+            ),
+            utbot_break_even_trigger_r=(
+                UTBOT_BREAK_EVEN_TRIGGER_R
+                if self.utbot_protected_mode
+                else None
+            ),
+            utbot_trailing_start_r=(
+                UTBOT_TRAILING_START_R if self.utbot_protected_mode else None
+            ),
+            utbot_trailing_atr=(
+                UTBOT_TRAILING_ATR_MULTIPLIER
+                if self.utbot_protected_mode
+                else None
+            ),
+            scan_interval_seconds=BOT_INTERVAL_SECONDS,
             trading_timeframe=TRADING_TIMEFRAME,
-            higher_timeframe=HIGHER_TIMEFRAME,
+            higher_timeframe=(
+                HIGHER_TIMEFRAME if self.requires_higher_timeframe else "NOT_USED"
+            ),
             market_data_provider=self.market.provider,
         )
         lower_frames = self.market.download_all_data(interval=TRADING_TIMEFRAME)
-        higher_frames = self.market.download_all_data(interval=HIGHER_TIMEFRAME)
+        higher_frames = (
+            self.market.download_all_data(interval=HIGHER_TIMEFRAME)
+            if self.requires_higher_timeframe
+            else {}
+        )
         observed_at = datetime.now(timezone.utc)
         self.latest_correlations = self._build_correlations(lower_frames, observed_at)
         prices = {}
         broker_mode = self.execution.mode in {"MT5_DEMO", "MT5_LIVE"}
         expected = set(MT5_SYMBOL_MAP) if broker_mode else set(lower_frames)
         missing_lower = sorted(expected.difference(lower_frames))
-        missing_higher = sorted(expected.difference(higher_frames))
+        missing_higher = (
+            sorted(expected.difference(higher_frames))
+            if self.requires_higher_timeframe
+            else []
+        )
         if broker_mode and (missing_lower or missing_higher):
             self._record_decision_stage(
                 "MARKET_DATA_BLOCKED",
@@ -782,7 +982,7 @@ class TradingApplication:
         for symbol, data in lower_frames.items():
             if self.controller.status() != "RUNNING":
                 break
-            if broker_mode and symbol not in higher_frames:
+            if broker_mode and self.requires_higher_timeframe and symbol not in higher_frames:
                 logger.error("Skipping %s: required higher-timeframe data unavailable", symbol)
                 continue
             try:
@@ -848,6 +1048,28 @@ class TradingApplication:
             account_id=self.account_id,
             status=self.controller.status(),
             execution_mode=EXECUTION_MODE,
+            strategy_mode=self.strategy_mode,
+            utbot_exit_mode=UTBOT_EXIT_MODE,
+            utbot_test_lot=(UTBOT_TEST_LOT if self.utbot_signal_exit_mode else None),
+            utbot_initial_sl_atr=(
+                UTBOT_INITIAL_SL_ATR_MULTIPLIER
+                if self.utbot_protected_mode
+                else None
+            ),
+            utbot_break_even_trigger_r=(
+                UTBOT_BREAK_EVEN_TRIGGER_R
+                if self.utbot_protected_mode
+                else None
+            ),
+            utbot_trailing_start_r=(
+                UTBOT_TRAILING_START_R if self.utbot_protected_mode else None
+            ),
+            utbot_trailing_atr=(
+                UTBOT_TRAILING_ATR_MULTIPLIER
+                if self.utbot_protected_mode
+                else None
+            ),
+            scan_interval_seconds=BOT_INTERVAL_SECONDS,
             phase="IDLE",
             market_data_provider=self.market.provider,
             market_data_healthy=not (missing_lower or missing_higher),
@@ -874,6 +1096,7 @@ class TradingApplication:
             positions=runtime_positions,
             latest_analysis=analysis_snapshot,
             analysis_updated_utc=now.isoformat(),
+            executed_signal_ids=dict(self._executed_signal_ids),
             closed_trades=closed_trades,
             closed_trades_window=closed_window,
             starting_balance=stats.get("starting_balance", stats["balance"]),
