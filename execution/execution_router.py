@@ -15,7 +15,6 @@ from typing import Any, Optional
 from config.settings import (
     EXECUTION_MODE,
     MT5_EXPECTED_LOGIN,
-    MT5_FIXED_LOT,
     MT5_LOGIN,
     MT5_MAX_OPEN_POSITIONS,
     MT5_MAX_SPREAD_STOP_RATIO,
@@ -26,6 +25,12 @@ from config.settings import (
     MT5_SYMBOL_SUFFIX,
     MT5_TERMINAL_PATH,
     MT5_USE_PREAUTHENTICATED_SESSION,
+    STRATEGY_MODE,
+    UTBOT_BREAK_EVEN_TRIGGER_R,
+    UTBOT_EXIT_MODE,
+    UTBOT_TEST_LOT,
+    UTBOT_TRAILING_ATR_MULTIPLIER,
+    UTBOT_TRAILING_START_R,
 )
 from config.symbols import executable_symbol_map
 from execution.live_mt5_executor import LiveMT5Executor
@@ -37,7 +42,7 @@ from execution.mt5_executor import (
     MT5Executor,
 )
 from execution.mt5_trade_audit import MT5TradeAudit
-from execution.position_manager import PositionManager
+from execution.position_manager import PositionManager, PositionManagerConfig
 from runtime_state import RUNTIME_DIR
 
 
@@ -96,11 +101,41 @@ class ExecutionRouter:
         mt5_executor: Optional[MT5Executor] = None,
         position_manager: Optional[PositionManager] = None,
         trade_audit: Optional[MT5TradeAudit] = None,
+        signal_exit_mode: Optional[bool] = None,
+        signal_test_lot: Optional[float] = None,
+        protected_utbot_mode: Optional[bool] = None,
+        opposite_signal_exit: Optional[bool] = None,
     ) -> None:
         self.paper_trader = paper_trader
         self.mode = mode.upper().strip()
         if self.mode not in VALID_MODES:
             raise ValueError(f"Unsupported execution mode: {self.mode}")
+        self.signal_exit_mode = (
+            STRATEGY_MODE == "UT_BOT" and UTBOT_EXIT_MODE == "OPPOSITE_SIGNAL"
+            if signal_exit_mode is None
+            else bool(signal_exit_mode)
+        )
+        self.protected_utbot_mode = (
+            STRATEGY_MODE == "UT_BOT" and UTBOT_EXIT_MODE == "ATR_TRAIL"
+            if protected_utbot_mode is None
+            else bool(protected_utbot_mode)
+        )
+        if self.signal_exit_mode and self.protected_utbot_mode:
+            raise ValueError("UT Bot cannot use protected and unprotected modes together")
+        self.opposite_signal_exit = (
+            self.signal_exit_mode or self.protected_utbot_mode
+            if opposite_signal_exit is None
+            else bool(opposite_signal_exit)
+        )
+        self.signal_test_lot = float(
+            UTBOT_TEST_LOT if signal_test_lot is None else signal_test_lot
+        )
+        if self.signal_test_lot <= 0:
+            raise ValueError("signal_test_lot must be positive")
+        if self.signal_exit_mode and self.mode == "MT5_LIVE":
+            raise ExecutionError(
+                "UT Bot opposite-signal mode without broker SL/TP is locked to PAPER/MT5_DEMO"
+            )
 
         self._isolate_strategy_risk = _strategy_risk_isolation_enabled(self.mode)
         self._strategy_risk_anchor_time: datetime | None = None
@@ -138,7 +173,17 @@ class ExecutionRouter:
                 expected_login=(int(MT5_EXPECTED_LOGIN) if MT5_EXPECTED_LOGIN else None),
                 password=MT5_PASSWORD,
                 server=MT5_SERVER,
-                max_open_positions=MT5_MAX_OPEN_POSITIONS,
+                # One position per configured symbol remains enforced.  The
+                # old three-position portfolio cap is not part of this demo
+                # signal-lifecycle experiment.
+                max_open_positions=(20 if self.signal_exit_mode else MT5_MAX_OPEN_POSITIONS),
+                require_stop_loss=not self.signal_exit_mode,
+                # ATR_TRAIL intentionally has no fixed target: a broker-side
+                # stop is advanced to break-even and then trailed while the
+                # opposite UT crossover remains a final exit.
+                require_take_profit=not (
+                    self.signal_exit_mode or self.protected_utbot_mode
+                ),
                 max_tick_age_seconds=MT5_MAX_TICK_AGE_SECONDS,
                 max_spread_stop_ratio=MT5_MAX_SPREAD_STOP_RATIO,
                 fill_audit_path=str(RUNTIME_DIR / "mt5_fill_audit.jsonl"),
@@ -148,9 +193,30 @@ class ExecutionRouter:
             )
 
         self.position_manager = position_manager
-        if self.mode in BROKER_MODES and self.position_manager is None:
+        if (
+            self.mode in BROKER_MODES
+            and self.position_manager is None
+            and not self.signal_exit_mode
+        ):
             assert self.mt5_executor is not None
-            self.position_manager = PositionManager(self.mt5_executor)
+            manager_config = None
+            if self.protected_utbot_mode:
+                manager_config = PositionManagerConfig(
+                    enable_break_even=True,
+                    break_even_trigger_rr=UTBOT_BREAK_EVEN_TRIGGER_R,
+                    enable_trailing_stop=True,
+                    trailing_start_rr=UTBOT_TRAILING_START_R,
+                    trailing_atr_multiplier=UTBOT_TRAILING_ATR_MULTIPLIER,
+                    enable_tp1=False,
+                    enable_tp2=False,
+                    enable_runner=True,
+                    enable_time_exit=False,
+                    require_initial_stop_loss=True,
+                )
+            self.position_manager = PositionManager(
+                self.mt5_executor,
+                config=manager_config,
+            )
 
         self.trade_audit = trade_audit
         if self.mode in BROKER_MODES and self.trade_audit is None:
@@ -180,11 +246,12 @@ class ExecutionRouter:
         if self.mode not in BROKER_MODES:
             return []
         assert self.mt5_executor is not None
-        assert self.position_manager is not None
         self.mt5_executor.connect()
         self._capture_strategy_risk_anchor()
-        with self._position_lock:
-            recovered = self.position_manager.recover_positions(reset_registry=True)
+        recovered = []
+        if self.position_manager is not None:
+            with self._position_lock:
+                recovered = self.position_manager.recover_positions(reset_registry=True)
         if self.trade_audit is not None:
             self.trade_audit.sync_closed()
         return recovered
@@ -261,7 +328,11 @@ class ExecutionRouter:
     ) -> Any:
         if not risk_plan:
             raise ValueError("risk_plan is required")
-        required = {"entry", "stop_loss", "take_profit"}
+        required = (
+            {"entry"}
+            if self.signal_exit_mode
+            else {"entry", "stop_loss", "take_profit"}
+        )
         missing = required.difference(risk_plan)
         if missing:
             raise ValueError("risk_plan is missing: " + ", ".join(sorted(missing)))
@@ -273,28 +344,34 @@ class ExecutionRouter:
                 source_symbol,
                 side,
                 risk_plan["entry"],
-                risk_plan["stop_loss"],
-                risk_plan["take_profit"],
-                paper_position_size,
+                0.0 if self.signal_exit_mode else risk_plan["stop_loss"],
+                0.0 if self.signal_exit_mode else risk_plan["take_profit"],
+                self.signal_test_lot if self.signal_exit_mode else paper_position_size,
             )
 
         assert self.mt5_executor is not None
         mt5_symbol = MT5_SYMBOL_MAP.get(source_symbol)
         if not mt5_symbol:
             raise ExecutionError(f"No MT5 symbol mapping configured for {source_symbol}")
-        if approved_risk_amount is None or approved_risk_amount <= 0:
+        if (
+            not self.signal_exit_mode
+            and (approved_risk_amount is None or approved_risk_amount <= 0)
+        ):
             raise ExecutionError("MT5 execution requires a positive portfolio-approved risk amount")
-        self._enforce_stop_loss_cooldown(source_symbol, side)
-        self._validate_entry_quote(mt5_symbol, risk_plan)
+        if not self.signal_exit_mode:
+            self._enforce_stop_loss_cooldown(source_symbol, side)
+            self._validate_entry_quote(mt5_symbol, risk_plan)
         result = self.mt5_executor.place_market_order(
             symbol=mt5_symbol,
             side=side,
-            volume=MT5_FIXED_LOT,
-            stop_loss=risk_plan["stop_loss"],
-            take_profit=risk_plan["take_profit"],
+            volume=(self.signal_test_lot if self.signal_exit_mode else None),
+            stop_loss=(0.0 if self.signal_exit_mode else risk_plan["stop_loss"]),
+            take_profit=(0.0 if self.signal_exit_mode else risk_plan["take_profit"]),
             comment=f"AAQTS {source_symbol}",
-            reference_entry=risk_plan["entry"],
-            risk_amount=None,
+            reference_entry=(None if self.signal_exit_mode else risk_plan["entry"]),
+            risk_amount=(
+                None if self.signal_exit_mode else float(approved_risk_amount)
+            ),
             source_symbol=source_symbol,
         )
         managed = None
@@ -308,10 +385,62 @@ class ExecutionRouter:
                 risk_plan=risk_plan,
                 result=result,
                 managed_position=managed,
+                volume_override=(self.signal_test_lot if self.signal_exit_mode else None),
             )
         return result
 
+    def close_on_opposite_signal(
+        self,
+        source_symbol: str,
+        side: str,
+        current_price: Optional[float] = None,
+    ) -> list[Any]:
+        """Close an existing opposite position before an optional reversal."""
+
+        if not self.opposite_signal_exit:
+            return []
+        wanted = str(side).upper().strip()
+        if wanted not in {"BUY", "SELL"}:
+            raise ValueError("Opposite-signal exit requires BUY or SELL")
+        if self.mode == "PAPER":
+            closed = self.paper_trader.close_trade_on_signal(
+                source_symbol,
+                wanted,
+                current_price=current_price,
+            )
+            return [] if closed is None else [closed]
+
+        assert self.mt5_executor is not None
+        broker_symbol = MT5_SYMBOL_MAP.get(source_symbol)
+        if not broker_symbol:
+            raise ExecutionError(f"No MT5 symbol mapping configured for {source_symbol}")
+        positions = self.mt5_executor.positions(symbol=broker_symbol, managed_only=True)
+        opposite = [
+            position
+            for position in positions
+            if self.mt5_executor.position_side(position) != wanted
+        ]
+        results = []
+        with self._position_lock:
+            for position in opposite:
+                results.append(
+                    self.mt5_executor.close_position(
+                        int(position.ticket),
+                        comment="AAQTS opposite UT exit",
+                    )
+                )
+        if results and self.trade_audit is not None:
+            self.trade_audit.sync_closed()
+        return results
+
     def manage_positions(self, atr_by_source_symbol: Optional[dict[str, float]] = None) -> dict[str, Any]:
+        if self.signal_exit_mode:
+            return {
+                "managed": False,
+                "reason": "utbot_opposite_signal_exit",
+                "reports": [],
+                "errors": [],
+            }
         if self.mode not in BROKER_MODES or self.position_manager is None:
             return {"managed": False, "reason": "paper_mode_uses_price_checks", "reports": [], "errors": []}
         atr_by_source_symbol = atr_by_source_symbol or {}
