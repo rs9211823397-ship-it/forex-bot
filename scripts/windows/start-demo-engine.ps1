@@ -10,7 +10,7 @@ $passwordFile = Join-Path $runtime "secrets\mt5_demo_password.dpapi"
 $openaiKeyFile = Join-Path $runtime "secrets\openai_api_key.dpapi"
 $loginFile = Join-Path $runtime "mt5_expected_login.txt"
 $serverFile = Join-Path $runtime "mt5_demo_server.txt"
-$profileFile = Join-Path $runtime "quality_v3_balanced_runtime_profile.json"
+$profileFile = Join-Path $runtime "utbot_runtime_profile.json"
 
 if (-not (Test-Path -LiteralPath $python)) { throw "AAQTS Python was not found: $python" }
 $certFile = (& $python -m certifi).Trim()
@@ -64,9 +64,8 @@ $env:AAQTS_AI_CHART_IMAGE_DETAIL = "high"
 $env:AAQTS_AI_CHART_MAX_OUTPUT_TOKENS = "1400"
 $env:AAQTS_AI_CHART_PROMPT_VERSION = "aaqts_chart_v1.0"
 
-# Balanced-v3 is a distinct execution policy, so keep its forward-outcome
-# evidence separate from the baseline and strict quality-v2 cohorts.
-$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v3_balanced"
+# Keep observer-only evidence separate from every legacy strategy cohort.
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_utbot"
 
 $env:AAQTS_AI_CHART_OUTCOMES_ENABLED = "true"
 $env:AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"
@@ -77,47 +76,52 @@ $env:AAQTS_AI_CHART_ANALYTICS_ENABLED = "true"
 $env:AAQTS_AI_CHART_ANALYTICS_MIN_FINALIZED = "30"
 $env:AAQTS_AI_CHART_ANALYTICS_MIN_BUCKET = "10"
 
-# Quality-v3-balanced demo profile: lower blunt threshold pressure while
-# requiring three confirmations for execution. Count/cooldown stoppages stay
-# disabled; hard news, drawdown, margin, spread and portfolio protections stay on.
-$env:AAQTS_MT5_FIXED_LOT = "0.05"
+# UT Bot is the only active indicator decision policy. Legacy
+# ADX/regime/RSI/MACD/Bollinger/context thresholds are intentionally absent.
+# Entries remain pure UT Bot. Every order receives a broker-side ATR stop;
+# at +1R it moves to break-even and from +1.5R it trails by 2.5 ATR. There is
+# no fixed TP cap, while an opposite UT signal remains a final exit.
+$env:AAQTS_STRATEGY_MODE = "UT_BOT"
+$env:AAQTS_UTBOT_KEY_VALUE = "3.0"
+$env:AAQTS_UTBOT_ATR_PERIOD = "10"
+$env:AAQTS_UTBOT_SIGNAL_CONFIDENCE = "80"
+$env:AAQTS_UTBOT_EXIT_MODE = "ATR_TRAIL"
+$env:AAQTS_UTBOT_INITIAL_SL_ATR_MULTIPLIER = "1.5"
+$env:AAQTS_UTBOT_BREAK_EVEN_TRIGGER_R = "1.0"
+$env:AAQTS_UTBOT_TRAILING_START_R = "1.5"
+$env:AAQTS_UTBOT_TRAILING_ATR_MULTIPLIER = "2.5"
+$env:AAQTS_RISK_PERCENT = "0.5"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "3"
 $env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"
-$env:AAQTS_RISK_PERCENT = "1.0"
 $env:AAQTS_MAX_CONSECUTIVE_LOSSES = "0"
 $env:AAQTS_MAX_DAILY_TRADES = "0"
 $env:AAQTS_NEWS_FILTER_ENABLED = "true"
 $env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD"
 $env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES = "0"
-$env:AAQTS_BOT_INTERVAL_SECONDS = "300"
-$env:AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS = "10"
-$env:AAQTS_MIN_ADX = "16"
-$env:AAQTS_SIGNAL_SCORE_THRESHOLD = "45"
-$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS = "3"
-$env:AAQTS_MIN_TRADE_QUALITY = "45"
-$env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION = "0.85"
-$env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT = "4.0"
-$env:AAQTS_MIN_REGIME_CONFIDENCE = "40"
+$env:AAQTS_BOT_INTERVAL_SECONDS = "1"
+$env:AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS = "1"
 $env:PYTHONUNBUFFERED = "1"
 
 $runtimeProfile = [ordered]@{
-    profile = "quality_v3_balanced"
+    profile = "utbot_atr_trail_v1"
     generated_utc = (Get-Date).ToUniversalTime().ToString("o")
     execution_mode = $env:AAQTS_EXECUTION_MODE
     research_output_root = $env:AAQTS_AI_CHART_OUTPUT_ROOT
-    fixed_lot = [double]$env:AAQTS_MT5_FIXED_LOT
+    strategy_mode = $env:AAQTS_STRATEGY_MODE
+    utbot_key_value = [double]$env:AAQTS_UTBOT_KEY_VALUE
+    utbot_atr_period = [int]$env:AAQTS_UTBOT_ATR_PERIOD
+    utbot_signal_confidence = [int]$env:AAQTS_UTBOT_SIGNAL_CONFIDENCE
+    exit_mode = $env:AAQTS_UTBOT_EXIT_MODE
+    initial_sl_atr = [double]$env:AAQTS_UTBOT_INITIAL_SL_ATR_MULTIPLIER
+    break_even_trigger_r = [double]$env:AAQTS_UTBOT_BREAK_EVEN_TRIGGER_R
+    trailing_start_r = [double]$env:AAQTS_UTBOT_TRAILING_START_R
+    trailing_atr = [double]$env:AAQTS_UTBOT_TRAILING_ATR_MULTIPLIER
     risk_percent = [double]$env:AAQTS_RISK_PERCENT
     max_open_positions = [int]$env:AAQTS_MT5_MAX_OPEN_POSITIONS
+    scan_interval_seconds = [int]$env:AAQTS_BOT_INTERVAL_SECONDS
     max_consecutive_losses = [int]$env:AAQTS_MAX_CONSECUTIVE_LOSSES
     max_daily_trades = [int]$env:AAQTS_MAX_DAILY_TRADES
     stop_loss_cooldown_minutes = [int]$env:AAQTS_MT5_STOP_LOSS_COOLDOWN_MINUTES
-    min_adx = [double]$env:AAQTS_MIN_ADX
-    signal_score_threshold = [int]$env:AAQTS_SIGNAL_SCORE_THRESHOLD
-    min_signal_confirmations = [int]$env:AAQTS_MIN_SIGNAL_CONFIRMATIONS
-    min_trade_quality = [int]$env:AAQTS_MIN_TRADE_QUALITY
-    min_regime_confidence = [double]$env:AAQTS_MIN_REGIME_CONFIDENCE
-    portfolio_max_abs_correlation = [double]$env:AAQTS_PORTFOLIO_MAX_ABS_CORRELATION
-    portfolio_max_correlated_risk_percent = [double]$env:AAQTS_PORTFOLIO_MAX_CORRELATED_RISK_PERCENT
     news_filter_enabled = ($env:AAQTS_NEWS_FILTER_ENABLED -eq "true")
     remote_ai_enabled = ($env:AAQTS_AI_CHART_REMOTE_ENABLED -eq "true")
 }
