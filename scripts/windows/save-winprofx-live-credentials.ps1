@@ -17,9 +17,9 @@ $server = (Read-Host "Exact WinProFX MT5 server").Trim()
 if ([string]::IsNullOrWhiteSpace($server)) { throw "MT5 server is required" }
 $password = Read-Host "WinProFX MT5 trading password" -AsSecureString
 
-$login | Set-Content -LiteralPath $loginFile -Encoding ASCII
-$server | Set-Content -LiteralPath $serverFile -Encoding UTF8
-$password | ConvertFrom-SecureString | Set-Content -LiteralPath $passwordFile -Encoding ASCII
+$login | Set-Content -LiteralPath $loginFile -Encoding ASCII -NoNewline
+$server | Set-Content -LiteralPath $serverFile -Encoding UTF8 -NoNewline
+$password | ConvertFrom-SecureString | Set-Content -LiteralPath $passwordFile -Encoding ASCII -NoNewline
 
 "WINPROFX_LIVE_CREDENTIALS_SAVED"
 "LOGIN=$login"
