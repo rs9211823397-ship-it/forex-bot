@@ -93,3 +93,12 @@ def test_winprofx_launchers_disable_unavailable_usd_crypto_symbols():
     assert expected in engine
     assert expected in telegram
     assert "disabled_broker_symbols = $env:AAQTS_DISABLED_BROKER_SYMBOLS" in engine
+
+
+def test_winprofx_telegram_registers_the_explicit_live_account_before_start():
+    text = (WINDOWS / "start-winprofx-live-telegram.ps1").read_text(encoding="utf-8")
+
+    register = "& $python scripts\\register_winprofx_live_account.py"
+    start = "& $python -m telegram_bot.bot"
+    assert register in text
+    assert text.index(register) < text.index(start)
