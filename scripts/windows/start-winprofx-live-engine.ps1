@@ -33,6 +33,7 @@ $env:AAQTS_PRIMARY_ACCOUNT_ID = $AccountId
 $env:AAQTS_MARKET_DATA_PROVIDER = "MT5"
 $env:AAQTS_MT5_TERMINAL_PATH = $TerminalPath
 $env:AAQTS_MT5_SYMBOL_SUFFIX = $SymbolSuffix
+$env:AAQTS_DISABLED_BROKER_SYMBOLS = "XAUUSD,XAGUSD,XPTUSD,XPDUSD,BTCUSD,ETHUSD"
 $env:AAQTS_MT5_USE_PREAUTHENTICATED_SESSION = "false"
 $env:AAQTS_MT5_LOGIN = (Get-Content -LiteralPath $loginFile -Raw).Trim()
 $env:AAQTS_MT5_EXPECTED_LOGIN = $env:AAQTS_MT5_LOGIN
@@ -77,6 +78,7 @@ $profile = [ordered]@{
     risk_percent = [double]$env:AAQTS_RISK_PERCENT
     max_open_positions = [int]$env:AAQTS_MT5_MAX_OPEN_POSITIONS
     symbol_suffix = $SymbolSuffix
+    disabled_broker_symbols = $env:AAQTS_DISABLED_BROKER_SYMBOLS
 }
 $profile | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $profileFile -Encoding UTF8
 
