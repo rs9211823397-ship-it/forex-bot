@@ -114,10 +114,21 @@ class MT5TradeAudit:
                 writer = csv.DictWriter(handle, fieldnames=self.HEADER)
                 writer.writerow({name: row.get(name, "") for name in self.HEADER})
 
-    def record_entry(self, *, source_symbol: str, side: str, risk_plan: dict[str, float], result: Any, managed_position: Any = None) -> None:
+    def record_entry(
+        self,
+        *,
+        source_symbol: str,
+        side: str,
+        risk_plan: dict[str, float],
+        result: Any,
+        managed_position: Any = None,
+        volume_override: float | None = None,
+    ) -> None:
         position_id = int(getattr(managed_position, "ticket", 0) or getattr(result, "position", 0) or getattr(result, "order", 0) or 0)
         broker_symbol = str(getattr(managed_position, "symbol", "")) or str(source_symbol)
         volume = float(getattr(managed_position, "initial_volume", 0.0) or 0.0)
+        if volume <= 0 and volume_override is not None:
+            volume = float(volume_override)
         price = float(getattr(managed_position, "entry_price", 0.0) or 0.0)
         if price <= 0:
             price = float(risk_plan["entry"])
@@ -125,8 +136,8 @@ class MT5TradeAudit:
             "Event": "ENTRY", "TimeUTC": datetime.now(timezone.utc).isoformat(),
             "PositionID": position_id, "DealTicket": int(getattr(result, "deal", 0) or 0),
             "Symbol": broker_symbol, "Side": side, "Volume": volume, "Price": price,
-            "StopLoss": float(getattr(managed_position, "initial_stop_loss", 0.0) or risk_plan["stop_loss"]),
-            "TakeProfit": float(getattr(managed_position, "take_profit", 0.0) or risk_plan["take_profit"]),
+            "StopLoss": float(getattr(managed_position, "initial_stop_loss", 0.0) or risk_plan.get("stop_loss", 0.0)),
+            "TakeProfit": float(getattr(managed_position, "take_profit", 0.0) or risk_plan.get("take_profit", 0.0)),
             "PnL": 0.0, "ExitReason": "", "BrokerReason": "",
             "Magic": self.executor.config.magic, "Comment": f"AAQTS {source_symbol}",
         })
