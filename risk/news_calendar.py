@@ -17,6 +17,11 @@ from risk.protection import NewsEvent
 DEFAULT_FOREX_FACTORY_URL = (
     "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 )
+DEFAULT_NEWS_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0 Safari/537.36 AAQTS/1.0"
+)
 
 
 class NewsCalendarError(ValueError):
@@ -153,6 +158,7 @@ class RefreshingNewsEventProvider:
         refresh_interval: timedelta = timedelta(minutes=30),
         max_stale: timedelta = timedelta(hours=6),
         timeout_seconds: float = 10.0,
+        user_agent: str = DEFAULT_NEWS_USER_AGENT,
         opener: Callable[..., object] | None = None,
     ) -> None:
         self.url = str(url).strip()
@@ -164,10 +170,13 @@ class RefreshingNewsEventProvider:
             raise NewsCalendarError("max_stale must be positive")
         if timeout_seconds <= 0:
             raise NewsCalendarError("timeout_seconds must be positive")
+        if not str(user_agent).strip():
+            raise NewsCalendarError("News calendar user agent must not be empty")
         self.cache_path = Path(cache_path).expanduser().resolve()
         self.refresh_interval = refresh_interval
         self.max_stale = max_stale
         self.timeout_seconds = float(timeout_seconds)
+        self.user_agent = str(user_agent).strip()
         self._opener = opener or urllib.request.urlopen
         self._events: tuple[NewsEvent, ...] = ()
         self._last_success: datetime | None = None
@@ -239,7 +248,10 @@ class RefreshingNewsEventProvider:
         request = urllib.request.Request(
             self.url,
             headers={
-                "User-Agent": "AAQTS/1.0 economic-calendar risk filter",
+                # The public feed rejects Python's default/custom non-browser
+                # user agents with HTTP 403 on some Windows VPS networks.
+                # Keep AAQTS identified while using a browser-compatible form.
+                "User-Agent": self.user_agent,
                 "Accept": "application/json",
             },
         )
@@ -260,6 +272,7 @@ class RefreshingNewsEventProvider:
 
     def _ensure_fresh(self, now: datetime) -> None:
         instant = as_utc(now, "now")
+        refresh_error: NewsCalendarError | None = None
         due = (
             self._last_attempt is None
             or instant < self._last_attempt
@@ -268,14 +281,19 @@ class RefreshingNewsEventProvider:
         if due:
             try:
                 self.refresh(instant)
-            except NewsCalendarError:
-                pass
+            except NewsCalendarError as exc:
+                refresh_error = exc
 
         if self._last_success is None:
-            raise NewsCalendarError("No trusted economic calendar is available")
+            detail = f"; last refresh failed: {refresh_error}" if refresh_error else ""
+            raise NewsCalendarError(
+                "No trusted economic calendar is available" + detail
+            )
         if instant - self._last_success > self.max_stale:
+            detail = f"; last refresh failed: {refresh_error}" if refresh_error else ""
             raise NewsCalendarError(
                 "Economic calendar cache is stale; new entries must remain blocked"
+                + detail
             )
 
     def events_between(
@@ -316,6 +334,7 @@ def build_news_provider(
 
 __all__ = [
     "DEFAULT_FOREX_FACTORY_URL",
+    "DEFAULT_NEWS_USER_AGENT",
     "JsonNewsEventProvider",
     "NewsCalendarError",
     "RefreshingNewsEventProvider",
