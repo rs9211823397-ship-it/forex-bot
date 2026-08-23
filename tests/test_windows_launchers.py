@@ -56,3 +56,27 @@ def test_telegram_launcher_uses_normal_manager_not_temporary_indicator_overlay()
     assert 'AAQTS_STRATEGY_MODE = "UT_BOT"' in text
     assert "-m telegram_bot.bot" in text
     assert "native_24h_entry" not in text
+
+
+def test_winprofx_secret_files_are_written_without_trailing_newlines():
+    text = (WINDOWS / "save-winprofx-live-credentials.ps1").read_text(encoding="utf-8")
+
+    assert text.count("-NoNewline") == 3
+    assert "winprofx_live_password.dpapi" in text
+
+
+def test_winprofx_launchers_trim_dpapi_ciphertext_before_decryption():
+    engine = (WINDOWS / "start-winprofx-live-engine.ps1").read_text(encoding="utf-8")
+    telegram = (WINDOWS / "start-winprofx-live-telegram.ps1").read_text(encoding="utf-8")
+
+    assert "ReadAllText($passwordFile).Trim()" in engine
+    assert "ReadAllText($passwordFile).Trim()" in telegram
+    assert "ReadAllText($tokenFile).Trim()" in telegram
+
+
+def test_winprofx_launcher_supports_non_trading_preflight_only_mode():
+    text = (WINDOWS / "start-winprofx-live-engine.ps1").read_text(encoding="utf-8")
+
+    assert "[switch]$PreflightOnly" in text
+    assert "WINPROFX_LIVE_PREFLIGHT_PASSED" in text
+    assert text.index("if ($PreflightOnly)") < text.index("& $python main.py")
