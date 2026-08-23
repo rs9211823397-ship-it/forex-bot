@@ -9,19 +9,23 @@ WINDOWS = ROOT / "scripts" / "windows"
 def test_demo_launcher_has_one_canonical_assignment_per_policy_key():
     text = (WINDOWS / "start-demo-engine.ps1").read_text(encoding="utf-8")
     keys = (
-        "AAQTS_MT5_MAX_OPEN_POSITIONS",
         "AAQTS_MT5_MAX_SPREAD_STOP_RATIO",
-        "AAQTS_MIN_ADX",
-        "AAQTS_SIGNAL_SCORE_THRESHOLD",
-        "AAQTS_MIN_SIGNAL_CONFIRMATIONS",
-        "AAQTS_MIN_TRADE_QUALITY",
-        "AAQTS_MIN_REGIME_CONFIDENCE",
+        "AAQTS_STRATEGY_MODE",
+        "AAQTS_UTBOT_KEY_VALUE",
+        "AAQTS_UTBOT_ATR_PERIOD",
+        "AAQTS_UTBOT_EXIT_MODE",
+        "AAQTS_UTBOT_INITIAL_SL_ATR_MULTIPLIER",
+        "AAQTS_UTBOT_BREAK_EVEN_TRIGGER_R",
+        "AAQTS_UTBOT_TRAILING_START_R",
+        "AAQTS_UTBOT_TRAILING_ATR_MULTIPLIER",
     )
 
     for key in keys:
         assert text.count(f"$env:{key} =") == 1
 
     assert '$env:AAQTS_MT5_MAX_SPREAD_STOP_RATIO = "0.35"' in text
+    assert '$env:AAQTS_BOT_INTERVAL_SECONDS = "1"' in text
+    assert '$env:AAQTS_MT5_MAX_OPEN_POSITIONS = "3"' in text
 
 
 def test_windows_launchers_contain_no_plaintext_telegram_token():
@@ -44,3 +48,11 @@ def test_demo_launcher_explicitly_overrides_stale_dotenv_credentials():
     assert 'AAQTS_MT5_LOGIN = ""' in text
     assert 'AAQTS_MT5_PASSWORD = ""' in text
     assert 'AAQTS_MT5_SERVER = ""' in text
+
+
+def test_telegram_launcher_uses_normal_manager_not_temporary_indicator_overlay():
+    text = (WINDOWS / "start-telegram.ps1").read_text(encoding="utf-8")
+
+    assert 'AAQTS_STRATEGY_MODE = "UT_BOT"' in text
+    assert "-m telegram_bot.bot" in text
+    assert "native_24h_entry" not in text
