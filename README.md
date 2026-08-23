@@ -229,6 +229,10 @@ suffix to the live launcher. The launcher validates the pinned REAL login,
 exact server, quotes, candles, volume metadata and protection policy before it
 starts the engine:
 
+The WinProFX launcher currently enables the seven exact-name forex majors.
+It deliberately disables `BTCUSD` and `ETHUSD` because this venue exposes
+`BTCUSDT` and `ETHUSDT`; those contracts must not be treated as silent aliases.
+
 ```powershell
 & .\scripts\windows\save-winprofx-live-credentials.ps1
 & .\scripts\windows\start-winprofx-live-engine.ps1 `
