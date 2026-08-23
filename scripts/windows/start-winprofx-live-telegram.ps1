@@ -18,8 +18,12 @@ foreach ($required in @($python, $TerminalPath, $tokenFile, $passwordFile, $logi
 }
 
 Set-Location $Repository
-$secureToken = Get-Content -LiteralPath $tokenFile -Raw | ConvertTo-SecureString
-$securePassword = Get-Content -LiteralPath $passwordFile -Raw | ConvertTo-SecureString
+$encryptedToken = [System.IO.File]::ReadAllText($tokenFile).Trim()
+$encryptedPassword = [System.IO.File]::ReadAllText($passwordFile).Trim()
+if ([string]::IsNullOrWhiteSpace($encryptedToken)) { throw "Telegram token secret is empty" }
+if ([string]::IsNullOrWhiteSpace($encryptedPassword)) { throw "WinProFX password secret is empty" }
+$secureToken = ConvertTo-SecureString -String $encryptedToken
+$securePassword = ConvertTo-SecureString -String $encryptedPassword
 $env:TELEGRAM_BOT_TOKEN = [System.Net.NetworkCredential]::new('', $secureToken).Password
 $env:AAQTS_RUNTIME_DIR = $runtime
 $env:AAQTS_SINGLE_ACCOUNT_MODE = "true"
