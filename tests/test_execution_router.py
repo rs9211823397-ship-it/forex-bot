@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from config.settings import MT5_FIXED_LOT, MT5_SYMBOL_MAP, MT5_SYMBOL_SUFFIX
+from config.settings import MT5_SYMBOL_MAP, MT5_SYMBOL_SUFFIX
 from config.symbols import executable_symbol_map
 from execution.execution_router import ExecutionRouter
 from execution.mt5_executor import ExecutionError
@@ -47,6 +47,7 @@ class FakeMT5Executor:
         self.tick_age_seconds = 0.0
         self.bid = 1.10000
         self.ask = 1.10002
+        self.closed = []
 
     def connect(self):
         self.connected = True
@@ -76,8 +77,13 @@ class FakeMT5Executor:
         self.emergency_called = True
         return ["closed"]
 
-    def positions(self, managed_only=True):
+    def positions(self, symbol=None, managed_only=True):
         return [Position()]
+
+    def close_position(self, ticket, comment=""):
+        result = {"ticket": ticket, "comment": comment}
+        self.closed.append(result)
+        return result
 
     def account_snapshot(self):
         return "account"
@@ -122,7 +128,7 @@ def test_paper_mode_routes_to_paper_trader():
     assert len(paper.open_trades) == 1
 
 
-def test_mt5_demo_routes_to_mapped_broker_symbol_with_fixed_lot():
+def test_mt5_demo_routes_to_mapped_broker_symbol_with_approved_risk():
     paper = FakePaperTrader()
     mt5 = FakeMT5Executor()
     positions = FakePositionManager()
@@ -139,13 +145,102 @@ def test_mt5_demo_routes_to_mapped_broker_symbol_with_fixed_lot():
     assert mt5.connected is True
     assert recovered[0].ticket == 11
     assert result["symbol"] == MT5_SYMBOL_MAP["EURUSD=X"]
-    assert result["volume"] == MT5_FIXED_LOT
+    assert result["volume"] is None
     assert result["stop_loss"] == 1.0950
     assert result["reference_entry"] == 1.1000
-    assert result["risk_amount"] is None
+    assert result["risk_amount"] == 10.0
     assert paper.open_trades == []
     assert positions.recovered is True
     assert positions.registered == [result]
+
+
+def test_utbot_signal_lifecycle_uses_fixed_test_lot_without_sl_tp():
+    mt5 = FakeMT5Executor()
+    router = ExecutionRouter(
+        paper_trader=FakePaperTrader(),
+        mode="MT5_DEMO",
+        mt5_executor=mt5,
+        signal_exit_mode=True,
+        signal_test_lot=0.01,
+    )
+
+    result = router.execute(
+        "EURUSD=X",
+        "BUY",
+        {"entry": 1.1000},
+        paper_position_size=99.0,
+    )
+
+    assert result["volume"] == 0.01
+    assert result["stop_loss"] == 0.0
+    assert result["take_profit"] == 0.0
+    assert result["reference_entry"] is None
+    assert result["risk_amount"] is None
+
+
+def test_utbot_signal_lifecycle_closes_opposite_before_reversal():
+    mt5 = FakeMT5Executor()
+    router = ExecutionRouter(
+        paper_trader=FakePaperTrader(),
+        mode="MT5_DEMO",
+        mt5_executor=mt5,
+        signal_exit_mode=True,
+    )
+
+    closed = router.close_on_opposite_signal("EURUSD=X", "SELL")
+
+    assert closed == [{"ticket": 11, "comment": "AAQTS opposite UT exit"}]
+    assert mt5.closed == closed
+
+
+def test_protected_utbot_submits_atr_stop_without_fixed_take_profit():
+    mt5 = FakeMT5Executor()
+    router = ExecutionRouter(
+        paper_trader=FakePaperTrader(),
+        mode="MT5_DEMO",
+        mt5_executor=mt5,
+        protected_utbot_mode=True,
+        opposite_signal_exit=True,
+    )
+
+    protected = dict(RISK_PLAN)
+    protected["take_profit"] = 0.0
+    result = router.execute(
+        "EURUSD=X",
+        "BUY",
+        protected,
+        paper_position_size=99.0,
+        approved_risk_amount=0.50,
+    )
+
+    assert result["volume"] is None
+    assert result["stop_loss"] == protected["stop_loss"]
+    assert result["take_profit"] == 0.0
+    assert result["risk_amount"] == 0.50
+
+
+def test_protected_utbot_keeps_opposite_signal_exit():
+    mt5 = FakeMT5Executor()
+    router = ExecutionRouter(
+        paper_trader=FakePaperTrader(),
+        mode="MT5_DEMO",
+        mt5_executor=mt5,
+        protected_utbot_mode=True,
+        opposite_signal_exit=True,
+    )
+
+    closed = router.close_on_opposite_signal("EURUSD=X", "SELL")
+
+    assert closed == [{"ticket": 11, "comment": "AAQTS opposite UT exit"}]
+
+
+def test_unprotected_signal_lifecycle_is_blocked_from_mt5_live():
+    with pytest.raises(ExecutionError, match="locked to PAPER/MT5_DEMO"):
+        ExecutionRouter(
+            paper_trader=FakePaperTrader(),
+            mode="MT5_LIVE",
+            signal_exit_mode=True,
+        )
 
 
 def test_stale_mt5_tick_is_rejected_before_order_send():
