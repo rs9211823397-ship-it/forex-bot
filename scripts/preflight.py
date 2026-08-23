@@ -78,12 +78,16 @@ def check_output_folders(repo_root: Path) -> None:
 
 
 def check_execution_mode() -> None:
-    from config.settings import EXECUTION_MODE
+    from config.settings import EXECUTION_MODE, STRATEGY_MODE, UTBOT_EXIT_MODE
     if EXECUTION_MODE not in {"PAPER", "MT5_DEMO", "MT5_LIVE"}:
         fail(f"Unsupported AAQTS_EXECUTION_MODE: {EXECUTION_MODE}")
     if EXECUTION_MODE == "MT5_LIVE":
-        fail("MT5_LIVE remains locked; use PAPER or MT5_DEMO")
+        if os.getenv("AAQTS_LIVE_TRADING_ACK", "").strip() != "I_UNDERSTAND_REAL_MONEY":
+            fail("MT5_LIVE requires the explicit real-money acknowledgement")
+        if STRATEGY_MODE != "UT_BOT" or UTBOT_EXIT_MODE != "ATR_TRAIL":
+            fail("MT5_LIVE requires protected UT_BOT ATR_TRAIL mode")
     print(f"[preflight] Execution mode {EXECUTION_MODE} OK")
+    print(f"[preflight] Strategy mode {STRATEGY_MODE} OK")
 
 
 def check_market_data_policy() -> None:
@@ -94,8 +98,8 @@ def check_market_data_policy() -> None:
         market = MarketData(cache_downloads=False)
     except Exception as exc:
         fail(f"Market-data policy invalid: {exc}")
-    if EXECUTION_MODE == "MT5_DEMO" and market.provider != "MT5":
-        fail("MT5_DEMO requires broker-native MT5 market data")
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"} and market.provider != "MT5":
+        fail(f"{EXECUTION_MODE} requires broker-native MT5 market data")
     print(
         f"[preflight] Market data policy OK (provider={market.provider}, "
         f"cached_fallback={market.allow_cache_fallback})"
@@ -111,13 +115,20 @@ def check_news_calendar() -> None:
         NEWS_FILTER_ENABLED,
         NEWS_MAX_STALE_MINUTES,
         NEWS_REFRESH_MINUTES,
+        STRATEGY_MODE,
+        UTBOT_EXIT_MODE,
     )
     from risk.news_calendar import build_news_provider
 
-    if EXECUTION_MODE == "MT5_DEMO" and not NEWS_FILTER_ENABLED:
-        fail("MT5_DEMO requires the fail-closed news filter")
+    pure_signal_demo = (
+        EXECUTION_MODE == "MT5_DEMO"
+        and STRATEGY_MODE == "UT_BOT"
+        and UTBOT_EXIT_MODE == "OPPOSITE_SIGNAL"
+    )
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"} and not NEWS_FILTER_ENABLED and not pure_signal_demo:
+        fail(f"{EXECUTION_MODE} requires the fail-closed news filter")
     if not NEWS_FILTER_ENABLED:
-        print("[preflight] News filter disabled (PAPER mode)")
+        print("[preflight] News filter disabled (signal-lifecycle/PAPER mode)")
         return
     try:
         provider = build_news_provider(
@@ -148,7 +159,7 @@ def check_symbol_catalog() -> None:
     active = [symbol for group in SYMBOLS.values() for symbol in group]
     for symbol in active:
         get_instrument_spec(symbol)
-    if EXECUTION_MODE == "MT5_DEMO":
+    if EXECUTION_MODE in {"MT5_DEMO", "MT5_LIVE"}:
         missing = sorted(set(active).difference(MT5_SYMBOL_MAP))
         if missing:
             fail(
@@ -158,8 +169,8 @@ def check_symbol_catalog() -> None:
     print(f"[preflight] Symbol catalog OK ({len(active)} active)")
 
 
-def check_mt5_demo_broker() -> None:
-    """Validate the real demo venue and broker candle access without orders."""
+def check_mt5_broker() -> None:
+    """Validate the pinned MT5 venue and candle access without placing orders."""
     from config.settings import (
         EXECUTION_MODE,
         MT5_EXPECTED_LOGIN,
@@ -169,30 +180,40 @@ def check_mt5_demo_broker() -> None:
         MT5_SYMBOL_MAP,
         MT5_TERMINAL_PATH,
         MT5_USE_PREAUTHENTICATED_SESSION,
+        STRATEGY_MODE,
+        UTBOT_EXIT_MODE,
     )
 
-    if EXECUTION_MODE != "MT5_DEMO":
+    if EXECUTION_MODE not in {"MT5_DEMO", "MT5_LIVE"}:
         return
     terminal_path = Path(MT5_TERMINAL_PATH)
     if not terminal_path.is_file():
         fail(f"MT5 terminal was not found: {terminal_path}")
     if not MT5_EXPECTED_LOGIN:
         fail(
-            "MT5_DEMO requires a pinned expected login; run "
+            f"{EXECUTION_MODE} requires a pinned expected login; run "
             "scripts/pin_mt5_account.py or save-demo-credentials.ps1"
         )
+    if EXECUTION_MODE == "MT5_LIVE" and MT5_USE_PREAUTHENTICATED_SESSION:
+        fail("MT5_LIVE forbids a preauthenticated session")
     if not MT5_USE_PREAUTHENTICATED_SESSION and not (
         MT5_LOGIN and MT5_PASSWORD and MT5_SERVER
     ):
         fail(
-            "MT5_DEMO requires complete LOGIN/PASSWORD/SERVER credentials or "
-            "AAQTS_MT5_USE_PREAUTHENTICATED_SESSION=true"
+            f"{EXECUTION_MODE} requires complete LOGIN/PASSWORD/SERVER credentials"
+            + (
+                " or AAQTS_MT5_USE_PREAUTHENTICATED_SESSION=true"
+                if EXECUTION_MODE == "MT5_DEMO"
+                else ""
+            )
         )
 
     try:
+        from execution.live_mt5_executor import LiveMT5Executor
         from execution.mt5_executor import ExecutionConfig, MT5Executor
 
-        executor = MT5Executor(
+        executor_class = LiveMT5Executor if EXECUTION_MODE == "MT5_LIVE" else MT5Executor
+        executor = executor_class(
             ExecutionConfig(
                 terminal_path=str(terminal_path),
                 login=int(MT5_LOGIN) if MT5_LOGIN else None,
@@ -226,7 +247,10 @@ def check_mt5_demo_broker() -> None:
                 else:
                     quoted += 1
 
-                for timeframe_name in ("TIMEFRAME_M15", "TIMEFRAME_H1"):
+                timeframes = ["TIMEFRAME_M15"]
+                if STRATEGY_MODE != "UT_BOT":
+                    timeframes.append("TIMEFRAME_H1")
+                for timeframe_name in timeframes:
                     timeframe = getattr(mt5, timeframe_name, None)
                     if timeframe is None:
                         fail(f"MT5 API lacks {timeframe_name}")
@@ -247,7 +271,7 @@ def check_mt5_demo_broker() -> None:
                     + ", ".join(unquoted)
                 )
             print(
-                "[preflight] MT5 demo broker OK "
+                f"[preflight] {EXECUTION_MODE} broker OK "
                 f"(balance={account.balance:.2f}, equity={account.equity:.2f}, "
                 f"symbols={len(MT5_SYMBOL_MAP)}, quoted={quoted}, "
                 f"candle_ready={candle_ready}, "
@@ -258,7 +282,7 @@ def check_mt5_demo_broker() -> None:
     except SystemExit:
         raise
     except Exception as exc:
-        fail(f"MT5 demo broker preflight failed: {exc}")
+        fail(f"{EXECUTION_MODE} broker preflight failed: {exc}")
 
 
 def main() -> None:
@@ -271,7 +295,7 @@ def main() -> None:
     check_market_data_policy()
     check_symbol_catalog()
     check_news_calendar()
-    check_mt5_demo_broker()
+    check_mt5_broker()
     print("[preflight] Preflight passed")
 
 
