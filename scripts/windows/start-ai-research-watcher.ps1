@@ -23,7 +23,7 @@ $env:TELEGRAM_BOT_TOKEN = [System.Net.NetworkCredential]::new('', $secureToken).
 Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
 $env:AAQTS_AI_CHART_ENABLED = "true"
 $env:AAQTS_AI_CHART_REMOTE_ENABLED = "false"
-$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_quality_v3_balanced"
+$env:AAQTS_AI_CHART_OUTPUT_ROOT = "runtime/ai_chart_analysis_utbot"
 $env:AAQTS_AI_CHART_OUTCOMES_ENABLED = "true"
 $env:AAQTS_AI_CHART_OUTCOME_HORIZONS = "1,3,6,12"
 $env:AAQTS_AI_CHART_ANALYTICS_ENABLED = "true"
