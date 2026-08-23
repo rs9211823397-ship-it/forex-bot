@@ -4,7 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from risk.news_calendar import NewsCalendarError, RefreshingNewsEventProvider
+from risk.news_calendar import (
+    DEFAULT_NEWS_USER_AGENT,
+    NewsCalendarError,
+    RefreshingNewsEventProvider,
+)
 
 
 class Response:
@@ -46,6 +50,27 @@ def test_forex_factory_rows_are_normalized_and_filtered(tmp_path):
     assert events[0].currencies == ("USD",)
     assert events[0].name == "Non-Farm Employment Change"
     assert provider.last_success == now
+
+
+def test_remote_request_uses_browser_compatible_identified_user_agent(tmp_path):
+    requests = []
+
+    def opener(request, timeout):
+        requests.append(request)
+        return Response([])
+
+    provider = RefreshingNewsEventProvider(
+        "https://example.test/calendar.json",
+        cache_path=tmp_path / "calendar.json",
+        opener=opener,
+    )
+    provider.refresh(datetime.now(timezone.utc), force=True)
+
+    assert len(requests) == 1
+    user_agent = requests[0].get_header("User-agent")
+    assert user_agent == DEFAULT_NEWS_USER_AGENT
+    assert user_agent.startswith("Mozilla/5.0")
+    assert "AAQTS/1.0" in user_agent
 
 
 def test_remote_success_is_atomically_cached_and_reusable(tmp_path):
