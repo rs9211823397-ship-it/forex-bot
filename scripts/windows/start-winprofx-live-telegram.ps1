@@ -43,6 +43,14 @@ $env:AAQTS_MT5_EXPECTED_LOGIN = $env:AAQTS_MT5_LOGIN
 $env:AAQTS_MT5_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
 $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
 
+& $python scripts\register_winprofx_live_account.py `
+    --runtime-dir $runtime `
+    --account-id $AccountId `
+    --login $env:AAQTS_MT5_LOGIN `
+    --server $env:AAQTS_MT5_SERVER `
+    --terminal-path $TerminalPath
+if ($LASTEXITCODE -ne 0) { throw "WinProFX Telegram account registration failed" }
+
 $previousEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 & $python -m telegram_bot.bot 1>> (Join-Path $runtime "telegram-live.log") 2>> (Join-Path $runtime "telegram-live-error.log")
