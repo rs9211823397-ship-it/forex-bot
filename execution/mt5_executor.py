@@ -1,8 +1,9 @@
 """Safe MetaTrader 5 execution engine for AAQTS.
 
 All broker reads fail closed: an MT5 API error is never interpreted as an
-empty account/position set. New entries require broker-side SL/TP, fresh
-quotes, margin headroom and portfolio-approved risk sizing.
+empty account/position set. Normal entries require broker-side SL/TP and
+portfolio-approved risk sizing. A separately guarded demo experiment may use
+signal-to-signal exits with fixed test volume and no broker protection.
 """
 
 from __future__ import annotations
@@ -288,11 +289,11 @@ class MT5Executor:
             raise ExecutionError(f"No current tick is available for {symbol}")
         return tick
 
-    def _validate_tick_and_spread(self, tick: Any, entry: float, stop_loss: float) -> None:
+    def _validate_tick(self, tick: Any, entry: float) -> tuple[float, float]:
         bid = float(getattr(tick, "bid", 0.0) or 0.0)
         ask = float(getattr(tick, "ask", 0.0) or 0.0)
-        if not all(isfinite(v) and v > 0 for v in (bid, ask, entry, stop_loss)):
-            raise ExecutionError("MT5 quote contains invalid bid/ask/entry/stop values")
+        if not all(isfinite(v) and v > 0 for v in (bid, ask, entry)):
+            raise ExecutionError("MT5 quote contains invalid bid/ask/entry values")
         if ask < bid:
             raise ExecutionError("MT5 quote has inverted bid/ask")
         timestamp_msc = float(getattr(tick, "time_msc", 0.0) or 0.0)
@@ -305,6 +306,12 @@ class MT5Executor:
             raise ExecutionError(
                 f"MT5 quote is stale ({age:.1f}s; max {self.config.max_tick_age_seconds:.1f}s)"
             )
+        return bid, ask
+
+    def _validate_tick_and_spread(self, tick: Any, entry: float, stop_loss: float) -> None:
+        bid, ask = self._validate_tick(tick, entry)
+        if not isfinite(float(stop_loss)) or float(stop_loss) <= 0:
+            raise ExecutionError("MT5 quote contains an invalid protective stop")
         stop_distance = abs(float(entry) - float(stop_loss))
         if stop_distance <= 0:
             raise ExecutionError("Protective stop distance must be positive")
@@ -361,19 +368,35 @@ class MT5Executor:
             self._validate_position_limits(str(request["symbol"]), side)
             tick = self.symbol_tick(str(request["symbol"]))
             fresh_price = float(tick.ask if side == "BUY" else tick.bid)
-            stop_distance = abs(float(request["price"]) - float(request["sl"]))
-            target_distance = abs(float(request["tp"]) - float(request["price"]))
+            protected = float(request["sl"]) > 0
+            stop_distance = (
+                abs(float(request["price"]) - float(request["sl"]))
+                if protected
+                else 0.0
+            )
+            target_distance = (
+                abs(float(request["tp"]) - float(request["price"]))
+                if float(request["tp"]) > 0
+                else 0.0
+            )
             request["price"] = self._round_price(fresh_price, info)
-            request["sl"] = self._round_price(
-                fresh_price - stop_distance if side == "BUY" else fresh_price + stop_distance,
-                info,
-            )
-            request["tp"] = self._round_price(
-                fresh_price + target_distance if side == "BUY" else fresh_price - target_distance,
-                info,
-            )
-            self._validate_protection(side, fresh_price, float(request["sl"]), float(request["tp"]), info)
-            self._validate_tick_and_spread(tick, fresh_price, float(request["sl"]))
+            if protected:
+                request["sl"] = self._round_price(
+                    fresh_price - stop_distance if side == "BUY" else fresh_price + stop_distance,
+                    info,
+                )
+                request["tp"] = (
+                    self._round_price(
+                        fresh_price + target_distance if side == "BUY" else fresh_price - target_distance,
+                        info,
+                    )
+                    if target_distance > 0
+                    else 0.0
+                )
+                self._validate_protection(side, fresh_price, float(request["sl"]), float(request["tp"]), info)
+                self._validate_tick_and_spread(tick, fresh_price, float(request["sl"]))
+            else:
+                self._validate_tick(tick, fresh_price)
             self._validate_margin(str(request["symbol"]), int(request["type"]), float(request["volume"]), fresh_price)
             check = self.mt5.order_check(request)
             if check is None or getattr(check, "retcode", None) != 0:
@@ -409,6 +432,23 @@ class MT5Executor:
             raise ExecutionError("A valid stop loss is mandatory")
         if self.config.require_take_profit and take_profit <= 0:
             raise ExecutionError("A valid take profit is mandatory")
+        if not all(
+            isfinite(float(value)) and float(value) >= 0
+            for value in (stop_loss, take_profit)
+        ):
+            raise ExecutionError("Stop loss and take profit must be finite and non-negative")
+        has_stop = isfinite(float(stop_loss)) and float(stop_loss) > 0
+        has_target = isfinite(float(take_profit)) and float(take_profit) > 0
+        stop_only_allowed = (
+            has_stop
+            and not has_target
+            and self.config.require_stop_loss
+            and not self.config.require_take_profit
+        )
+        if has_stop != has_target and not stop_only_allowed:
+            raise ExecutionError(
+                "Stop loss and take profit must either both be set or both be zero"
+            )
 
         info = self.symbol_info(symbol)
         if getattr(info, "trade_mode", 0) == 0:
@@ -416,7 +456,7 @@ class MT5Executor:
         tick = self.symbol_tick(symbol)
         is_buy = side == "BUY"
         price = float(tick.ask if is_buy else tick.bid)
-        if reference_entry is not None:
+        if reference_entry is not None and has_stop:
             stop_loss, take_profit = self._translate_protection(
                 side=side,
                 broker_entry=price,
@@ -424,8 +464,11 @@ class MT5Executor:
                 reference_stop=float(stop_loss),
                 reference_target=float(take_profit),
             )
-        self._validate_protection(side, price, stop_loss, take_profit, info)
-        self._validate_tick_and_spread(tick, price, stop_loss)
+        if has_stop:
+            self._validate_protection(side, price, stop_loss, take_profit, info)
+            self._validate_tick_and_spread(tick, price, stop_loss)
+        else:
+            self._validate_tick(tick, price)
         if risk_amount is not None:
             volume = self._volume_for_risk(
                 symbol=symbol,
@@ -494,6 +537,8 @@ class MT5Executor:
     @serialized_mt5_call
     def modify_protection(self, position_ticket: int, stop_loss: float, take_profit: float) -> TradeResult:
         self._ensure_connected()
+        if self.config.require_take_profit and float(take_profit) <= 0:
+            raise ExecutionError("A valid take profit is mandatory")
         position = self._position_by_ticket(position_ticket)
         side = "BUY" if position.type == self.mt5.POSITION_TYPE_BUY else "SELL"
         info = self.symbol_info(position.symbol)
@@ -528,7 +573,7 @@ class MT5Executor:
         offset = max(0.0, float(offset_points)) * float(info.point)
         stop_loss = entry + offset if position.type == self.mt5.POSITION_TYPE_BUY else entry - offset
         take_profit = float(getattr(position, "tp", 0.0) or 0.0)
-        if take_profit <= 0:
+        if take_profit <= 0 and self.config.require_take_profit:
             raise ExecutionError("Cannot move to break-even without an existing take profit")
         return self.modify_protection(position_ticket, self._round_price(stop_loss, info), take_profit)
 
@@ -536,7 +581,7 @@ class MT5Executor:
         self._ensure_connected()
         position = self._position_by_ticket(position_ticket)
         take_profit = float(getattr(position, "tp", 0.0) or 0.0)
-        if take_profit <= 0:
+        if take_profit <= 0 and self.config.require_take_profit:
             raise ExecutionError("Cannot trail a position without an existing take profit")
         return self.modify_protection(position_ticket, float(stop_loss), take_profit)
 
@@ -626,12 +671,16 @@ class MT5Executor:
             raise ExecutionError(f"Duplicate {symbol} {side} position rejected")
 
     def _validate_protection(self, side: str, entry: float, sl: float, tp: float, info: Any) -> None:
-        if side == "BUY" and not (sl < entry < tp):
-            raise ExecutionError("BUY protection must satisfy SL < entry < TP")
-        if side == "SELL" and not (tp < entry < sl):
-            raise ExecutionError("SELL protection must satisfy TP < entry < SL")
+        has_target = isfinite(float(tp)) and float(tp) > 0
+        if side == "BUY" and not (sl < entry and (not has_target or entry < tp)):
+            raise ExecutionError("BUY protection must satisfy SL < entry < TP (when TP is set)")
+        if side == "SELL" and not (entry < sl and (not has_target or tp < entry)):
+            raise ExecutionError("SELL protection must satisfy TP < entry < SL (when TP is set)")
         minimum = max(getattr(info, "trade_stops_level", 0), 0) * info.point
-        if minimum and (abs(entry - sl) < minimum or abs(tp - entry) < minimum):
+        if minimum and (
+            abs(entry - sl) < minimum
+            or (has_target and abs(tp - entry) < minimum)
+        ):
             raise ExecutionError("SL/TP violates the broker minimum stop distance")
 
     @staticmethod
@@ -645,18 +694,29 @@ class MT5Executor:
     ) -> tuple[float, float]:
         if not all(
             isfinite(value) and value > 0
-            for value in (broker_entry, reference_entry, reference_stop, reference_target)
-        ):
+            for value in (broker_entry, reference_entry, reference_stop)
+        ) or not isfinite(reference_target) or reference_target < 0:
             raise ExecutionError("Reference and broker prices must be finite and positive")
-        if side == "BUY" and not (reference_stop < reference_entry < reference_target):
-            raise ExecutionError("BUY reference protection must satisfy SL < entry < TP")
-        if side == "SELL" and not (reference_target < reference_entry < reference_stop):
-            raise ExecutionError("SELL reference protection must satisfy TP < entry < SL")
+        has_target = reference_target > 0
+        if side == "BUY" and not (
+            reference_stop < reference_entry
+            and (not has_target or reference_entry < reference_target)
+        ):
+            raise ExecutionError("BUY reference protection must satisfy SL < entry < TP (when TP is set)")
+        if side == "SELL" and not (
+            reference_entry < reference_stop
+            and (not has_target or reference_target < reference_entry)
+        ):
+            raise ExecutionError("SELL reference protection must satisfy TP < entry < SL (when TP is set)")
         stop_distance = abs(reference_entry - reference_stop)
-        target_distance = abs(reference_target - reference_entry)
+        target_distance = abs(reference_target - reference_entry) if has_target else 0.0
         if side == "BUY":
-            return broker_entry - stop_distance, broker_entry + target_distance
-        return broker_entry + stop_distance, broker_entry - target_distance
+            return broker_entry - stop_distance, (
+                broker_entry + target_distance if has_target else 0.0
+            )
+        return broker_entry + stop_distance, (
+            broker_entry - target_distance if has_target else 0.0
+        )
 
     def _volume_for_risk(
         self,
