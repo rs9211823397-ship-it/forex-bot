@@ -800,6 +800,18 @@ class PositionManager:
             else 0.0
         )
 
+        # A stop already at/beyond entry proves that risk was previously
+        # locked before a process restart. The original distance can no
+        # longer be reconstructed from MT5 alone, so resume trailing directly
+        # instead of silently abandoning management.
+        protected_after_restart = (
+            stop_loss > 0
+            and (
+                (side == "BUY" and stop_loss >= entry - EPSILON)
+                or (side == "SELL" and stop_loss <= entry + EPSILON)
+            )
+        )
+
         position = ManagedPosition(
 
             ticket=ticket,
@@ -836,6 +848,16 @@ class PositionManager:
                     "time",
                     time.time(),
                 )
+            ),
+
+            break_even_done=protected_after_restart,
+
+            trailing_active=protected_after_restart,
+
+            state=(
+                PositionState.BREAK_EVEN
+                if protected_after_restart
+                else PositionState.OPEN
             ),
 
         )
@@ -2311,7 +2333,10 @@ class PositionManager:
     ) -> Optional[dict[str, Any]]:
         if not self.config.enable_trailing_stop:
             return None
-        if position.current_rr + EPSILON < self.config.trailing_start_rr:
+        if (
+            not position.trailing_active
+            and position.current_rr + EPSILON < self.config.trailing_start_rr
+        ):
             return None
         if atr is None:
             return None
