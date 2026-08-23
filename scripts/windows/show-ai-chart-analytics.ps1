@@ -1,6 +1,6 @@
 param(
     [string]$Repository = "$env:USERPROFILE\forex-bot",
-    [string]$OutputRoot = "runtime/ai_chart_analysis_quality_v3_balanced"
+    [string]$OutputRoot = "runtime/ai_chart_analysis_utbot"
 )
 
 $ErrorActionPreference = "Stop"
