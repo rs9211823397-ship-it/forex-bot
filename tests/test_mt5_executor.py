@@ -149,7 +149,7 @@ def test_preauthenticated_connect_validates_expected_login():
         executor.connect()
 
 
-def managed_position(adapter, *, ticket=10, volume=0.05):
+def managed_position(adapter, *, ticket=10, volume=0.05, take_profit=1.10400):
     return SimpleNamespace(
         ticket=ticket,
         symbol="EURUSD",
@@ -159,7 +159,7 @@ def managed_position(adapter, *, ticket=10, volume=0.05):
         price_open=1.09800,
         price_current=1.10000,
         sl=1.09600,
-        tp=1.10400,
+        tp=take_profit,
         time=1_700_000_000,
         profit=10.0,
         comment="AAQTS",
@@ -179,6 +179,59 @@ def test_buy_requires_stop_loss_and_take_profit():
         executor.place_market_order("EURUSD", "BUY", 0.01, 0, 1.10200)
     with pytest.raises(ExecutionError, match="take profit"):
         executor.place_market_order("EURUSD", "BUY", 0.01, 1.09800, 0)
+
+
+def test_demo_signal_lifecycle_can_submit_zero_sl_tp_when_explicitly_configured():
+    executor, adapter = connected_executor(
+        require_stop_loss=False,
+        require_take_profit=False,
+    )
+
+    result = executor.place_market_order(
+        "EURUSD",
+        "BUY",
+        0.01,
+        stop_loss=0.0,
+        take_profit=0.0,
+    )
+
+    assert result.success is True
+    assert adapter.sent[-1]["sl"] == 0.0
+    assert adapter.sent[-1]["tp"] == 0.0
+
+
+def test_optional_protection_rejects_half_protected_order():
+    executor, _ = connected_executor(
+        require_stop_loss=False,
+        require_take_profit=False,
+    )
+    with pytest.raises(ExecutionError, match="both be set or both be zero"):
+        executor.place_market_order(
+            "EURUSD",
+            "BUY",
+            0.01,
+            stop_loss=1.09800,
+            take_profit=0.0,
+        )
+
+
+def test_protected_runner_accepts_broker_stop_without_fixed_target():
+    executor, adapter = connected_executor(
+        require_stop_loss=True,
+        require_take_profit=False,
+    )
+
+    result = executor.place_market_order(
+        "EURUSD",
+        "BUY",
+        0.01,
+        stop_loss=1.09800,
+        take_profit=0.0,
+    )
+
+    assert result.success is True
+    assert adapter.sent[-1]["sl"] == 1.098
+    assert adapter.sent[-1]["tp"] == 0.0
 
 
 def test_buy_request_contains_broker_side_protection():
@@ -440,6 +493,22 @@ def test_trailing_stop_update_preserves_existing_take_profit():
     assert result.success is True
     assert adapter.sent[-1]["sl"] == 1.099
     assert adapter.sent[-1]["tp"] == 1.104
+
+
+def test_break_even_and_trailing_support_stop_only_runner():
+    executor, adapter = connected_executor(
+        require_stop_loss=True,
+        require_take_profit=False,
+    )
+    adapter._positions.append(managed_position(adapter, take_profit=0.0))
+
+    break_even = executor.move_to_break_even(10)
+    trailing = executor.update_trailing_stop(10, 1.09900)
+
+    assert break_even.success is True
+    assert trailing.success is True
+    assert adapter.sent[-2]["tp"] == 0.0
+    assert adapter.sent[-1]["tp"] == 0.0
 
 
 def test_partial_close_uses_requested_volume_and_preserves_remainder():
