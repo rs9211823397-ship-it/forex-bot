@@ -163,16 +163,25 @@ class PaperTrader:
         for trade in self.open_trades[:]:
             if trade["symbol"] != symbol:
                 continue
+            if (
+                float(trade.get("stop_loss", 0.0) or 0.0) <= 0
+                and float(trade.get("take_profit", 0.0) or 0.0) <= 0
+            ):
+                # Signal-to-signal experiments close explicitly on the next
+                # opposite signal instead of using price protection.
+                continue
 
             close = False
+            stop_loss = float(trade.get("stop_loss", 0.0) or 0.0)
+            take_profit = float(trade.get("take_profit", 0.0) or 0.0)
 
             if trade["signal"] == "BUY":
-                if current_price <= trade["stop_loss"]:
+                if stop_loss > 0 and current_price <= stop_loss:
                     trade["status"] = "STOP LOSS"
 
                     close = True
 
-                elif current_price >= trade["take_profit"]:
+                elif take_profit > 0 and current_price >= take_profit:
                     trade["status"] = "TAKE PROFIT"
 
                     close = True
@@ -195,12 +204,12 @@ class PaperTrader:
                     )
 
             else:
-                if current_price >= trade["stop_loss"]:
+                if stop_loss > 0 and current_price >= stop_loss:
                     trade["status"] = "STOP LOSS"
 
                     close = True
 
-                elif current_price <= trade["take_profit"]:
+                elif take_profit > 0 and current_price <= take_profit:
                     trade["status"] = "TAKE PROFIT"
 
                     close = True
@@ -244,6 +253,56 @@ class PaperTrader:
 
                 self.save_trades()
 
+    def close_trade_on_signal(self, symbol, next_side, current_price=None):
+        """Close one opposite paper trade at the next signal event."""
+
+        wanted = str(next_side).upper().strip()
+        if wanted not in {"BUY", "SELL"}:
+            raise ValueError("next_side must be BUY or SELL")
+        for trade in self.open_trades[:]:
+            if trade["symbol"] != symbol or trade["signal"] == wanted:
+                continue
+            reference = float(
+                current_price
+                if current_price is not None
+                else trade.get("last_price", trade["entry_reference"])
+            )
+            instrument = get_instrument_spec(trade["symbol"])
+            exit_fill = instrument.exit_fill_price(reference, trade["signal"])
+            quantity = float(trade["position"])
+            if trade["signal"] == "BUY":
+                gross = (
+                    (exit_fill - float(trade["entry"]))
+                    * quantity
+                    * instrument.contract_multiplier
+                )
+            else:
+                gross = (
+                    (float(trade["entry"]) - exit_fill)
+                    * quantity
+                    * instrument.contract_multiplier
+                )
+            trade.update(
+                {
+                    "status": "OPPOSITE SIGNAL",
+                    "exit_reference": reference,
+                    "exit": exit_fill,
+                    "pnl": round(
+                        gross - instrument.commission_cost(quantity), 4
+                    ),
+                    "closed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            self.balance = round(self.balance + trade["pnl"], 4)
+            self.equity = self.balance
+            self.floating_pnl = 0.0
+            self.closed_trades.append(trade)
+            self.open_trades.remove(trade)
+            self.save_trade_history(trade)
+            self.save_trades()
+            return trade
+        return None
+
     def save_trade_history(self, trade):
 
         with open(self.history_file, "a", newline="") as file:
@@ -269,7 +328,7 @@ class PaperTrader:
 
         total = len(self.closed_trades)
 
-        wins = len([t for t in self.closed_trades if t["status"] == "TAKE PROFIT"])
+        wins = len([t for t in self.closed_trades if float(t.get("pnl", 0.0)) > 0])
 
         total_pnl = round(sum(t["pnl"] for t in self.closed_trades), 4)
 
