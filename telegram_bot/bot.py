@@ -661,6 +661,9 @@ def run_analysis_sync() -> str:
         "",
         f"Engine: {status}",
         f"Mode: {state.get('execution_mode', EXECUTION_MODE)}",
+        f"Strategy: {state.get('strategy_mode', 'UNKNOWN')}",
+        f"Exit: {state.get('utbot_exit_mode', 'UNKNOWN')}",
+        f"Scan: every {state.get('scan_interval_seconds', 'UNKNOWN')}s (closed M15)",
         f"Updated: {state.get('analysis_updated_utc', 'Unknown')}",
         "",
     ]
@@ -706,9 +709,12 @@ def run_analysis_sync() -> str:
             f"{label} {symbol} | {final_decision} | "
             f"Strategy signal: {strategy_signal} | {confidence:.0f}%"
         )
-        lines.append(
-            f"Regime: {regime} | Strategy: {strategy} | HTF: {htf}"
-        )
+        if regime == "NOT_USED" and htf == "NOT_USED":
+            lines.append(f"Strategy: {strategy} | Regime/HTF filters: OFF")
+        else:
+            lines.append(
+                f"Regime: {regime} | Strategy: {strategy} | HTF: {htf}"
+            )
         lines.append(f"Decision: {final_reason}")
 
         entry = result.get("entry")
