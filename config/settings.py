@@ -139,6 +139,51 @@ PAPER_STARTING_BALANCE = _positive_float("AAQTS_PAPER_STARTING_BALANCE", 1000.0)
 ACCOUNT_BALANCE = PAPER_STARTING_BALANCE
 RISK_PERCENT = _bounded_float("AAQTS_RISK_PERCENT", 3.0, 0.05, 5.0)
 
+# The deployed strategy is selected explicitly instead of inferring a mode
+# from whichever launcher or Telegram overlay happens to be running.  Legacy
+# remains available for research/backward compatibility; the Windows demo
+# launcher opts into the small UT Bot-only production policy.  Translate the
+# previous mode name so stale private .env files cannot restore the removed
+# EMA200 veto after deployment.
+_REQUESTED_STRATEGY_MODE = os.getenv("AAQTS_STRATEGY_MODE", "LEGACY").upper().strip()
+STRATEGY_MODE = (
+    "UT_BOT" if _REQUESTED_STRATEGY_MODE == "UT_BOT_EMA200" else _REQUESTED_STRATEGY_MODE
+)
+if STRATEGY_MODE not in {"LEGACY", "UT_BOT"}:
+    raise ValueError("AAQTS_STRATEGY_MODE must be LEGACY or UT_BOT")
+
+UTBOT_KEY_VALUE = _bounded_float("AAQTS_UTBOT_KEY_VALUE", 3.0, 0.1, 20.0)
+UTBOT_ATR_PERIOD = _bounded_int("AAQTS_UTBOT_ATR_PERIOD", 10, 1, 500)
+UTBOT_SIGNAL_CONFIDENCE = _bounded_int(
+    "AAQTS_UTBOT_SIGNAL_CONFIDENCE", 80, 1, 100
+)
+_REQUESTED_UTBOT_EXIT_MODE = os.getenv(
+    "AAQTS_UTBOT_EXIT_MODE", "ATR_TRAIL"
+).upper().strip()
+# Preserve the pre-release name while exposing one canonical protected mode.
+UTBOT_EXIT_MODE = (
+    "ATR_TRAIL"
+    if _REQUESTED_UTBOT_EXIT_MODE == "ATR_SL_TP"
+    else _REQUESTED_UTBOT_EXIT_MODE
+)
+if UTBOT_EXIT_MODE not in {"ATR_TRAIL", "OPPOSITE_SIGNAL"}:
+    raise ValueError(
+        "AAQTS_UTBOT_EXIT_MODE must be ATR_TRAIL or OPPOSITE_SIGNAL"
+    )
+UTBOT_TEST_LOT = _bounded_float("AAQTS_UTBOT_TEST_LOT", 0.01, 0.01, 100.0)
+UTBOT_INITIAL_SL_ATR_MULTIPLIER = _bounded_float(
+    "AAQTS_UTBOT_INITIAL_SL_ATR_MULTIPLIER", 1.5, 0.25, 20.0
+)
+UTBOT_BREAK_EVEN_TRIGGER_R = _bounded_float(
+    "AAQTS_UTBOT_BREAK_EVEN_TRIGGER_R", 1.0, 0.1, 20.0
+)
+UTBOT_TRAILING_START_R = _bounded_float(
+    "AAQTS_UTBOT_TRAILING_START_R", 1.5, 0.1, 50.0
+)
+UTBOT_TRAILING_ATR_MULTIPLIER = _bounded_float(
+    "AAQTS_UTBOT_TRAILING_ATR_MULTIPLIER", 2.5, 0.25, 20.0
+)
+
 MIN_ADX = _bounded_float("AAQTS_MIN_ADX", 20.0, 0.0, 100.0)
 # One canonical ADX eligibility boundary is shared by signal validation and
 # every regime classifier.  Regime logic may still combine ADX with EMA slope,
@@ -217,7 +262,7 @@ MT5_PASSWORD = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_PASSW
 MT5_SERVER = "" if MT5_USE_PREAUTHENTICATED_SESSION else _MT5_CONFIGURED_SERVER
 MT5_FIXED_LOT = _positive_float("AAQTS_MT5_FIXED_LOT", 0.05)
 MT5_MAX_OPEN_POSITIONS = _bounded_int("AAQTS_MT5_MAX_OPEN_POSITIONS", 3, 1, 20)
-BOT_INTERVAL_SECONDS = _bounded_int("AAQTS_BOT_INTERVAL_SECONDS", 300, 15, 86400)
+BOT_INTERVAL_SECONDS = _bounded_int("AAQTS_BOT_INTERVAL_SECONDS", 300, 1, 86400)
 POSITION_MANAGEMENT_INTERVAL_SECONDS = _bounded_int(
     "AAQTS_POSITION_MANAGEMENT_INTERVAL_SECONDS", 10, 1, 60
 )
