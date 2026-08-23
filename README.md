@@ -1,18 +1,46 @@
 # AAQTS Forex Bot
 
-AAQTS is a causal, multi-asset trading research and execution project. It
-includes closed-candle signal generation, point-in-time multi-timeframe
-alignment, causal trend/range/breakout routing, realistic backtesting costs,
-portfolio risk controls, paper trading, managed MT5 demo exits, and a
-role-protected Telegram console that defaults to one personally managed account.
-The multi-account registry remains available as an explicit future opt-in.
+AAQTS is a causal, multi-asset trading research and execution project. Its
+Windows demo launcher uses one deliberately small entry policy: a confirmed
+UT Bot crossover. Legacy multi-indicator and regime
+modules remain available for research but are not part of that deployed entry
+decision. Portfolio risk controls, paper trading, managed MT5 exits, and
+the role-protected Telegram console remain independent safety/runtime layers.
 
 The safe default is `PAPER`. `MT5_DEMO` must be selected explicitly.
 Set `AAQTS_PAPER_STARTING_BALANCE` to the forward-test account size; the
 default is `1000`, while a small-account simulation can use `100`.
-`MT5_LIVE` has a separate acknowledgement, account pin, server pin, risk
-baseline and preflight path, but this repository is not approving live-capital
-deployment. Complete the documented demo validation before any live review.
+`MT5_LIVE` has a separate acknowledgement, account pin, server pin and
+preflight path. Code support does not establish profitability; complete demo
+and out-of-sample validation before intentionally starting real-money orders.
+
+## Active UT Bot-only policy
+
+The demo launcher sets `AAQTS_STRATEGY_MODE=UT_BOT` with:
+
+- UT Bot key value `3.0`
+- Wilder ATR period `10`
+- closed `15m` candles only
+- poll every `1` second, with at most one action per symbol/candle signal ID
+- BUY on every fresh confirmed UT Bot BUY crossover
+- SELL on every fresh confirmed UT Bot SELL crossover
+- an opposite crossover closes the current position and reverses direction
+- initial broker stop at `1.5 × ATR`
+- move the stop to break-even at `+1R`
+- from `+1.5R`, trail the best observed price by `2.5 × ATR`
+- no fixed take-profit cap; the trailing stop or opposite UT signal exits
+
+RSI, Stochastic RSI, MACD, ADX, Bollinger Bands, Supertrend, market regime,
+market structure, contextual triggers and H1 voting do not confirm or reject
+entries in this mode. Protected execution risks `0.5%` per accepted trade,
+derives volume from the broker-calculated loss at the initial stop, permits at
+most three simultaneous positions, and keeps the news, spread, margin,
+portfolio-loss, account-pin and duplicate-candle protections enabled. The old
+fixed `0.01`/zero-protection `OPPOSITE_SIGNAL` compatibility mode remains
+demo-only and is hard-blocked from `MT5_LIVE`.
+
+The faster poll does not trade a forming candle. It only reduces the delay
+between an M15 candle closing and AAQTS observing that closed-candle signal.
 
 ## Symbol catalog
 
@@ -191,9 +219,22 @@ it is absent, it explicitly selects demo-only preauthenticated-session mode;
 this ignores stale `AAQTS_MT5_LOGIN/PASSWORD/SERVER` values in `.env` and pins
 the account identity. `MT5_LIVE` rejects preauthenticated-session mode.
 
-The router validates the returned demo account login, requires protective
-SL/TP, prevents duplicate managed positions, and serializes access to the one
-MT5 terminal across the engine and Telegram processes.
+The router validates the returned account login, requires the protective stop,
+prevents duplicate managed positions, and serializes access to one MT5 terminal
+across the engine and Telegram processes.
+
+For an intentional WinProFX real-account preflight, first save credentials
+under the VPS Windows user, then provide the exact terminal path and symbol
+suffix to the live launcher. The launcher validates the pinned REAL login,
+exact server, quotes, candles, volume metadata and protection policy before it
+starts the engine:
+
+```powershell
+& .\scripts\windows\save-winprofx-live-credentials.ps1
+& .\scripts\windows\start-winprofx-live-engine.ps1 `
+  -TerminalPath "C:\Path\To\WinProFX MT5\terminal64.exe" `
+  -SymbolSuffix ""
+```
 
 ## Release validation
 
