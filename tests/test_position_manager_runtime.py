@@ -120,3 +120,30 @@ def test_runtime_cycle_executes_broker_valid_partial_take_profit():
     assert action["success"] is True
     assert executor.position.volume == 0.05
     assert manager.get(42).tp1_done is True
+
+
+def test_restart_resumes_atr_trailing_when_stop_already_protects_entry():
+    executor = LifecycleExecutor()
+    executor.position.price_current = 1.10400
+    executor.position.sl = executor.position.price_open
+    executor.position.tp = 0.0
+    manager = PositionManager(
+        executor,
+        PositionManagerConfig(
+            sync_interval_seconds=0,
+            position_refresh_seconds=0,
+            enable_tp1=False,
+            enable_tp2=False,
+            enable_time_exit=False,
+            trailing_start_rr=1.5,
+            trailing_atr_multiplier=2.5,
+        ),
+    )
+
+    recovered = manager.recover_positions(reset_registry=True)
+    report = manager.manage_positions({"EURUSD": 0.00100}, force_sync=True)
+
+    assert recovered[0].break_even_done is True
+    assert recovered[0].trailing_active is True
+    assert report["errors"] == []
+    assert executor.position.sl > executor.position.price_open
