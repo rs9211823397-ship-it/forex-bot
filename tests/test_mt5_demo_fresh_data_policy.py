@@ -1,6 +1,11 @@
+import sys
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 
+import data.market_data as market_data_module
 from data.historical import HistoricalDataError
 from data.market_data import MarketData
 
@@ -70,3 +75,43 @@ def test_paper_mode_may_use_cached_candles_after_provider_failure(tmp_path):
 
     assert not result.empty
     assert float(result.iloc[-1]["close"]) == 1.35
+
+
+def test_mt5_server_clock_is_normalized_before_causal_filtering(
+    tmp_path,
+    monkeypatch,
+):
+    actual_open = datetime(2026, 8, 24, 14, 0, tzinfo=timezone.utc)
+    broker_open = actual_open.timestamp() + (3 * 60 * 60)
+    fake_mt5 = SimpleNamespace(
+        TIMEFRAME_M15=15,
+        terminal_info=lambda: SimpleNamespace(),
+        symbol_info=lambda _symbol: SimpleNamespace(visible=True),
+        symbol_select=lambda *_args: True,
+        copy_rates_from_pos=lambda *_args: [
+            {
+                "time": broker_open,
+                "open": 1.0,
+                "high": 1.1,
+                "low": 0.9,
+                "close": 1.05,
+                "tick_volume": 10,
+            }
+        ],
+        last_error=lambda: (1, "Success"),
+    )
+    monkeypatch.setitem(sys.modules, "MetaTrader5", fake_mt5)
+    monkeypatch.setattr(
+        market_data_module,
+        "MT5_SERVER_UTC_OFFSET_MINUTES",
+        180,
+    )
+    market = MarketData(
+        cache_dir=tmp_path,
+        execution_mode="MT5_LIVE",
+        provider="MT5",
+    )
+
+    result = market._download_mt5("EURUSD=X", "15m")
+
+    assert result.index[0] == actual_open

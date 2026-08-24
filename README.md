@@ -232,6 +232,11 @@ starts the engine:
 The WinProFX launcher currently enables the seven exact-name forex majors.
 It deliberately disables `BTCUSD` and `ETHUSD` because this venue exposes
 `BTCUSDT` and `ETHUSDT`; those contracts must not be treated as silent aliases.
+It also pins `AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES=180` because this WinProFX
+feed was directly verified to encode candle, tick, and deal epochs in UTC+3.
+AAQTS normalizes them to UTC before causal candle filtering, freshness checks,
+execution quote validation, and realized-PnL accounting. The offset is never
+guessed; a broker clock change therefore fails closed until re-verified.
 
 ```powershell
 & .\scripts\windows\save-winprofx-live-credentials.ps1

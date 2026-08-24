@@ -468,6 +468,50 @@ def test_closed_results_include_only_managed_exit_deals():
     assert results[0].closed_at == now
 
 
+def test_future_server_tick_is_current_after_explicit_utc_plus_three_offset():
+    executor, adapter = connected_executor(server_utc_offset_minutes=180)
+    now = datetime.now(timezone.utc).timestamp()
+    tick = adapter.symbol_info_tick("EURUSD")
+    tick.time = now + (3 * 60 * 60)
+    tick.time_msc = int(tick.time * 1000)
+
+    bid, ask = executor._validate_tick(tick, 1.10001)
+
+    assert bid == pytest.approx(1.10000)
+    assert ask == pytest.approx(1.10002)
+
+
+def test_future_server_tick_fails_closed_without_configured_offset():
+    executor, adapter = connected_executor()
+    now = datetime.now(timezone.utc).timestamp()
+    tick = adapter.symbol_info_tick("EURUSD")
+    tick.time = now + (3 * 60 * 60)
+    tick.time_msc = int(tick.time * 1000)
+
+    with pytest.raises(ExecutionError, match="stale"):
+        executor._validate_tick(tick, 1.10001)
+
+
+def test_closed_result_server_timestamp_is_normalized_to_utc():
+    executor, adapter = connected_executor(server_utc_offset_minutes=180)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    adapter._deals.append(
+        SimpleNamespace(
+            magic=20260730,
+            entry=adapter.DEAL_ENTRY_OUT,
+            time=now.timestamp() + (3 * 60 * 60),
+            profit=5.0,
+        )
+    )
+
+    results = executor.closed_position_results(
+        now - timedelta(minutes=1),
+        now + timedelta(minutes=1),
+    )
+
+    assert results[0].closed_at == now
+
+
 def test_remaining_loss_at_stop_uses_current_broker_price():
     executor, adapter = connected_executor()
     position = managed_position(adapter)

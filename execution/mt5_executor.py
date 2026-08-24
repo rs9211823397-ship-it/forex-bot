@@ -16,6 +16,12 @@ from typing import Any, Optional
 
 from execution.fill_audit import FillAudit
 from mt5_ipc import serialized_mt5_call
+from mt5_time import (
+    mt5_epoch_to_utc_datetime,
+    mt5_epoch_to_utc_seconds,
+    utc_datetime_to_mt5_server_time,
+    validate_mt5_server_utc_offset_minutes,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -40,11 +46,13 @@ class ExecutionConfig:
     require_stop_loss: bool = True
     require_take_profit: bool = True
     max_tick_age_seconds: float = 15.0
+    server_utc_offset_minutes: int = 0
     max_spread_stop_ratio: float = 0.25
     order_send_price_retries: int = 1
     fill_audit_path: Optional[str] = None
 
     def __post_init__(self) -> None:
+        validate_mt5_server_utc_offset_minutes(self.server_utc_offset_minutes)
         if not isfinite(float(self.max_tick_age_seconds)) or self.max_tick_age_seconds <= 0:
             raise ValueError("max_tick_age_seconds must be finite and positive")
         if (
@@ -211,7 +219,15 @@ class MT5Executor:
         end = self._as_utc(end_time, "end_time")
         if end < start:
             raise ExecutionError("MT5 history end_time cannot precede start_time")
-        deals = self.mt5.history_deals_get(start, end)
+        broker_start = utc_datetime_to_mt5_server_time(
+            start,
+            self.config.server_utc_offset_minutes,
+        )
+        broker_end = utc_datetime_to_mt5_server_time(
+            end,
+            self.config.server_utc_offset_minutes,
+        )
+        deals = self.mt5.history_deals_get(broker_start, broker_end)
         if deals is None:
             raise ExecutionError(f"MT5 deal history is unavailable: {self.mt5.last_error()}")
         exit_entries = {
@@ -233,7 +249,10 @@ class MT5Executor:
             )
             results.append(
                 ClosedPositionResult(
-                    closed_at=datetime.fromtimestamp(timestamp, timezone.utc),
+                    closed_at=mt5_epoch_to_utc_datetime(
+                        timestamp,
+                        self.config.server_utc_offset_minutes,
+                    ),
                     profit_loss=profit_loss,
                 )
             )
@@ -301,6 +320,10 @@ class MT5Executor:
         tick_time = timestamp_msc / 1000.0 if timestamp_msc > 0 else timestamp_sec
         if tick_time <= 0:
             raise ExecutionError("MT5 quote has no valid timestamp")
+        tick_time = mt5_epoch_to_utc_seconds(
+            tick_time,
+            self.config.server_utc_offset_minutes,
+        )
         age = datetime.now(timezone.utc).timestamp() - tick_time
         if age < -2.0 or age > float(self.config.max_tick_age_seconds):
             raise ExecutionError(

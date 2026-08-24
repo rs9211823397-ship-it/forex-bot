@@ -16,6 +16,7 @@ from mt5_ipc import serialized_mt5_call
 
 from config.settings import (
     LOOKBACK_DAYS,
+    MT5_SERVER_UTC_OFFSET_MINUTES,
     MT5_SYMBOL_MAP,
     MT5_TERMINAL_PATH,
     SYMBOLS,
@@ -23,6 +24,7 @@ from config.settings import (
 from config.symbols import symbol_by_data
 from data.historical import HistoricalDataError, HistoricalDataStore
 from data.timeframes import normalize_timeframe, normalize_timestamp, timeframe_delta
+from mt5_time import mt5_epoch_to_utc_seconds
 
 
 logger = logging.getLogger(__name__)
@@ -175,7 +177,14 @@ class MarketData:
             missing = required.difference(frame.columns)
             if missing:
                 raise MarketDataError("MT5 candle response missing columns: " + ", ".join(sorted(missing)))
-            frame.index = pd.to_datetime(frame.pop("time"), unit="s", utc=True)
+            raw_times = pd.to_numeric(frame.pop("time"), errors="raise")
+            normalized_times = raw_times.map(
+                lambda value: mt5_epoch_to_utc_seconds(
+                    value,
+                    MT5_SERVER_UTC_OFFSET_MINUTES,
+                )
+            )
+            frame.index = pd.to_datetime(normalized_times, unit="s", utc=True)
             frame.index.name = "open_time"
             if "tick_volume" in frame.columns:
                 frame["volume"] = pd.to_numeric(frame["tick_volume"], errors="coerce")

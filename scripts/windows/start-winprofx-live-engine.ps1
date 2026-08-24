@@ -39,6 +39,8 @@ $env:AAQTS_MT5_LOGIN = (Get-Content -LiteralPath $loginFile -Raw).Trim()
 $env:AAQTS_MT5_EXPECTED_LOGIN = $env:AAQTS_MT5_LOGIN
 $env:AAQTS_MT5_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
 $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
+$env:AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES = "180"
+$env:AAQTS_ISOLATE_STRATEGY_RISK = "false"
 
 $env:AAQTS_STRATEGY_MODE = "UT_BOT"
 $env:AAQTS_UTBOT_KEY_VALUE = "3.0"
@@ -79,6 +81,7 @@ $profile = [ordered]@{
     max_open_positions = [int]$env:AAQTS_MT5_MAX_OPEN_POSITIONS
     symbol_suffix = $SymbolSuffix
     disabled_broker_symbols = $env:AAQTS_DISABLED_BROKER_SYMBOLS
+    mt5_server_utc_offset_minutes = [int]$env:AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES
 }
 $profile | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $profileFile -Encoding UTF8
 

@@ -177,6 +177,7 @@ def check_mt5_broker() -> None:
         MT5_LOGIN,
         MT5_PASSWORD,
         MT5_SERVER,
+        MT5_SERVER_UTC_OFFSET_MINUTES,
         MT5_SYMBOL_MAP,
         MT5_TERMINAL_PATH,
         MT5_USE_PREAUTHENTICATED_SESSION,
@@ -220,6 +221,7 @@ def check_mt5_broker() -> None:
                 expected_login=(int(MT5_EXPECTED_LOGIN) if MT5_EXPECTED_LOGIN else None),
                 password=MT5_PASSWORD,
                 server=MT5_SERVER,
+                server_utc_offset_minutes=MT5_SERVER_UTC_OFFSET_MINUTES,
             )
         )
         executor.connect()
@@ -245,6 +247,7 @@ def check_mt5_broker() -> None:
                 if bid <= 0 or ask <= 0 or ask < bid:
                     unquoted.append(f"{source_symbol} ({broker_symbol})")
                 else:
+                    executor._validate_tick(tick, (bid + ask) / 2.0)
                     quoted += 1
 
                 timeframes = ["TIMEFRAME_M15"]

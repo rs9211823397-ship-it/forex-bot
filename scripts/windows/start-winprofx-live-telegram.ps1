@@ -42,6 +42,8 @@ $env:AAQTS_MT5_LOGIN = (Get-Content -LiteralPath $loginFile -Raw).Trim()
 $env:AAQTS_MT5_EXPECTED_LOGIN = $env:AAQTS_MT5_LOGIN
 $env:AAQTS_MT5_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
 $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
+$env:AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES = "180"
+$env:AAQTS_ISOLATE_STRATEGY_RISK = "false"
 
 & $python scripts\register_winprofx_live_account.py `
     --runtime-dir $runtime `

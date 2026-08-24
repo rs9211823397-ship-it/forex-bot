@@ -21,6 +21,7 @@ from config.settings import (
     MT5_MAX_TICK_AGE_SECONDS,
     MT5_PASSWORD,
     MT5_SERVER,
+    MT5_SERVER_UTC_OFFSET_MINUTES,
     MT5_SYMBOL_MAP,
     MT5_SYMBOL_SUFFIX,
     MT5_TERMINAL_PATH,
@@ -43,6 +44,7 @@ from execution.mt5_executor import (
 )
 from execution.mt5_trade_audit import MT5TradeAudit
 from execution.position_manager import PositionManager, PositionManagerConfig
+from mt5_time import mt5_epoch_to_utc_seconds
 from runtime_state import RUNTIME_DIR
 
 
@@ -185,6 +187,7 @@ class ExecutionRouter:
                     self.signal_exit_mode or self.protected_utbot_mode
                 ),
                 max_tick_age_seconds=MT5_MAX_TICK_AGE_SECONDS,
+                server_utc_offset_minutes=MT5_SERVER_UTC_OFFSET_MINUTES,
                 max_spread_stop_ratio=MT5_MAX_SPREAD_STOP_RATIO,
                 fill_audit_path=str(RUNTIME_DIR / "mt5_fill_audit.jsonl"),
             )
@@ -271,6 +274,10 @@ class ExecutionRouter:
         )
         if timestamp_s <= 0:
             raise ExecutionError(f"MT5 tick for {mt5_symbol} has no valid timestamp")
+        timestamp_s = mt5_epoch_to_utc_seconds(
+            timestamp_s,
+            MT5_SERVER_UTC_OFFSET_MINUTES,
+        )
         age = datetime.now(timezone.utc).timestamp() - timestamp_s
         if age < -5 or age > MT5_MAX_TICK_AGE_SECONDS:
             raise ExecutionError(

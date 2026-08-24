@@ -256,6 +256,26 @@ def test_stale_mt5_tick_is_rejected_before_order_send():
     assert mt5.calls == []
 
 
+def test_router_accepts_current_winprofx_quote_after_explicit_clock_normalization(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "execution.execution_router.MT5_SERVER_UTC_OFFSET_MINUTES",
+        180,
+    )
+    mt5 = FakeMT5Executor()
+    mt5.tick_age_seconds = -(3 * 60 * 60)
+    router = ExecutionRouter(
+        paper_trader=FakePaperTrader(), mode="MT5_DEMO", mt5_executor=mt5
+    )
+
+    router.execute(
+        "EURUSD=X", "BUY", RISK_PLAN, 1.0, approved_risk_amount=10.0
+    )
+
+    assert len(mt5.calls) == 1
+
+
 def test_excessive_spread_relative_to_stop_is_rejected():
     mt5 = FakeMT5Executor()
     mt5.ask = 1.10200

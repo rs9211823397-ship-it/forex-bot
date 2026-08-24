@@ -12,6 +12,7 @@ from typing import Any
 from config.settings import MT5_RISK_BASELINE_UTC
 from execution.mt5_executor import ClosedPositionResult, ExecutionError
 from mt5_ipc import serialized_mt5_call
+from mt5_time import mt5_epoch_to_utc_datetime, utc_datetime_to_mt5_server_time
 
 
 @dataclass(frozen=True)
@@ -158,7 +159,12 @@ class MT5TradeAudit:
         return mapping.get(int(reason), f"BROKER_REASON_{int(reason)}")
 
     def _history(self, start: datetime, end: datetime) -> list[Any]:
-        deals = self.executor.mt5.history_deals_get(start, end)
+        offset = int(
+            getattr(self.executor.config, "server_utc_offset_minutes", 0) or 0
+        )
+        broker_start = utc_datetime_to_mt5_server_time(start, offset)
+        broker_end = utc_datetime_to_mt5_server_time(end, offset)
+        deals = self.executor.mt5.history_deals_get(broker_start, broker_end)
         if deals is None:
             last_error = getattr(self.executor.mt5, "last_error", lambda: "unknown")()
             raise ExecutionError(f"MT5 deal history is unavailable: {last_error}")
@@ -197,7 +203,17 @@ class MT5TradeAudit:
             timestamp = float(getattr(deal, "time", 0.0) or 0.0)
             if timestamp <= 0:
                 continue
-            closed_at = datetime.fromtimestamp(timestamp, timezone.utc)
+            closed_at = mt5_epoch_to_utc_datetime(
+                timestamp,
+                int(
+                    getattr(
+                        self.executor.config,
+                        "server_utc_offset_minutes",
+                        0,
+                    )
+                    or 0
+                ),
+            )
             if not (start <= closed_at <= end):
                 continue
             pnl = sum(float(getattr(deal, field_name, 0.0) or 0.0) for field_name in ("profit", "swap", "commission", "fee"))

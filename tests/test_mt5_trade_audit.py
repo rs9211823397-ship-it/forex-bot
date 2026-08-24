@@ -42,9 +42,12 @@ class FakeMT5:
 
 
 class FakeExecutor:
-    def __init__(self, deals):
+    def __init__(self, deals, *, server_utc_offset_minutes=0):
         self.mt5 = FakeMT5(deals)
-        self.config = SimpleNamespace(magic=20260730)
+        self.config = SimpleNamespace(
+            magic=20260730,
+            server_utc_offset_minutes=server_utc_offset_minutes,
+        )
 
     @staticmethod
     def _as_utc(value, _field):
@@ -137,3 +140,39 @@ def test_stop_loss_exit_classification(tmp_path):
     results = audit.managed_closed_deals(end - timedelta(days=1), end)
 
     assert results[0].exit_reason == "STOP_LOSS"
+
+
+def test_winprofx_deal_history_uses_server_clock_but_reports_real_utc(tmp_path):
+    position_id = 43
+    opening = deal(
+        ticket=12,
+        position=position_id,
+        entry=FakeMT5.DEAL_ENTRY_IN,
+        magic=20260730,
+        reason=FakeMT5.DEAL_REASON_EXPERT,
+        profit=0.0,
+    )
+    closing = deal(
+        ticket=13,
+        position=position_id,
+        entry=FakeMT5.DEAL_ENTRY_OUT,
+        magic=0,
+        reason=FakeMT5.DEAL_REASON_EXPERT,
+        profit=2.0,
+    )
+    opening.time += 3 * 60 * 60
+    closing.time += 3 * 60 * 60
+    audit = MT5TradeAudit(
+        FakeExecutor(
+            [opening, closing],
+            server_utc_offset_minutes=180,
+        ),
+        tmp_path / "audit.csv",
+    )
+
+    end = datetime(2026, 8, 5, 21, 0, tzinfo=timezone.utc)
+    results = audit.managed_closed_deals(end - timedelta(days=1), end)
+
+    assert results[0].closed_at == datetime(
+        2026, 8, 5, 20, 0, tzinfo=timezone.utc
+    )

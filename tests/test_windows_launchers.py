@@ -95,6 +95,18 @@ def test_winprofx_launchers_disable_unavailable_usd_crypto_symbols():
     assert "disabled_broker_symbols = $env:AAQTS_DISABLED_BROKER_SYMBOLS" in engine
 
 
+def test_winprofx_launchers_pin_broker_clock_and_real_account_equity():
+    expected_offset = 'AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES = "180"'
+    engine = (WINDOWS / "start-winprofx-live-engine.ps1").read_text(encoding="utf-8")
+    telegram = (WINDOWS / "start-winprofx-live-telegram.ps1").read_text(encoding="utf-8")
+
+    assert expected_offset in engine
+    assert expected_offset in telegram
+    assert 'AAQTS_ISOLATE_STRATEGY_RISK = "false"' in engine
+    assert 'AAQTS_ISOLATE_STRATEGY_RISK = "false"' in telegram
+    assert "mt5_server_utc_offset_minutes" in engine
+
+
 def test_winprofx_telegram_registers_the_explicit_live_account_before_start():
     text = (WINDOWS / "start-winprofx-live-telegram.ps1").read_text(encoding="utf-8")
 
