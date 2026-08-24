@@ -43,6 +43,7 @@ from accounts.registry import (
 )
 from accounts.snapshots import MultiAccountSnapshotReader, aggregate_views
 from config.settings import (
+    EQUITY_DRAWDOWN_ENABLED,
     EXECUTION_MODE,
     MT5_MAX_OPEN_POSITIONS,
     MT5_TERMINAL_PATH,
@@ -886,11 +887,7 @@ async def _show_account(update: Update, role: TelegramRole, token: str) -> None:
 
 def _resolve_scope(scope: str) -> tuple[TradingAccount, ...]:
     if scope == "all":
-        return tuple(
-            account
-            for account in _managed_accounts(enabled_only=True)
-            if not account.is_live
-        )
+        return tuple(_managed_accounts(enabled_only=True))
     return (_resolve_managed_token(scope),)
 
 
@@ -903,9 +900,12 @@ def _queue_action(
 ) -> tuple[str, ...]:
     request_ids = []
     for account in accounts:
-        if account.is_live:
+        if account.is_live and action not in {
+            ControlAction.PAUSE_ENTRIES,
+            ControlAction.RESUME_ENTRIES,
+        }:
             raise RuntimeError(
-                f"Live control is locked for account {account.account_id}"
+                f"Dangerous live control is locked for account {account.account_id}"
             )
         if action is ControlAction.RESUME_ENTRIES:
             CONTROL_COMMANDS.clear_restart_block(account.account_id)
@@ -1049,7 +1049,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"{scope_text}\n"
             "• Daily loss protection\n"
             "• Weekly loss protection\n"
-            "• Equity drawdown protection\n"
+            f"• Equity drawdown protection: "
+            f"{'ACTIVE' if EQUITY_DRAWDOWN_ENABLED else 'DISABLED BY OWNER'}\n"
             "• Portfolio/open-position limits\n"
             "• News and correlated-exposure gates\n\n"
             "Risk editing is intentionally locked until persistent per-account "
@@ -1202,7 +1203,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "risk": (
                 f"Base trade risk ceiling: {RISK_PERCENT}%\n"
                 f"Maximum open positions: {MT5_MAX_OPEN_POSITIONS}\n"
-                "Daily, weekly, drawdown, correlation and news gates: ACTIVE\n"
+                "Daily, weekly, correlation and news gates: ACTIVE\n"
+                f"Equity drawdown gate: "
+                f"{'ACTIVE' if EQUITY_DRAWDOWN_ENABLED else 'DISABLED BY OWNER'}\n"
                 + (
                     "This account cannot exceed the configured risk ceiling."
                     if SINGLE_ACCOUNT_MODE

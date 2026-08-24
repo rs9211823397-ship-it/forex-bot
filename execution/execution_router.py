@@ -491,6 +491,7 @@ class ExecutionRouter:
         return self.mt5_executor.positions(managed_only=True)
 
     def account_snapshot(self) -> AccountSnapshot:
+        """Return the equity basis used by AAQTS portfolio-risk decisions."""
         if self.mode == "PAPER":
             return AccountSnapshot(balance=float(self.paper_trader.balance), equity=float(self.paper_trader.equity))
         assert self.mt5_executor is not None
@@ -527,6 +528,21 @@ class ExecutionRouter:
             server=actual.server,
             trade_mode=actual.trade_mode,
         )
+
+    def broker_account_snapshot(self) -> AccountSnapshot:
+        """Return the broker's current balance/equity for operator displays.
+
+        Strategy-only accounting may deliberately isolate risk sizing from
+        manual or other-EA PnL.  It must never replace the real broker figures
+        shown in runtime status or Telegram.
+        """
+        if self.mode == "PAPER":
+            return AccountSnapshot(
+                balance=float(self.paper_trader.balance),
+                equity=float(self.paper_trader.equity),
+            )
+        assert self.mt5_executor is not None
+        return self.mt5_executor.account_snapshot()
 
     def closed_position_results(self, start_time: datetime, end_time: datetime) -> list[ClosedPositionResult]:
         if self.mode not in BROKER_MODES or self.mt5_executor is None:

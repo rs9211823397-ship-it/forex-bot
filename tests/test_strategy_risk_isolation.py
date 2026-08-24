@@ -76,9 +76,12 @@ def test_demo_risk_equity_ignores_other_ea_account_pnl(monkeypatch):
     executor.managed_positions = [SimpleNamespace(profit=1.0, swap=0.0)]
 
     snapshot = router.account_snapshot()
+    broker_snapshot = router.broker_account_snapshot()
 
     assert snapshot.balance == 102.0
     assert snapshot.equity == 103.0
+    assert broker_snapshot.balance == 125.0
+    assert broker_snapshot.equity == 126.0
 
 
 def test_demo_risk_isolation_can_be_disabled(monkeypatch):

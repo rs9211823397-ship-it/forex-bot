@@ -209,11 +209,16 @@ RSI_BAND_VETO_OVERSOLD = _bounded_float(
 )
 
 # Count-based trade-frequency limits are disabled by default (0 = disabled).
-# Hard portfolio protections remain active: daily/weekly loss, equity drawdown,
-# maximum open positions, portfolio heat, correlation, spread and news gates.
+# The equity-drawdown gate can be disabled independently without weakening the
+# remaining entry, exposure, spread, news, or broker-stop protections.
 MAX_DAILY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_DAILY_LOSS_PERCENT", 6.0, 0.1, 100.0)
 MAX_WEEKLY_LOSS_PERCENT = _bounded_float("AAQTS_MAX_WEEKLY_LOSS_PERCENT", 12.0, 0.1, 100.0)
-MAX_EQUITY_DRAWDOWN_PERCENT = _bounded_float("AAQTS_MAX_EQUITY_DRAWDOWN_PERCENT", 15.0, 0.1, 100.0)
+EQUITY_DRAWDOWN_ENABLED = _env_flag("AAQTS_EQUITY_DRAWDOWN_ENABLED", True)
+MAX_EQUITY_DRAWDOWN_PERCENT = (
+    _bounded_float("AAQTS_MAX_EQUITY_DRAWDOWN_PERCENT", 15.0, 0.1, 100.0)
+    if EQUITY_DRAWDOWN_ENABLED
+    else None
+)
 MAX_CONSECUTIVE_LOSSES = _optional_positive_int("AAQTS_MAX_CONSECUTIVE_LOSSES", 0)
 MAX_DAILY_TRADES = _optional_positive_int("AAQTS_MAX_DAILY_TRADES", 0)
 MAX_PORTFOLIO_RISK_PERCENT = _bounded_float("AAQTS_MAX_PORTFOLIO_RISK_PERCENT", 6.0, 0.1, 100.0)

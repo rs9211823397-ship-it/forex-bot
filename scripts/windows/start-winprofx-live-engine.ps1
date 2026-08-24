@@ -41,6 +41,7 @@ $env:AAQTS_MT5_PASSWORD = [System.Net.NetworkCredential]::new('', $securePasswor
 $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
 $env:AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES = "180"
 $env:AAQTS_ISOLATE_STRATEGY_RISK = "false"
+$env:AAQTS_EQUITY_DRAWDOWN_ENABLED = "false"
 
 $env:AAQTS_STRATEGY_MODE = "UT_BOT"
 $env:AAQTS_UTBOT_KEY_VALUE = "3.0"
@@ -53,6 +54,8 @@ $env:AAQTS_UTBOT_TRAILING_START_R = "1.5"
 $env:AAQTS_UTBOT_TRAILING_ATR_MULTIPLIER = "2.5"
 
 # Real-money defaults deliberately risk less than the old demo experiment.
+# The owner explicitly monitors drawdown; every other configured protection
+# remains active.
 $env:AAQTS_RISK_PERCENT = "0.5"
 $env:AAQTS_MT5_MAX_OPEN_POSITIONS = "3"
 $env:AAQTS_MAX_PORTFOLIO_RISK_PERCENT = "1.5"
@@ -79,6 +82,7 @@ $profile = [ordered]@{
     trailing_atr = [double]$env:AAQTS_UTBOT_TRAILING_ATR_MULTIPLIER
     risk_percent = [double]$env:AAQTS_RISK_PERCENT
     max_open_positions = [int]$env:AAQTS_MT5_MAX_OPEN_POSITIONS
+    equity_drawdown_enabled = [bool]::Parse($env:AAQTS_EQUITY_DRAWDOWN_ENABLED)
     symbol_suffix = $SymbolSuffix
     disabled_broker_symbols = $env:AAQTS_DISABLED_BROKER_SYMBOLS
     mt5_server_utc_offset_minutes = [int]$env:AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES

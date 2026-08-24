@@ -993,9 +993,10 @@ class TradingApplication:
         if self.execution.mode == "PAPER":
             self.paper_trader.update_equity(prices)
         now = datetime.now(timezone.utc)
-        account = self.execution.account_snapshot()
-        self._record_equity(account, now)
+        risk_account = self.execution.account_snapshot()
+        self._record_equity(risk_account, now)
         equity_peak = max(point.equity for point in self.equity_history)
+        broker_account = self.execution.broker_account_snapshot()
         if self.execution.mode == "PAPER":
             stats = self.paper_trader.get_stats()
             closed_trades = stats["total_trades"]
@@ -1006,8 +1007,8 @@ class TradingApplication:
             )
             closed_stats = self._closed_trade_stats(closed_results)
             stats = {
-                "equity": account.equity,
-                "balance": account.balance,
+                "equity": broker_account.equity,
+                "balance": broker_account.balance,
                 "wins": closed_stats["wins"],
                 "losses": closed_stats["losses"],
                 "win_rate": closed_stats["win_rate"],
@@ -1079,8 +1080,8 @@ class TradingApplication:
             equity=stats["equity"],
             equity_peak=equity_peak,
             risk_state_identity=self._risk_state_identity,
-            mt5_login=account.login,
-            mt5_server=account.server,
+            mt5_login=broker_account.login,
+            mt5_server=broker_account.server,
             risk_baseline_utc=(
                 MT5_RISK_BASELINE_UTC.isoformat()
                 if MT5_RISK_BASELINE_UTC is not None
@@ -1090,7 +1091,7 @@ class TradingApplication:
             floating_pnl=(
                 stats["floating_pnl"]
                 if self.execution.mode == "PAPER"
-                else account.equity - account.balance
+                else broker_account.equity - broker_account.balance
             ),
             open_positions=len(runtime_positions),
             positions=runtime_positions,

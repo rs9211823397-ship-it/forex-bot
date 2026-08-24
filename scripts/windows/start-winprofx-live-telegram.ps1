@@ -44,6 +44,7 @@ $env:AAQTS_MT5_PASSWORD = [System.Net.NetworkCredential]::new('', $securePasswor
 $env:AAQTS_MT5_SERVER = (Get-Content -LiteralPath $serverFile -Raw).Trim()
 $env:AAQTS_MT5_SERVER_UTC_OFFSET_MINUTES = "180"
 $env:AAQTS_ISOLATE_STRATEGY_RISK = "false"
+$env:AAQTS_EQUITY_DRAWDOWN_ENABLED = "false"
 
 & $python scripts\register_winprofx_live_account.py `
     --runtime-dir $runtime `

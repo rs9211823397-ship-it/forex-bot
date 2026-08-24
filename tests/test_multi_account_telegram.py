@@ -57,6 +57,76 @@ def paper_account(account_id="paper_demo"):
     )
 
 
+def live_account(account_id="winprofx_live"):
+    return TradingAccount(
+        account_id=account_id,
+        label="WinProFX Live",
+        broker="WinProFX",
+        platform="MT5",
+        environment="LIVE",
+        login="237361",
+        server="Winprofx-Live",
+        terminal_path="C:/WinProFX/terminal64.exe",
+    )
+
+
+def _callback_data(keyboard):
+    return {
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+        if button.callback_data
+    }
+
+
+def test_live_account_menu_exposes_remote_pause_and_resume_only():
+    account = live_account()
+    callbacks = _callback_data(
+        account_keyboard(account, TelegramRole.OWNER, single_account_mode=True)
+    )
+
+    assert f"ctl:p:{account.callback_token}" in callbacks
+    assert f"ctl:r:{account.callback_token}" in callbacks
+    assert f"ctl:b:{account.callback_token}" not in callbacks
+    assert f"safe:e:{account.callback_token}" not in callbacks
+
+
+def test_live_account_queue_accepts_pause_resume_but_not_dangerous_actions(
+    tmp_path, monkeypatch
+):
+    from telegram_bot import bot as telegram_app
+
+    account = live_account()
+    store = ControlCommandStore(tmp_path / "control")
+    monkeypatch.setattr(telegram_app, "CONTROL_COMMANDS", store)
+
+    pause_ids = telegram_app._queue_action(
+        (account,),
+        ControlAction.PAUSE_ENTRIES,
+        user_id=1001,
+        reason="Telegram pause",
+    )
+    assert len(pause_ids) == 1
+    assert store.claim_next(account.account_id).action is ControlAction.PAUSE_ENTRIES
+
+    resume_ids = telegram_app._queue_action(
+        (account,),
+        ControlAction.RESUME_ENTRIES,
+        user_id=1001,
+        reason="Telegram resume",
+    )
+    assert len(resume_ids) == 1
+    assert store.claim_next(account.account_id).action is ControlAction.RESUME_ENTRIES
+
+    with pytest.raises(RuntimeError, match="Dangerous live control is locked"):
+        telegram_app._queue_action(
+            (account,),
+            ControlAction.EMERGENCY_CLOSE,
+            user_id=1001,
+            reason="Telegram emergency",
+        )
+
+
 def test_registry_persists_only_public_multi_account_metadata(tmp_path):
     registry = AccountRegistry(tmp_path / "accounts.json", max_accounts=2)
     first = registry.add(mt5_account())

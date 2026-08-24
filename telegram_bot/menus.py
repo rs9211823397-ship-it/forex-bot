@@ -168,7 +168,7 @@ def account_keyboard(
             InlineKeyboardButton("🧾 Controls", callback_data=f"av:ctl:{token}"),
         ],
     ]
-    if role >= TelegramRole.OPERATOR and account.enabled and not account.is_live:
+    if role >= TelegramRole.OPERATOR and account.enabled:
         rows.append(
             [
                 InlineKeyboardButton("⏸ Pause Entries", callback_data=f"ctl:p:{token}"),
@@ -177,9 +177,10 @@ def account_keyboard(
                 ),
             ]
         )
-        rows.append(
-            [InlineKeyboardButton("▶ Start Engine", callback_data=f"ctl:b:{token}")]
-        )
+        if not account.is_live:
+            rows.append(
+                [InlineKeyboardButton("▶ Start Engine", callback_data=f"ctl:b:{token}")]
+            )
     if role >= TelegramRole.OWNER:
         toggle = (
             "Enable Account" if not account.enabled else "Disable Account (flat only)"

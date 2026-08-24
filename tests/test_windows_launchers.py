@@ -104,7 +104,10 @@ def test_winprofx_launchers_pin_broker_clock_and_real_account_equity():
     assert expected_offset in telegram
     assert 'AAQTS_ISOLATE_STRATEGY_RISK = "false"' in engine
     assert 'AAQTS_ISOLATE_STRATEGY_RISK = "false"' in telegram
+    assert 'AAQTS_EQUITY_DRAWDOWN_ENABLED = "false"' in engine
+    assert 'AAQTS_EQUITY_DRAWDOWN_ENABLED = "false"' in telegram
     assert "mt5_server_utc_offset_minutes" in engine
+    assert "equity_drawdown_enabled" in engine
 
 
 def test_winprofx_telegram_registers_the_explicit_live_account_before_start():
